@@ -41,6 +41,15 @@ const PICKUP_RANGE := 60.0
 const CARRY_OFFSET := Vector2(30.0, 0.0)
 const THROW_SPEED := 620.0
 const SMOOTHING_RATE := 15.0 # higher = snappier but less smooth; tune by feel
+## Defensive hard cap, well above THROW_SPEED. Found by testing: a moving
+## object picked back up mid-flight and re-thrown could occasionally spike
+## to several thousand px/s for a few ticks — looks like an interaction
+## between Godot's continuous-collision-detection and a body being frozen/
+## repositioned by script mid-motion, not something traced to a specific
+## line in this file. Rather than chase every possible trigger of that
+## interaction, clamp velocity unconditionally every tick so a spike, if
+## one occurs, can never actually carry the object off the map.
+const MAX_SPEED := 900.0
 
 @export var replication_interval := 0.0
 
@@ -106,6 +115,18 @@ func _physics_process(_delta: float) -> void:
 			if carrier:
 				body.position = carrier.global_position + CARRY_OFFSET
 				body.rotation = 0.0
+			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
+			# position moved this tick (see the longer note on _rpc_set_carrier)
+			# — found by testing this needs suppressing EVERY tick while
+			# carried, not just at the pickup/drop transition: a laggy
+			# carrier's own reported position isn't perfectly stable tick to
+			# tick, and each little correction was enough to let a large
+			# inferred velocity build up mid-carry, not just at the moment of
+			# picking up or dropping.
+			body.linear_velocity = Vector2.ZERO
+			body.angular_velocity = 0.0
+		elif body.linear_velocity.length() > MAX_SPEED:
+			body.linear_velocity = body.linear_velocity.normalized() * MAX_SPEED
 		target_position = body.position
 		target_rotation = body.rotation
 	GameLog.log_object_state(body.name, multiplayer.get_unique_id(), body.position, body.linear_velocity)
@@ -248,6 +269,17 @@ func _rpc_set_carrier(id: int) -> void:
 		body.collision_layer = 1
 		body.collision_mask = 1
 		if is_multiplayer_authority():
+			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
+			# position moved each tick (that's what lets a frozen "platform"
+			# push other bodies it touches) — found by testing: this inferred
+			# velocity kept accumulating in linear_velocity every tick while
+			# carried (each tick re-teleports the body to the carrier's
+			# position), even with collision disabled, so dropping it without
+			# resetting velocity first launched it at whatever huge speed the
+			# last teleport happened to imply — sometimes far above even
+			# THROW_SPEED. A plain drop should leave the object at rest.
+			body.linear_velocity = Vector2.ZERO
+			body.angular_velocity = 0.0
 			body.freeze = false
 
 ## Same shape as _rpc_set_carrier(0) (releases the object) but also gives
