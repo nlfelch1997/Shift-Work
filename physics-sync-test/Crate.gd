@@ -87,6 +87,16 @@ func _physics_process(_delta: float) -> void:
 func _process(delta: float) -> void:
 	if not Net.is_active() or is_multiplayer_authority():
 		return
+	# Dead-reckon the target forward using the last known velocity, instead
+	# of just chasing the last known position. A push impulse changes
+	# velocity instantaneously, so pure position-lerp smoothing visibly lags
+	# then "catches up" right at the moment of impact — extrapolating with
+	# velocity reflects the speed change immediately. The network keeps
+	# overwriting target_position/target_rotation with the real value each
+	# time a fresh update arrives, so small prediction error here doesn't
+	# accumulate — it just gets corrected on the next update.
+	target_position += linear_velocity * delta
+	target_rotation += angular_velocity * delta
 	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
 	position = position.lerp(target_position, t)
 	rotation = lerp_angle(rotation, target_rotation, t)
