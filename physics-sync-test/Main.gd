@@ -41,6 +41,7 @@ func _ready() -> void:
 	player_spawner.spawn_function = _spawn_player_node
 
 	multiplayer.peer_connected.connect(_on_peer_connected)
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(func():
@@ -59,6 +60,8 @@ func _parse_cli_args() -> void:
 	for arg in args:
 		if arg.begins_with("--connect-port="):
 			connect_port = int(arg.substr("--connect-port=".length()))
+		elif arg.begins_with("--duration="):
+			bot_run_seconds = float(arg.substr("--duration=".length()))
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
@@ -105,6 +108,22 @@ func _on_peer_connected(id: int) -> void:
 	print("[Main] Peer connected: %d" % id)
 	if multiplayer.is_server():
 		_spawn_player(id)
+
+## Without this, a disconnected peer's Player node lingers forever (never
+## despawned), a newly-joining peer gets told about it as if it were still
+## connected (MultiplayerSpawner replicates spawn history to late joiners),
+## and if that peer was carrying the crate when they dropped, the crate
+## stays permanently frozen and un-droppable — confirmed by testing before
+## this fix existed. Only the server actually frees the node (freeing a
+## MultiplayerSpawner-spawned node on its authority side is what propagates
+## the despawn to every other peer); every peer cleans up its own local
+## bookkeeping dict regardless of role.
+func _on_peer_disconnected(id: int) -> void:
+	print("[Main] Peer disconnected: %d" % id)
+	if multiplayer.is_server() and players.has(id):
+		players[id].queue_free()
+	players.erase(id)
+	crate.force_drop_if_carrier(id)
 
 ## Spawns players spread evenly around the crate (up to Net.MAX_PEERS) so
 ## 3-4 players can each approach from a different direction, instead of the

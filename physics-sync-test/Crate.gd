@@ -184,6 +184,16 @@ func _validate_drop(requester_id: int) -> void:
 		return # only the current carrier may drop it
 	rpc("_rpc_set_carrier", 0)
 
+## Called by Main.gd when ANY peer disconnects. Without this, a carrier who
+## disconnects mid-carry leaves the crate permanently frozen and stuck —
+## nobody left connected has that peer id, so _validate_drop's "only the
+## carrier may drop it" check can never pass again. Safe to call on every
+## peer: only the authority actually acts, and only if that peer was in
+## fact the carrier.
+func force_drop_if_carrier(id: int) -> void:
+	if is_multiplayer_authority() and carrier_id == id:
+		rpc("_rpc_set_carrier", 0)
+
 ## Runs on EVERY peer (call_local) — this is the actual state change, sent
 ## reliably so it can never be silently lost the way an unreliable message
 ## could be. Freeze toggling happens here too so every peer (including the
