@@ -39,6 +39,9 @@ class_name Carryable
 
 const PICKUP_RANGE := 60.0
 const CARRY_OFFSET := Vector2(30.0, 0.0)
+## Fixed speed regardless of what's thrown (confirmed decision, not a
+## placeholder) — a feather and a crate fly identically. Simpler and more
+## predictable mid-chaos than mass-scaled impulse would be.
 const THROW_SPEED := 620.0
 const SMOOTHING_RATE := 15.0 # higher = snappier but less smooth; tune by feel
 ## Defensive hard cap, well above THROW_SPEED. Found by testing: a moving
@@ -284,6 +287,11 @@ func _rpc_set_carrier(id: int) -> void:
 
 ## Same shape as _rpc_set_carrier(0) (releases the object) but also gives
 ## it velocity in the throw direction, instead of leaving it at rest.
+##
+## Confirmed decision: a thrown object hitting a player is currently pure
+## physics (it just bounces off them like a wall) — no knockback, no
+## stagger, no reaction. Deferred on purpose until Week 4+ content exists
+## for it to react against, not an oversight.
 @rpc("authority", "call_local", "reliable")
 func _rpc_throw(direction: Vector2) -> void:
 	print("[%s] thrown dir=%s (seen by peer %d)" % [body.name, direction, multiplayer.get_unique_id()])

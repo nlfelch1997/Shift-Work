@@ -213,9 +213,11 @@ func _interact_with(obj: Node2D, my_id: int) -> void:
 		c.try_pickup(my_id, global_position)
 
 ## Throw whatever I'm currently carrying, in the direction I'm currently
-## moving (or last moved, if standing still). Same lookup logic as
-## _try_interact: bots use their assigned target, manual play uses
-## whatever's actually being carried.
+## moving (or last moved, if standing still). This is the confirmed,
+## intended long-term control scheme, not a placeholder — no aim input,
+## consistent with keeping controls instantly legible for the genre. Same
+## lookup logic as _try_interact: bots use their assigned target, manual
+## play uses whatever's actually being carried.
 func _try_throw() -> void:
 	var my_id := multiplayer.get_unique_id()
 	var obj := _target_obj if bot_mode else _find_carried_object(my_id)
