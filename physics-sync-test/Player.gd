@@ -28,13 +28,27 @@ const SMOOTHING_RATE := 15.0 # matches Carryable.gd — see its comment for why 
 const INTERACT_COOLDOWN := 3.0
 const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Carryable.gd's PICKUP_RANGE is the real check
 const BOT_CARRY_DURATION := 2.5
+## Referenced via preload rather than the global "Carryable" class_name —
+## global class_name lookups depend on an editor-built class cache that
+## doesn't exist for a project that's only ever been run headless/CLI, and
+## fails to resolve at parse time without it. preload() doesn't have that
+## dependency.
+const CarryableScript := preload("res://Carryable.gd")
 
 @export var bot_mode := false
 @export var bot_angle := 0.0 # direction (radians) this bot approaches its target object from
-@export var bot_target_name := "" # which carryable object (by node name) this bot contests
+@export var bot_target_name := "" # which carryable object (by node name) this bot contests ("contest" role only)
+## Which scripted behavior this bot runs. "contest" is the original Week
+## 1-3 tug-of-war test (unchanged). Week 4 adds "stocker" (fetches free
+## product and stocks it onto the nearest open shelf slot) and "interferer"
+## (hunts down placed items to knock loose, either by ramming them via the
+## ordinary push-on-collision mechanic or by snatching and re-throwing
+## them) — both drive the SAME pickup/carry/throw/drop calls a human player
+## would use, nothing shelf-specific lives in Carryable.gd.
+@export var bot_role := "contest"
 
 var _bot_t := 0.0
-var _target_obj: Node2D # bot mode: resolved once from bot_target_name
+var _target_obj: Node2D # "contest" role only: resolved once from bot_target_name
 var _last_move_dir := Vector2.RIGHT # for throw direction when standing still
 var target_position: Vector2
 var _bot_interact_cooldown := 0.0
@@ -135,6 +149,15 @@ func _push_rigid_bodies(delta: float) -> void:
 			carryable.rpc_id(carryable.get_multiplayer_authority(), "request_push", impulse)
 
 func _bot_input(delta: float) -> Vector2:
+	match bot_role:
+		"stocker":
+			return _bot_stocker_input(delta)
+		"interferer":
+			return _bot_interferer_input(delta)
+		_:
+			return _bot_contest_input(delta)
+
+func _bot_contest_input(delta: float) -> Vector2:
 	if _target_obj == null:
 		_target_obj = _resolve_bot_target()
 		if _target_obj == null:
@@ -170,6 +193,15 @@ func _resolve_bot_target() -> Node2D:
 ## or throw it (picked at random so both code paths get exercised over the
 ## whole test) — repeated for the whole run.
 func _bot_maybe_interact(delta: float) -> void:
+	match bot_role:
+		"stocker":
+			_bot_stocker_maybe_interact(delta)
+		"interferer":
+			_bot_interferer_maybe_interact(delta)
+		_:
+			_bot_contest_maybe_interact(delta)
+
+func _bot_contest_maybe_interact(delta: float) -> void:
 	_bot_interact_cooldown -= delta
 	if _target_obj == null or _bot_interact_cooldown > 0.0:
 		return
@@ -187,13 +219,152 @@ func _bot_maybe_interact(delta: float) -> void:
 		_try_interact()
 		_bot_interact_cooldown = INTERACT_COOLDOWN
 
-## Drop/pickup toggle. Bots always act on their assigned _target_obj;
-## manual play acts on whatever you're already carrying, or else the
-## nearest free object in range — since a human player wants to interact
-## with whatever's actually nearby, not a scripted assignment.
+## --- Stocker bot: fetch a free product, carry it to the nearest open
+## shelf slot, drop it there. No shelf-specific interaction needed —
+## dropping accurately within a slot's capture radius IS placing it, per
+## Shelf.gd's own per-tick check. Repeats until no free product or no open
+## slot remains.
+##
+## FOUND BY TESTING: re-querying "nearest empty slot" every tick while
+## walking caused the target to flip between two similarly-close slots as
+## the bot moved, so it converged on a point between them instead of either
+## one — a wide miss on drop, not a near-miss. Committing to ONE slot for
+## the whole carry trip (cleared only once the trip ends) fixes it.
+var _bot_committed_slot_pos = null # Variant: Vector2 once committed, else null
+
+func _bot_stocker_input(delta: float) -> Vector2:
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	if carried == null:
+		_bot_committed_slot_pos = null
+		var target := _bot_find_product_target()
+		if target == null:
+			return Vector2.ZERO
+		var to_target := target.global_position - global_position
+		if to_target.length() < BOT_PICKUP_RANGE:
+			return Vector2.ZERO
+		return to_target.normalized()
+	if _bot_committed_slot_pos == null:
+		_bot_committed_slot_pos = _bot_find_empty_slot()
+	if _bot_committed_slot_pos == null:
+		return Vector2.ZERO # nothing open anywhere right now
+	# Aim so the carried item — which trails at carrier position +
+	# Carryable.CARRY_OFFSET — lands ON the slot marker when dropped, not
+	# just near the bot itself.
+	var approach: Vector2 = _bot_committed_slot_pos - CarryableScript.CARRY_OFFSET
+	var to_target := approach - global_position
+	if to_target.length() < 6.0:
+		return Vector2.ZERO
+	return to_target.normalized()
+
+func _bot_stocker_maybe_interact(delta: float) -> void:
+	_bot_interact_cooldown -= delta
+	if _bot_interact_cooldown > 0.0:
+		return
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	if carried == null:
+		var target := _bot_find_product_target()
+		if target and global_position.distance_to(target.global_position) < BOT_PICKUP_RANGE:
+			_interact_with(target, my_id)
+			_bot_interact_cooldown = INTERACT_COOLDOWN
+	elif _bot_committed_slot_pos != null and global_position.distance_to(_bot_committed_slot_pos) < BOT_PICKUP_RANGE:
+		_interact_with(carried, my_id)
+		_bot_interact_cooldown = INTERACT_COOLDOWN
+		_bot_committed_slot_pos = null
+
+func _bot_find_product_target() -> Node2D:
+	var best: Node2D = null
+	var best_dist := INF
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		var c: Node = obj.get_node("Carryable")
+		if c.carrier_id != 0 or _bot_is_placed(obj):
+			continue
+		var d := global_position.distance_to(obj.global_position)
+		if d < best_dist:
+			best_dist = d
+			best = obj
+	return best
+
+func _bot_find_empty_slot() -> Variant:
+	var best_pos = null
+	var best_dist := INF
+	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		var shelf: Node = shelf_body.get_node("Shelf")
+		var pos = shelf.nearest_empty_slot_position(global_position)
+		if pos == null:
+			continue
+		var d: float = global_position.distance_to(pos)
+		if d < best_dist:
+			best_dist = d
+			best_pos = pos
+	return best_pos
+
+func _bot_is_placed(obj: Node2D) -> bool:
+	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		var shelf: Node = shelf_body.get_node("Shelf")
+		if shelf.contains(obj):
+			return true
+	return false
+
+## --- Interferer bot: the placeholder chaos source for multi-bot testing.
+## Hunts down whatever's currently placed on a shelf and disrupts it —
+## either by simply walking into it (the existing move_and_slide()-vs-
+## RigidBody2D push mechanic fires automatically on approach, no special
+## code needed) or by picking it up outright and lobbing it elsewhere
+## (picking a placed item back up already un-places it — Shelf.gd notices
+## carrier_id != 0 next tick — the throw afterward is just extra chaos on
+## top, not load-bearing for proving knockdown works). Falls back to
+## harassing any free carryable if nothing's currently placed to knock over.
+func _bot_interferer_input(delta: float) -> Vector2:
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	if carried:
+		_bot_carry_timer += delta
+		return Vector2.RIGHT.rotated(bot_angle + PI * 0.5)
+	var target := _bot_find_disruption_target()
+	if target == null:
+		return Vector2.ZERO
+	var to_target := target.global_position - global_position
+	if to_target.length() < 4.0:
+		return Vector2.ZERO
+	return to_target.normalized()
+
+func _bot_interferer_maybe_interact(delta: float) -> void:
+	_bot_interact_cooldown -= delta
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	if carried:
+		if _bot_carry_timer >= BOT_CARRY_DURATION:
+			_try_throw()
+			_bot_interact_cooldown = INTERACT_COOLDOWN
+			_bot_carry_timer = 0.0
+		return
+	if _bot_interact_cooldown > 0.0:
+		return
+	var target := _bot_find_disruption_target()
+	if target and global_position.distance_to(target.global_position) < BOT_PICKUP_RANGE:
+		if randf() < 0.5:
+			_interact_with(target, my_id)
+			_bot_interact_cooldown = INTERACT_COOLDOWN
+
+func _bot_find_disruption_target() -> Node2D:
+	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		var shelf: Node = shelf_body.get_node("Shelf")
+		var occupant = shelf.any_filled_object()
+		if occupant:
+			return occupant
+	return _find_nearest_free_carryable()
+
+## Drop/pickup toggle. A "contest" bot always acts on its assigned
+## _target_obj; every other case (manual play, and the "stocker"/
+## "interferer" bot roles, which pick a fresh target each cycle rather than
+## a fixed one) acts on whatever's already carried, or else the nearest
+## free object in range — since a human player wants to interact with
+## whatever's actually nearby, not a scripted assignment.
 func _try_interact() -> void:
 	var my_id := multiplayer.get_unique_id()
-	if bot_mode:
+	if bot_mode and bot_role == "contest":
 		if _target_obj:
 			_interact_with(_target_obj, my_id)
 		return
@@ -216,11 +387,12 @@ func _interact_with(obj: Node2D, my_id: int) -> void:
 ## moving (or last moved, if standing still). This is the confirmed,
 ## intended long-term control scheme, not a placeholder — no aim input,
 ## consistent with keeping controls instantly legible for the genre. Same
-## lookup logic as _try_interact: bots use their assigned target, manual
-## play uses whatever's actually being carried.
+## lookup logic as _try_interact: a "contest" bot uses its assigned target,
+## everyone else (manual play, "stocker"/"interferer") uses whatever's
+## actually being carried.
 func _try_throw() -> void:
 	var my_id := multiplayer.get_unique_id()
-	var obj := _target_obj if bot_mode else _find_carried_object(my_id)
+	var obj := _target_obj if (bot_mode and bot_role == "contest") else _find_carried_object(my_id)
 	if obj == null:
 		return
 	var c: Node = obj.get_node("Carryable")

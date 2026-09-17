@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3 uid="uid://cproductscn0001"]
+
+[ext_resource type="Script" path="res://Carryable.gd" id="1"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_product"]
+size = Vector2(28, 28)
+
+[node name="Product" type="RigidBody2D"]
+mass = 0.4
+gravity_scale = 0.0
+linear_damp = 2.0
+angular_damp = 2.0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_product")
+
+[node name="Polygon2D" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-14, -14, 14, -14, 14, 14, -14, 14)
+color = Color(0.3, 0.75, 0.4, 1)
+
+[node name="Carryable" type="Node" parent="."]
+script = ExtResource("1")
