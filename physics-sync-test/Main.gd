@@ -36,7 +36,8 @@ func _ready() -> void:
 	player_spawner.spawn_function = _spawn_player_node
 
 	multiplayer.peer_connected.connect(_on_peer_connected)
-	multiplayer.connection_failed.connect(func(): print("[Main] Connection failed"))
+	multiplayer.connected_to_server.connect(_on_connected_to_server)
+	multiplayer.connection_failed.connect(_on_connection_failed)
 	multiplayer.server_disconnected.connect(func():
 		print("[Main] Host disconnected, quitting.")
 		get_tree().quit()
@@ -68,14 +69,22 @@ func _on_host_pressed() -> void:
 func _on_join_pressed() -> void:
 	menu_layer.hide()
 	Net.join_game("127.0.0.1")
-	# Wait until the connection is actually established — connected_to_server
-	# fires once ENet finishes the handshake, which is when our peer id is
-	# guaranteed to be valid. The server spawns us (see _on_peer_connected);
-	# we don't need to ask for it.
-	await multiplayer.connected_to_server
+
+## connected_to_server fires once ENet finishes the handshake, which is when
+## our peer id is guaranteed to be valid. The server spawns us (see
+## _on_peer_connected); we don't need to ask for it.
+func _on_connected_to_server() -> void:
 	print("[Main] Connected — my peer id = %d" % multiplayer.get_unique_id())
 	if bot_mode:
 		_start_bot_timer()
+
+## Fires if there was nothing to connect to (e.g. Join was clicked before
+## anyone hosted). Reset and show the menu again instead of leaving the
+## window stuck on a blank screen with no way back except relaunching.
+func _on_connection_failed() -> void:
+	print("[Main] Connection failed — is a host running? Showing menu again.")
+	multiplayer.multiplayer_peer = null
+	menu_layer.show()
 
 func _start_bot_timer() -> void:
 	var t := get_tree().create_timer(bot_run_seconds)
