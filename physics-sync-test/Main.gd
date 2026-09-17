@@ -106,10 +106,14 @@ func _on_peer_connected(id: int) -> void:
 	if multiplayer.is_server():
 		_spawn_player(id)
 
+## Spawns players spread evenly around the crate (up to Net.MAX_PEERS) so
+## 3-4 players can each approach from a different direction, instead of the
+## original 2-player left/right split.
 func _spawn_player(id: int) -> void:
-	var side := -1.0 if players.is_empty() else 1.0
-	var spawn_pos := CRATE_START + Vector2(side * 220.0, 0.0)
-	player_spawner.spawn({"id": id, "pos": spawn_pos, "side": side})
+	var index := players.size()
+	var angle := index * (TAU / float(Net.MAX_PEERS))
+	var spawn_pos := CRATE_START + Vector2.RIGHT.rotated(angle) * 220.0
+	player_spawner.spawn({"id": id, "pos": spawn_pos, "angle": angle})
 
 ## Runs on every peer (called locally on the authority by .spawn(), and
 ## remotely on everyone else once MultiplayerSpawner delivers the spawn
@@ -121,7 +125,7 @@ func _spawn_player_node(data: Dictionary) -> Node:
 	p.position = data["pos"]
 	p.set_multiplayer_authority(id)
 	p.bot_mode = bot_mode
-	p.bot_side = data["side"]
+	p.bot_angle = data["angle"]
 	players[id] = p
 	return p
 

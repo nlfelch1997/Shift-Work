@@ -15,8 +15,10 @@ extends CharacterBody2D
 ##
 ## bot_mode replaces keyboard input with a scripted back-and-forth walk, so
 ## we can run this whole test with no keyboard or display attached (headless)
-## and still get two players continuously pushing a crate from opposite
-## sides — that's the actual scenario we're trying to stress-test.
+## and still get several players continuously contesting a crate from
+## different directions — that's the actual scenario we're stress-testing.
+## bot_angle spreads bots evenly around the crate (2, 3, or 4 of them) —
+## see Main.gd's _spawn_player.
 
 const SPEED := 220.0
 const PUSH_FORCE := 9000.0 # tuned by testing; impulse-per-second while overlapping
@@ -26,7 +28,7 @@ const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Crate.gd's PICKUP_RANGE is 
 const BOT_CARRY_DURATION := 2.5
 
 @export var bot_mode := false
-@export var bot_side := -1.0 # -1 = approaches from the left, 1 = from the right
+@export var bot_angle := 0.0 # direction (radians) this bot approaches the crate from
 
 var _bot_t := 0.0
 var _crate: Node2D
@@ -124,12 +126,13 @@ func _bot_input(delta: float) -> Vector2:
 		# the crate," which would be a feedback loop now that the crate's
 		# own position is pinned to ours.
 		_bot_carry_timer += delta
-		return Vector2(bot_side, 0.3).normalized()
+		return Vector2.RIGHT.rotated(bot_angle + PI * 0.5)
 	# Walk toward the crate's CURRENT position (not a fixed point) from
-	# bot_side, then oscillate in and out of it so both players keep
+	# bot_angle, then oscillate in and out of it so every bot keeps
 	# contesting the crate all test long even as pushing moves it around.
 	_bot_t += delta
-	var target := _crate.global_position + Vector2(bot_side * (50.0 + 35.0 * sin(_bot_t * 1.3)), 0.0)
+	var offset := Vector2.RIGHT.rotated(bot_angle) * (50.0 + 35.0 * sin(_bot_t * 1.3))
+	var target := _crate.global_position + offset
 	var to_target := target - global_position
 	if to_target.length() < 4.0:
 		return Vector2.ZERO
