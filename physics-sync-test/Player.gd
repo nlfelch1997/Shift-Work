@@ -25,6 +25,10 @@ var _bot_t := 0.0
 var _crate: Node2D
 
 func _ready() -> void:
+	# Without this, physics interpolation (see project.godot) would try to
+	# smoothly slide this node from wherever it defaulted to (0,0) to its
+	# actual spawn position, producing a brief visible "zoom in" on spawn.
+	reset_physics_interpolation()
 	# Only the owning peer simulates this body; everyone else just displays
 	# whatever the MultiplayerSynchronizer tells them.
 	set_physics_process(is_multiplayer_authority())
