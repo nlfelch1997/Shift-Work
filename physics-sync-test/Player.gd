@@ -3,12 +3,15 @@ extends CharacterBody2D
 ##
 ## Only the peer that OWNS this node (multiplayer authority == this peer's id)
 ## reads input and actually moves it with move_and_slide(). Every other peer
-## just receives this node's position over the network (via the
-## MultiplayerSynchronizer added below) and displays it wherever it's told.
-## This is "client-authoritative movement": each player's own machine is in
-## charge of their own character, which feels responsive for the owner but
-## means everyone else only sees that player where the network last said
-## they were.
+## just receives this node's target_position over the network (via the
+## MultiplayerSynchronizer added below) and smoothly slides its own display
+## toward that value each tick, rather than snapping straight to it — see
+## the matching comment in Crate.gd for why the snap-to-latest-value
+## approach visibly "shakes" on a normal 60Hz monitor. This is
+## "client-authoritative movement": each player's own machine is in charge
+## of their own character, which feels responsive for the owner but means
+## everyone else only sees that player where the network last said they
+## were (smoothed, with a small deliberate delay, instead of snapped).
 ##
 ## bot_mode replaces keyboard input with a scripted back-and-forth walk, so
 ## we can run this whole test with no keyboard or display attached (headless)
@@ -17,27 +20,30 @@ extends CharacterBody2D
 
 const SPEED := 220.0
 const PUSH_FORCE := 9000.0 # tuned by testing; impulse-per-second while overlapping
+const SMOOTHING_RATE := 15.0 # matches Crate.gd — see its comment for why this exists
 
 @export var bot_mode := false
 @export var bot_side := -1.0 # -1 = approaches from the left, 1 = from the right
 
 var _bot_t := 0.0
 var _crate: Node2D
+var target_position: Vector2
 
 func _ready() -> void:
 	# Without this, physics interpolation (see project.godot) would try to
 	# smoothly slide this node from wherever it defaulted to (0,0) to its
 	# actual spawn position, producing a brief visible "zoom in" on spawn.
 	reset_physics_interpolation()
-	# Only the owning peer simulates this body; everyone else just displays
-	# whatever the MultiplayerSynchronizer tells them.
-	set_physics_process(is_multiplayer_authority())
+	# Runs on every peer now (not just the owner) — the non-owning peers
+	# need their own _physics_process tick to run the smoothing below.
+	set_physics_process(true)
+	target_position = position
 	$Polygon2D.color = Color(0.25, 0.55, 1.0) if get_multiplayer_authority() == 1 else Color(1.0, 0.55, 0.15)
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	config.add_property(NodePath(".:position"))
-	config.property_set_replication_mode(NodePath(".:position"), SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+	config.add_property(NodePath(".:target_position"))
+	config.property_set_replication_mode(NodePath(".:target_position"), SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
 	sync.replication_config = config
 	# Must be an explicit, identical name on every peer. Godot's replication
 	# system addresses nodes by path, and an auto-generated name like
@@ -54,12 +60,19 @@ func _ready() -> void:
 	add_child(sync)
 
 func _physics_process(delta: float) -> void:
+	if not is_multiplayer_authority():
+		# Not our player to control — smoothly catch up to the latest
+		# network sample instead of snapping straight to it.
+		var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
+		position = position.lerp(target_position, t)
+		return
+
 	var dir := Vector2.ZERO
 	if bot_mode:
 		dir = _bot_input(delta)
 	elif multiplayer.is_server():
 		# This whole branch only ever runs for the ONE player this process
-		# owns (see set_physics_process above), so "is this process the
+		# owns (is_multiplayer_authority() above), so "is this process the
 		# host" is exactly the same question as "is this the host's own
 		# player" — no per-player role tracking needed.
 		dir = Input.get_vector("host_move_left", "host_move_right", "host_move_up", "host_move_down")
@@ -68,6 +81,7 @@ func _physics_process(delta: float) -> void:
 	velocity = dir * SPEED
 	move_and_slide()
 	_push_rigid_bodies(delta)
+	target_position = position
 
 ## move_and_slide() only stops the character at a RigidBody2D — it does not
 ## push it. We have to detect the contact and apply the force ourselves.

@@ -5,16 +5,28 @@ extends RigidBody2D
 ## Design: the HOST (always peer id 1 in Godot's multiplayer API) runs the
 ## real physics simulation for this crate. Every other peer's copy is
 ## "frozen" (freeze = true) so it does NOT run its own local physics — it
-## would immediately disagree with the host if it did. Instead, its
-## position/rotation/velocity are overwritten every network sync by a
-## MultiplayerSynchronizer, driven by whatever the host is doing. This is
-## the standard, textbook-recommended pattern for a networked RigidBody in
-## Godot 4.
+## would immediately disagree with the host if it did.
 ##
 ## FREEZE_MODE_KINEMATIC (rather than the default FREEZE_MODE_STATIC) means
-## a frozen body can still be moved by setting its position directly (which
-## is exactly what the synchronizer does) without the physics engine trying
-## to resolve forces on it.
+## a frozen body can still be moved by setting its position directly without
+## the physics engine trying to resolve forces on it.
+##
+## SMOOTHING: the network only replicates target_position/target_rotation,
+## NOT the crate's actual position/rotation directly. On the authority
+## (host) those are just mirrors of the real physics transform each tick.
+## On every other peer, _physics_process smoothly slides the crate's
+## DISPLAYED position/rotation toward whatever the latest target is, instead
+## of snapping straight to it. This is "client-side smoothing" — a standard
+## netcode technique. It's necessary because Godot's built-in physics
+## interpolation (project setting) only smooths physics-tick-vs-render-rate
+## mismatches; it does nothing about the underlying replicated value itself
+## jumping a few pixels between updates, which is what actually reads as
+## "shaking" on a normal 60Hz monitor where there's no extra render frame
+## for that engine feature to interpolate across.
+##
+## Trade-off: the display now trails the true state by a small, deliberate
+## delay (a few hundredths of a second) instead of jumping to it instantly.
+## That's the standard price of smoothness in networked games.
 ##
 ## Tune replication_interval to see how sync rate affects smoothness:
 ## 0.0 = sync as often as possible (every network process step).
@@ -29,6 +41,10 @@ extends RigidBody2D
 ## itself part of what this test measures.
 
 @export var replication_interval := 0.0
+const SMOOTHING_RATE := 15.0 # higher = snappier but less smooth; tune by feel
+
+var target_position: Vector2
+var target_rotation: float
 
 func _ready() -> void:
 	add_to_group("crate") # so Player.gd's bots can find and follow it
@@ -41,9 +57,12 @@ func _ready() -> void:
 		freeze = true
 		freeze_mode = RigidBody2D.FREEZE_MODE_KINEMATIC
 
+	target_position = position
+	target_rotation = rotation
+
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	for prop in [".:position", ".:rotation", ".:linear_velocity", ".:angular_velocity"]:
+	for prop in [".:target_position", ".:target_rotation", ".:linear_velocity", ".:angular_velocity"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -53,7 +72,14 @@ func _ready() -> void:
 	sync.set_multiplayer_authority(1) # set before entering the tree — see Player.gd
 	add_child(sync)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	if is_multiplayer_authority():
+		target_position = position
+		target_rotation = rotation
+	else:
+		var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
+		position = position.lerp(target_position, t)
+		rotation = lerp_angle(rotation, target_rotation, t)
 	GameLog.log_crate_state(multiplayer.get_unique_id(), position, linear_velocity)
 
 ## A player who collided with this crate calls this (locally if they're
