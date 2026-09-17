@@ -51,6 +51,12 @@ var _bot_t := 0.0
 var _target_obj: Node2D # "contest" role only: resolved once from bot_target_name
 var _last_move_dir := Vector2.RIGHT # for throw direction when standing still
 var target_position: Vector2
+## Cosmetic only — mirrors _last_move_dir as an angle so it can replicate
+## (a Vector2 would work too, but an angle is what Polygon2D.rotation wants
+## directly). Deliberately NOT read by throw logic anywhere: Week 3 decided
+## throws stay tied to movement with no separate aim input, and this only
+## fixes the sprite not showing which way that direction currently is.
+var facing_angle := 0.0
 var _bot_interact_cooldown := 0.0
 var _bot_carry_timer := 0.0
 
@@ -68,8 +74,10 @@ func _ready() -> void:
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	config.add_property(NodePath(".:target_position"))
-	config.property_set_replication_mode(NodePath(".:target_position"), SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+	for prop in [".:target_position", ".:facing_angle"]:
+		var path := NodePath(prop)
+		config.add_property(path)
+		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
 	sync.replication_config = config
 	# Must be an explicit, identical name on every peer. Godot's replication
 	# system addresses nodes by path, and an auto-generated name like
@@ -111,6 +119,8 @@ func _physics_process(delta: float) -> void:
 		throw_pressed = Input.is_action_just_pressed("client_throw")
 	if dir.length() > 0.1:
 		_last_move_dir = dir.normalized()
+		facing_angle = _last_move_dir.angle()
+		$Polygon2D.rotation = facing_angle
 	if throw_pressed:
 		_try_throw()
 	elif interact_pressed:
@@ -127,6 +137,11 @@ func _process(delta: float) -> void:
 		return
 	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
 	position = position.lerp(target_position, t)
+	# Snapped straight to the replicated value, not lerped like position —
+	# facing only changes when the owner's movement direction changes
+	# (not continuously like position does), so there's no per-tick jitter
+	# to smooth out here.
+	$Polygon2D.rotation = facing_angle
 
 ## move_and_slide() only stops the character at a RigidBody2D — it does not
 ## push it. We have to detect the contact and apply the force ourselves.

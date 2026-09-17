@@ -11,7 +11,15 @@ size = Vector2(180, 36)
 shape = SubResource("RectangleShape2D_shelf")
 
 [node name="Polygon2D" type="Polygon2D" parent="."]
-polygon = PackedVector2Array(-90, -18, 90, -18, 90, 18, -90, 18)
+# Drawn deeper than the CollisionShape2D above on purpose — purely visual,
+# no matching collision added. Slots (below) sit at local y=-40, in front
+# of the collision box, so items land there instead of getting physically
+# blocked by the shelf's own solid body (see Shelf.gd's header comment).
+# The collision box alone used to stop right at y=-18, leaving a visible
+# gap between the drawn shelf and where items actually rest — this extends
+# the drawing to y=-48 (past the slot line) so placed items read as sitting
+# on the shelf instead of floating in the open floor next to it.
+polygon = PackedVector2Array(-90, -48, 90, -48, 90, 18, -90, 18)
 color = Color(0.35, 0.3, 0.25, 1)
 
 [node name="Slot1" type="Marker2D" parent="."]
