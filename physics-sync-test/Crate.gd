@@ -105,7 +105,15 @@ func _process(delta: float) -> void:
 ## already the authority, over RPC otherwise) to actually move it. Only the
 ## authority (host) ever applies the impulse to its real physics body — a
 ## frozen non-authority copy would silently ignore it anyway.
-@rpc("any_peer", "unreliable")
+##
+## Deliberately RELIABLE, unlike the continuous position/velocity sync
+## above. A dropped position update just gets superseded by the next one a
+## moment later — no harm done. A dropped PUSH IMPULSE is different: that
+## tick's force never gets applied at all, with nothing to correct it
+## afterwards, which would make the client's own pushes land unevenly
+## (since only client-initiated pushes have to survive a network hop at
+## all — the host's own local pushes never go through this RPC).
+@rpc("any_peer", "reliable")
 func request_push(impulse: Vector2) -> void:
 	if not is_multiplayer_authority():
 		return
