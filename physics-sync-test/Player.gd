@@ -50,7 +50,17 @@ func _ready() -> void:
 	add_child(sync)
 
 func _physics_process(delta: float) -> void:
-	var dir := _bot_input(delta) if bot_mode else Input.get_vector("move_left", "move_right", "move_up", "move_down")
+	var dir := Vector2.ZERO
+	if bot_mode:
+		dir = _bot_input(delta)
+	elif multiplayer.is_server():
+		# This whole branch only ever runs for the ONE player this process
+		# owns (see set_physics_process above), so "is this process the
+		# host" is exactly the same question as "is this the host's own
+		# player" — no per-player role tracking needed.
+		dir = Input.get_vector("host_move_left", "host_move_right", "host_move_up", "host_move_down")
+	else:
+		dir = Input.get_vector("client_move_left", "client_move_right", "client_move_up", "client_move_down")
 	velocity = dir * SPEED
 	move_and_slide()
 	_push_rigid_bodies(delta)
