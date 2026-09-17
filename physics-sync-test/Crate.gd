@@ -42,9 +42,16 @@ extends RigidBody2D
 
 @export var replication_interval := 0.0
 const SMOOTHING_RATE := 15.0 # higher = snappier but less smooth; tune by feel
+const PICKUP_RANGE := 60.0
+const CARRY_OFFSET := Vector2(30.0, 0.0)
 
 var target_position: Vector2
 var target_rotation: float
+## 0 = nobody carrying it, else the peer id of whoever is. Deliberately NOT
+## a continuously-replicated property — it only ever changes via the
+## reliable broadcast RPC below (_rpc_set_carrier), same "one-shot events
+## get reliable RPCs, not sync properties" reasoning as request_push.
+var carrier_id: int = 0
 
 func _ready() -> void:
 	add_to_group("crate") # so Player.gd's bots can find and follow it
@@ -76,9 +83,20 @@ func _physics_process(_delta: float) -> void:
 	if not Net.is_active():
 		return
 	if is_multiplayer_authority():
+		if carrier_id != 0:
+			var carrier := _find_player(carrier_id)
+			if carrier:
+				position = carrier.global_position + CARRY_OFFSET
+				rotation = 0.0
 		target_position = position
 		target_rotation = rotation
 	GameLog.log_crate_state(multiplayer.get_unique_id(), position, linear_velocity)
+
+func _find_player(peer_id: int) -> Node2D:
+	for p in get_tree().get_nodes_in_group("player"):
+		if p.get_multiplayer_authority() == peer_id:
+			return p
+	return null
 
 ## The smoothing itself runs in _process (tied to actual render rate), not
 ## _physics_process (fixed 60Hz) — otherwise the display only updates 60
@@ -117,4 +135,67 @@ func _process(delta: float) -> void:
 func request_push(impulse: Vector2) -> void:
 	if not is_multiplayer_authority():
 		return
+	if carrier_id != 0:
+		return # being carried — frozen anyway, but skip the wasted call
 	apply_central_impulse(impulse)
+
+## --- Pickup / carry ---------------------------------------------------
+## A second, structurally different one-shot interaction from push, to
+## check the "reliable RPC for one-shot events" lesson generalizes rather
+## than being a fluke of the push case specifically. Same shape either way:
+## whoever isn't the authority asks the authority; the authority validates
+## and then reliably broadcasts the actual state change to everyone
+## (including itself, via call_local) so every peer applies the exact same
+## decision instead of each guessing independently.
+
+func try_pickup(requester_id: int, requester_pos: Vector2) -> void:
+	if is_multiplayer_authority():
+		_validate_pickup(requester_id, requester_pos)
+	else:
+		rpc_id(get_multiplayer_authority(), "_request_pickup", requester_id, requester_pos)
+
+func try_drop(requester_id: int) -> void:
+	if is_multiplayer_authority():
+		_validate_drop(requester_id)
+	else:
+		rpc_id(get_multiplayer_authority(), "_request_drop", requester_id)
+
+@rpc("any_peer", "reliable")
+func _request_pickup(requester_id: int, requester_pos: Vector2) -> void:
+	if not is_multiplayer_authority():
+		return
+	_validate_pickup(requester_id, requester_pos)
+
+@rpc("any_peer", "reliable")
+func _request_drop(requester_id: int) -> void:
+	if not is_multiplayer_authority():
+		return
+	_validate_drop(requester_id)
+
+func _validate_pickup(requester_id: int, requester_pos: Vector2) -> void:
+	if carrier_id != 0:
+		return # already held — first request wins, rest are silently ignored
+	if requester_pos.distance_to(position) > PICKUP_RANGE:
+		return
+	rpc("_rpc_set_carrier", requester_id)
+
+func _validate_drop(requester_id: int) -> void:
+	if carrier_id != requester_id:
+		return # only the current carrier may drop it
+	rpc("_rpc_set_carrier", 0)
+
+## Runs on EVERY peer (call_local) — this is the actual state change, sent
+## reliably so it can never be silently lost the way an unreliable message
+## could be. Freeze toggling happens here too so every peer (including the
+## host) stays consistent about whether this body is currently
+## authority-driven-but-frozen-while-carried vs. normal free physics.
+@rpc("authority", "call_local", "reliable")
+func _rpc_set_carrier(id: int) -> void:
+	print("[Crate] carrier -> %d (seen by peer %d)" % [id, multiplayer.get_unique_id()])
+	carrier_id = id
+	if id != 0:
+		freeze = true
+		linear_velocity = Vector2.ZERO
+		angular_velocity = 0.0
+	elif is_multiplayer_authority():
+		freeze = false

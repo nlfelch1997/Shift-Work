@@ -30,6 +30,11 @@ const CRATE_START := Vector2(480.0, 270.0)
 var players := {} # peer_id -> Player node (populated on every peer)
 var bot_mode := false
 var bot_run_seconds := 20.0
+## Which port a --client instance actually connects to. Lets us point a
+## client at a local latency-simulating proxy (see tools/udp_delay_proxy.py)
+## instead of the real host port, without touching Net.gd's own PORT
+## constant (which is still what --server always listens on).
+var connect_port := Net.PORT
 
 func _ready() -> void:
 	crate.position = CRATE_START
@@ -51,6 +56,9 @@ func _ready() -> void:
 func _parse_cli_args() -> void:
 	var args := OS.get_cmdline_user_args()
 	bot_mode = "--bot" in args
+	for arg in args:
+		if arg.begins_with("--connect-port="):
+			connect_port = int(arg.substr("--connect-port=".length()))
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
@@ -68,7 +76,7 @@ func _on_host_pressed() -> void:
 
 func _on_join_pressed() -> void:
 	menu_layer.hide()
-	Net.join_game("127.0.0.1")
+	Net.join_game("127.0.0.1", connect_port)
 
 ## connected_to_server fires once ENet finishes the handshake, which is when
 ## our peer id is guaranteed to be valid. The server spawns us (see
@@ -122,10 +130,12 @@ func _process(_delta: float) -> void:
 	var role := "OFFLINE"
 	if connected:
 		role = "HOST" if multiplayer.is_server() else "CLIENT"
-	debug_label.text = "peer id: %d  (%s)\ncrate pos: (%.1f, %.1f)\ncrate vel: (%.1f, %.1f)\nplayers: %d" % [
+	var carried := "carried by %d" % crate.carrier_id if crate.carrier_id != 0 else "free"
+	debug_label.text = "peer id: %d  (%s)\ncrate pos: (%.1f, %.1f)\ncrate vel: (%.1f, %.1f)\ncrate: %s\nplayers: %d" % [
 		multiplayer.get_unique_id() if connected else 0,
 		role,
 		crate.position.x, crate.position.y,
 		crate.linear_velocity.x, crate.linear_velocity.y,
+		carried,
 		players.size(),
 	]

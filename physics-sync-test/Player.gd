@@ -21,6 +21,9 @@ extends CharacterBody2D
 const SPEED := 220.0
 const PUSH_FORCE := 9000.0 # tuned by testing; impulse-per-second while overlapping
 const SMOOTHING_RATE := 15.0 # matches Crate.gd — see its comment for why this exists
+const INTERACT_COOLDOWN := 3.0
+const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Crate.gd's PICKUP_RANGE is the real check
+const BOT_CARRY_DURATION := 2.5
 
 @export var bot_mode := false
 @export var bot_side := -1.0 # -1 = approaches from the left, 1 = from the right
@@ -28,8 +31,11 @@ const SMOOTHING_RATE := 15.0 # matches Crate.gd — see its comment for why this
 var _bot_t := 0.0
 var _crate: Node2D
 var target_position: Vector2
+var _bot_interact_cooldown := 0.0
+var _bot_carry_timer := 0.0
 
 func _ready() -> void:
+	add_to_group("player") # so Crate.gd can find whoever is carrying it
 	# Without this, physics interpolation (see project.godot) would try to
 	# smoothly slide this node from wherever it defaulted to (0,0) to its
 	# actual spawn position, producing a brief visible "zoom in" on spawn.
@@ -66,16 +72,22 @@ func _physics_process(delta: float) -> void:
 		return # smoothing now happens in _process, see below
 
 	var dir := Vector2.ZERO
+	var interact_pressed := false
 	if bot_mode:
 		dir = _bot_input(delta)
+		_bot_maybe_interact(delta)
 	elif multiplayer.is_server():
 		# This whole branch only ever runs for the ONE player this process
 		# owns (is_multiplayer_authority() above), so "is this process the
 		# host" is exactly the same question as "is this the host's own
 		# player" — no per-player role tracking needed.
 		dir = Input.get_vector("host_move_left", "host_move_right", "host_move_up", "host_move_down")
+		interact_pressed = Input.is_action_just_pressed("host_interact")
 	else:
 		dir = Input.get_vector("client_move_left", "client_move_right", "client_move_up", "client_move_down")
+		interact_pressed = Input.is_action_just_pressed("client_interact")
+	if interact_pressed:
+		_try_interact_with_crate()
 	velocity = dir * SPEED
 	move_and_slide()
 	_push_rigid_bodies(delta)
@@ -103,16 +115,51 @@ func _push_rigid_bodies(delta: float) -> void:
 				collider.rpc_id(collider.get_multiplayer_authority(), "request_push", impulse)
 
 func _bot_input(delta: float) -> Vector2:
-	# Walk toward the crate's CURRENT position (not a fixed point) from
-	# bot_side, then oscillate in and out of it so both players keep
-	# contesting the crate all test long even as pushing moves it around.
 	if _crate == null:
 		_crate = get_tree().get_first_node_in_group("crate")
 		if _crate == null:
 			return Vector2.ZERO
+	if _crate.carrier_id == multiplayer.get_unique_id():
+		# Carrying it: walk it in a simple direction instead of "approach
+		# the crate," which would be a feedback loop now that the crate's
+		# own position is pinned to ours.
+		_bot_carry_timer += delta
+		return Vector2(bot_side, 0.3).normalized()
+	# Walk toward the crate's CURRENT position (not a fixed point) from
+	# bot_side, then oscillate in and out of it so both players keep
+	# contesting the crate all test long even as pushing moves it around.
 	_bot_t += delta
 	var target := _crate.global_position + Vector2(bot_side * (50.0 + 35.0 * sin(_bot_t * 1.3)), 0.0)
 	var to_target := target - global_position
 	if to_target.length() < 4.0:
 		return Vector2.ZERO
 	return to_target.normalized()
+
+## Scripted stand-in for pressing the interact key: try a pickup once close
+## enough to a free crate, hold it briefly, then drop it — repeatedly, for
+## the whole test — so the automated run exercises pickup/drop the same way
+## the manual push test exercised pushing.
+func _bot_maybe_interact(delta: float) -> void:
+	_bot_interact_cooldown -= delta
+	if _crate == null or _bot_interact_cooldown > 0.0:
+		return
+	var my_id := multiplayer.get_unique_id()
+	if _crate.carrier_id == my_id:
+		if _bot_carry_timer >= BOT_CARRY_DURATION:
+			_try_interact_with_crate()
+			_bot_interact_cooldown = INTERACT_COOLDOWN
+			_bot_carry_timer = 0.0
+	elif _crate.carrier_id == 0 and global_position.distance_to(_crate.global_position) < BOT_PICKUP_RANGE:
+		_try_interact_with_crate()
+		_bot_interact_cooldown = INTERACT_COOLDOWN
+
+func _try_interact_with_crate() -> void:
+	if _crate == null:
+		_crate = get_tree().get_first_node_in_group("crate")
+		if _crate == null:
+			return
+	var my_id := multiplayer.get_unique_id()
+	if _crate.carrier_id == my_id:
+		_crate.try_drop(my_id)
+	elif _crate.carrier_id == 0:
+		_crate.try_pickup(my_id, global_position)
