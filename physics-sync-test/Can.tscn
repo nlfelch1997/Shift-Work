@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3 uid="uid://canscn0001"]
+
+[ext_resource type="Script" path="res://Carryable.gd" id="1"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_can"]
+radius = 12.0
+
+[node name="Can" type="RigidBody2D"]
+mass = 0.3
+gravity_scale = 0.0
+linear_damp = 1.5
+angular_damp = 1.5
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_can")
+
+[node name="Polygon2D" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(12, 0, 8.49, 8.49, 0, 12, -8.49, 8.49, -12, 0, -8.49, -8.49, 0, -12, 8.49, -8.49)
+color = Color(0.75, 0.78, 0.82, 1)
+
+[node name="Carryable" type="Node" parent="."]
+script = ExtResource("1")

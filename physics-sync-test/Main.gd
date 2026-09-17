@@ -17,16 +17,20 @@ extends Node2D
 ## is processed, on every peer, including peers that join late.
 
 const PlayerScene := preload("res://Player.tscn")
-const CRATE_START := Vector2(480.0, 270.0)
+const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
 
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
 @onready var join_button: Button = $MenuLayer/Menu/JoinButton
 @onready var debug_label: Label = $DebugLayer/DebugLabel
-@onready var crate: RigidBody2D = $Crate
 @onready var player_spawner: MultiplayerSpawner = $PlayerSpawner
 @onready var players_root: Node2D = $Players
 
+## Every RigidBody2D carrying a Carryable child, found generically instead
+## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
+## list is what proves the pickup/carry system doesn't secretly still only
+## work for one specific object.
+var carryable_objects: Array[Node] = []
 var players := {} # peer_id -> Player node (populated on every peer)
 var bot_mode := false
 var bot_run_seconds := 20.0
@@ -37,7 +41,10 @@ var bot_run_seconds := 20.0
 var connect_port := Net.PORT
 
 func _ready() -> void:
-	crate.position = CRATE_START
+	# Children's _ready() runs before their parent's in Godot, so every
+	# Carryable component has already added its body to the "carryable"
+	# group by the time this line runs.
+	carryable_objects = get_tree().get_nodes_in_group("carryable")
 	player_spawner.spawn_function = _spawn_player_node
 
 	multiplayer.peer_connected.connect(_on_peer_connected)
@@ -123,16 +130,22 @@ func _on_peer_disconnected(id: int) -> void:
 	if multiplayer.is_server() and players.has(id):
 		players[id].queue_free()
 	players.erase(id)
-	crate.force_drop_if_carrier(id)
+	for obj in carryable_objects:
+		obj.get_node("Carryable").force_drop_if_carrier(id)
 
-## Spawns players spread evenly around the crate (up to Net.MAX_PEERS) so
-## 3-4 players can each approach from a different direction, instead of the
-## original 2-player left/right split.
+## Spawns players spread evenly around SPAWN_CENTER (up to Net.MAX_PEERS) so
+## 3-4 players can each approach from a different direction, and assigns
+## each one a "primary" object to contest — round-robin across whatever
+## carryable objects exist — so with N objects and M players, contention
+## spreads across all of them instead of everyone piling onto one.
 func _spawn_player(id: int) -> void:
 	var index := players.size()
 	var angle := index * (TAU / float(Net.MAX_PEERS))
-	var spawn_pos := CRATE_START + Vector2.RIGHT.rotated(angle) * 220.0
-	player_spawner.spawn({"id": id, "pos": spawn_pos, "angle": angle})
+	var spawn_pos := SPAWN_CENTER + Vector2.RIGHT.rotated(angle) * 220.0
+	var target_name := ""
+	if not carryable_objects.is_empty():
+		target_name = carryable_objects[index % carryable_objects.size()].name
+	player_spawner.spawn({"id": id, "pos": spawn_pos, "angle": angle, "target": target_name})
 
 ## Runs on every peer (called locally on the authority by .spawn(), and
 ## remotely on everyone else once MultiplayerSpawner delivers the spawn
@@ -145,6 +158,7 @@ func _spawn_player_node(data: Dictionary) -> Node:
 	p.set_multiplayer_authority(id)
 	p.bot_mode = bot_mode
 	p.bot_angle = data["angle"]
+	p.bot_target_name = data["target"]
 	players[id] = p
 	return p
 
@@ -153,12 +167,11 @@ func _process(_delta: float) -> void:
 	var role := "OFFLINE"
 	if connected:
 		role = "HOST" if multiplayer.is_server() else "CLIENT"
-	var carried := "carried by %d" % crate.carrier_id if crate.carrier_id != 0 else "free"
-	debug_label.text = "peer id: %d  (%s)\ncrate pos: (%.1f, %.1f)\ncrate vel: (%.1f, %.1f)\ncrate: %s\nplayers: %d" % [
-		multiplayer.get_unique_id() if connected else 0,
-		role,
-		crate.position.x, crate.position.y,
-		crate.linear_velocity.x, crate.linear_velocity.y,
-		carried,
-		players.size(),
-	]
+	var lines := ["peer id: %d  (%s)  players: %d" % [
+		multiplayer.get_unique_id() if connected else 0, role, players.size(),
+	]]
+	for obj in carryable_objects:
+		var c: Node = obj.get_node("Carryable")
+		var carried := "carried by %d" % c.carrier_id if c.carrier_id != 0 else "free"
+		lines.append("%s: (%.0f, %.0f)  %s" % [obj.name, obj.position.x, obj.position.y, carried])
+	debug_label.text = "\n".join(lines)

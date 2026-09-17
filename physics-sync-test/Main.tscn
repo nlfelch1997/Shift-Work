@@ -1,7 +1,9 @@
-[gd_scene load_steps=8 format=3 uid="uid://mainscn0001"]
+[gd_scene load_steps=10 format=3 uid="uid://mainscn0001"]
 
 [ext_resource type="Script" path="res://Main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://Crate.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://Can.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://Box.tscn" id="4"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_h"]
 size = Vector2(960, 20)
@@ -48,6 +50,12 @@ shape = SubResource("RectangleShape2D_v")
 [node name="Crate" parent="." instance=ExtResource("2")]
 position = Vector2(480, 270)
 
+[node name="Can" parent="." instance=ExtResource("3")]
+position = Vector2(280, 150)
+
+[node name="Box" parent="." instance=ExtResource("4")]
+position = Vector2(680, 390)
+
 [node name="Players" type="Node2D" parent="."]
 
 [node name="PlayerSpawner" type="MultiplayerSpawner" parent="."]
@@ -80,8 +88,8 @@ text = "Join 127.0.0.1"
 [node name="DebugLabel" type="Label" parent="DebugLayer"]
 offset_left = 10.0
 offset_top = 10.0
-offset_right = 300.0
-offset_bottom = 100.0
+offset_right = 320.0
+offset_bottom = 180.0
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_styles/normal = SubResource("StyleBoxFlat_debug")
-text = "peer id: -\ncrate pos: (-, -)\ncrate vel: (-, -)"
+text = "peer id: -"
