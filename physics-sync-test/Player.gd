@@ -247,7 +247,7 @@ func _bot_contest_maybe_interact(delta: float) -> void:
 ## the whole carry trip (cleared only once the trip ends) fixes it.
 var _bot_committed_slot_pos = null # Variant: Vector2 once committed, else null
 
-func _bot_stocker_input(delta: float) -> Vector2:
+func _bot_stocker_input(_delta: float) -> Vector2:
 	var my_id := multiplayer.get_unique_id()
 	var carried := _find_carried_object(my_id)
 	if carried == null:
@@ -255,10 +255,10 @@ func _bot_stocker_input(delta: float) -> Vector2:
 		var target := _bot_find_product_target()
 		if target == null:
 			return Vector2.ZERO
-		var to_target := target.global_position - global_position
-		if to_target.length() < BOT_PICKUP_RANGE:
+		var to_product := target.global_position - global_position
+		if to_product.length() < BOT_PICKUP_RANGE:
 			return Vector2.ZERO
-		return to_target.normalized()
+		return to_product.normalized()
 	if _bot_committed_slot_pos == null:
 		_bot_committed_slot_pos = _bot_find_empty_slot()
 	if _bot_committed_slot_pos == null:
@@ -267,10 +267,10 @@ func _bot_stocker_input(delta: float) -> Vector2:
 	# Carryable.CARRY_OFFSET — lands ON the slot marker when dropped, not
 	# just near the bot itself.
 	var approach: Vector2 = _bot_committed_slot_pos - CarryableScript.CARRY_OFFSET
-	var to_target := approach - global_position
-	if to_target.length() < 6.0:
+	var to_approach := approach - global_position
+	if to_approach.length() < 6.0:
 		return Vector2.ZERO
-	return to_target.normalized()
+	return to_approach.normalized()
 
 func _bot_stocker_maybe_interact(delta: float) -> void:
 	_bot_interact_cooldown -= delta

@@ -9,7 +9,6 @@ config_version=5
 config/name="ShiftWork Physics Sync Test"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
-config/icon="res://icon.svg"
 
 [autoload]
 
