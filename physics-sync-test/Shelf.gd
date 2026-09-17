@@ -26,6 +26,18 @@ class_name Shelf
 ## KNOCK_SPEED (how hard a hit has to be to dislodge a placed item) and
 ## SETTLE_TIME (how long it must rest before it counts) are placeholder
 ## numbers too — real values want playtesting, not a guess made in code.
+##
+## VISUAL NOTE (in code, not the .tscn — Godot's scene-file format doesn't
+## reliably support inline comments; one placed directly above a property
+## line there once silently dropped that property's value entirely instead
+## of erroring, which is exactly the kind of thing to catch by checking the
+## actual loaded value, not just "did it fail to load"): each shelf's drawn
+## Polygon2D is deeper than its CollisionShape2D on purpose. Slots sit in
+## FRONT of the collision box (see slots' local y vs. the collision shape's
+## half-height), so a player/bot can physically reach them instead of the
+## shelf's own solid body blocking that space — the drawing just extends to
+## match, so placed items look like they're sitting on the shelf instead of
+## floating in the open floor in front of it.
 
 const CAPTURE_RADIUS := 26.0 # how close to a slot marker counts as "placed" — placeholder
 const LEAVE_RADIUS := CAPTURE_RADIUS * 1.5 # hysteresis band so a placed item doesn't flicker right at the boundary
