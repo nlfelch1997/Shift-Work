@@ -28,3 +28,12 @@ func join_game(address: String, port := PORT) -> bool:
 	multiplayer.multiplayer_peer = peer
 	print("[Net] Connecting to %s:%d ..." % [address, port])
 	return true
+
+## Calling multiplayer.get_unique_id()/is_multiplayer_authority() on a peer
+## that has just disconnected throws "multiplayer instance isn't active" —
+## it briefly stays non-null but reports itself as inactive. Anything
+## polling the network state every frame (like Crate/Player's _process)
+## should check this first.
+func is_active() -> bool:
+	var peer := multiplayer.multiplayer_peer
+	return peer != null and peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED

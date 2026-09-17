@@ -60,12 +60,10 @@ func _ready() -> void:
 	add_child(sync)
 
 func _physics_process(delta: float) -> void:
-	if not is_multiplayer_authority():
-		# Not our player to control — smoothly catch up to the latest
-		# network sample instead of snapping straight to it.
-		var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
-		position = position.lerp(target_position, t)
+	if not Net.is_active():
 		return
+	if not is_multiplayer_authority():
+		return # smoothing now happens in _process, see below
 
 	var dir := Vector2.ZERO
 	if bot_mode:
@@ -82,6 +80,14 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 	_push_rigid_bodies(delta)
 	target_position = position
+
+## Runs in _process (tied to actual render rate) rather than
+## _physics_process (fixed 60Hz) — see the matching comment in Crate.gd.
+func _process(delta: float) -> void:
+	if not Net.is_active() or is_multiplayer_authority():
+		return
+	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
+	position = position.lerp(target_position, t)
 
 ## move_and_slide() only stops the character at a RigidBody2D — it does not
 ## push it. We have to detect the contact and apply the force ourselves.

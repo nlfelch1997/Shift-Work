@@ -72,15 +72,24 @@ func _ready() -> void:
 	sync.set_multiplayer_authority(1) # set before entering the tree — see Player.gd
 	add_child(sync)
 
-func _physics_process(delta: float) -> void:
+func _physics_process(_delta: float) -> void:
+	if not Net.is_active():
+		return
 	if is_multiplayer_authority():
 		target_position = position
 		target_rotation = rotation
-	else:
-		var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
-		position = position.lerp(target_position, t)
-		rotation = lerp_angle(rotation, target_rotation, t)
 	GameLog.log_crate_state(multiplayer.get_unique_id(), position, linear_velocity)
+
+## The smoothing itself runs in _process (tied to actual render rate), not
+## _physics_process (fixed 60Hz) — otherwise the display only updates 60
+## times/sec regardless of monitor refresh rate, which still looks choppy
+## on anything faster than 60Hz even with lerp softening each step.
+func _process(delta: float) -> void:
+	if not Net.is_active() or is_multiplayer_authority():
+		return
+	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
+	position = position.lerp(target_position, t)
+	rotation = lerp_angle(rotation, target_rotation, t)
 
 ## A player who collided with this crate calls this (locally if they're
 ## already the authority, over RPC otherwise) to actually move it. Only the

@@ -118,8 +118,7 @@ func _spawn_player_node(data: Dictionary) -> Node:
 	return p
 
 func _process(_delta: float) -> void:
-	var peer: MultiplayerPeer = multiplayer.multiplayer_peer
-	var connected := peer != null and peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
+	var connected := Net.is_active()
 	var role := "OFFLINE"
 	if connected:
 		role = "HOST" if multiplayer.is_server() else "CLIENT"
