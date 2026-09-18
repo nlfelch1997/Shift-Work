@@ -95,10 +95,10 @@ const WORLD_HEIGHT := ROOM_HEIGHT
 ## comment on why), so this table and the actual physical doors can't
 ## quietly drift apart from each other.
 const SECTIONS := [
-	{"name": "Dry Goods", "room_index": 1, "required_day": 1},
-	{"name": "Meat/Deli", "room_index": 2, "required_day": 3},
-	{"name": "Dairy/Frozen", "room_index": 3, "required_day": 5},
-	{"name": "Bakery", "room_index": 4, "required_day": 7},
+	{"name": "Dry Goods", "node_name": "DryGoods", "room_index": 1, "required_day": 1},
+	{"name": "Meat/Deli", "node_name": "MeatDeli", "room_index": 2, "required_day": 3},
+	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "room_index": 3, "required_day": 5},
+	{"name": "Bakery", "node_name": "Bakery", "room_index": 4, "required_day": 7},
 ]
 ## Per-section accent color, shared by that section's spawned products
 ## (_spawn_product_node below) and its shelf slot indicators
@@ -114,6 +114,11 @@ const SECTION_COLORS := {
 	"Dairy/Frozen": Color(0.35, 0.6, 0.9, 1),
 	"Bakery": Color(0.85, 0.6, 0.25, 1),
 }
+## Multiplies onto a locked section's normal shelf/cashier/background/label
+## color (_apply_section_lock_visuals below) so it reads as visibly
+## inactive rather than identical to an unlocked one — placeholder
+## darkening amount, wants a look before calling it final.
+const LOCKED_DIM := Color(0.55, 0.55, 0.55, 1)
 ## Debug/testing stand-in for the real 7-day progression the brief
 ## describes — settable via --day=N (see _parse_cli_args), since what
 ## actually carries over day to day, when a shift ends "the day", etc.
@@ -266,7 +271,8 @@ func _ready() -> void:
 	host_button.pressed.connect(_on_host_pressed)
 	join_button.pressed.connect(_on_join_pressed)
 
-	_parse_cli_args()
+	_parse_cli_args() # sets debug_day (synchronously, before any internal await — see its own comment) and calls _configure_gates()
+	_apply_section_lock_visuals() # must run AFTER _parse_cli_args(), since it needs the now-final debug_day
 
 func _parse_cli_args() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -316,7 +322,7 @@ func _configure_gates() -> void:
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
 ## shelf to a section by WORLD x-position (same room_index math
-## _is_unlocked_at_x uses below), not by node path or name, so it doesn't
+## is_unlocked_at_x uses below), not by node path or name, so it doesn't
 ## care what a given section's shelves happen to be called.
 func _apply_section_accent_colors() -> void:
 	for shelf_body in shelves:
@@ -327,6 +333,32 @@ func _apply_section_accent_colors() -> void:
 				shelf.accent_color = SECTION_COLORS[section["name"]]
 				shelf.apply_accent_color()
 				break
+
+## Playtest feedback: a locked section previously looked completely
+## normal except for the Gate's own thin barrier line at its entrance —
+## easy to miss, and gave no sense at a glance that the whole section was
+## inactive. Darkens every locked section's shelves, cashier, floor tint,
+## and label together, once, right after debug_day is finalized (must run
+## AFTER _parse_cli_args() — see _ready()'s call order comment). Unlocked
+## sections are untouched, including Dry Goods, which is never locked.
+func _apply_section_lock_visuals() -> void:
+	for section in SECTIONS:
+		if debug_day >= section["required_day"]:
+			continue # unlocked — leave it at full color
+		var room_x: float = section["room_index"] * ROOM_WIDTH
+		var room_x_end: float = room_x + ROOM_WIDTH
+		for shelf_body in shelves:
+			if shelf_body.global_position.x >= room_x and shelf_body.global_position.x < room_x_end:
+				shelf_body.modulate *= LOCKED_DIM
+		for cashier_body in cashiers:
+			if cashier_body.global_position.x >= room_x and cashier_body.global_position.x < room_x_end:
+				cashier_body.modulate *= LOCKED_DIM
+		var bg := get_node_or_null("RoomBackgrounds/%sBg" % section["node_name"])
+		if bg:
+			bg.color *= LOCKED_DIM
+		var label := get_node_or_null("SectionLabels/%s/Label" % section["node_name"])
+		if label:
+			label.modulate = LOCKED_DIM
 
 func _on_host_pressed() -> void:
 	menu_layer.hide()
@@ -487,7 +519,25 @@ func _unlocked_sections() -> Array:
 ## — a shelf behind a locked gate physically exists (so raising debug_day
 ## mid-testing doesn't need new scene content) but isn't "in play" for
 ## either purpose until its gate opens.
-func _is_unlocked_at_x(world_x: float) -> bool:
+##
+## Public (no underscore), unlike this file's other section helpers,
+## because Customer.gd calls it too (via get_tree().current_scene, not a
+## preload — Main.gd already preloads Customer.tscn to spawn customers, so
+## preloading Main.gd back from Customer.gd would be a cyclic preload,
+## same real GDScript failure mode Player.gd's WORLD_WIDTH/HEIGHT comment
+## already flags. A live node reference from the scene tree doesn't have
+## that restriction, since it's a runtime lookup, not a parse-time
+## import). Playtest feedback found shopper/disruptive target-picking
+## (Customer.gd's _find_stocked_item/_find_nearest_cashier/
+## _pick_browse_target/_pick_disruptive_target) had no concept of
+## section-lock at all — a shopper standing near a boundary could target
+## the NEAREST cashier by raw distance regardless of which side of a
+## locked gate it was on, then get stuck trying to reach it, which read as
+## "the barrier isn't really blocking anything." This is the fix: those
+## searches now skip anything in a locked section outright, so a shopper
+## has no awareness a locked section's cashier/shelves exist at all, not
+## just a physical inability to reach them.
+func is_unlocked_at_x(world_x: float) -> bool:
 	var idx := int(floor(world_x / ROOM_WIDTH))
 	for section in SECTIONS:
 		if section["room_index"] == idx:
@@ -600,7 +650,7 @@ func _process(delta: float) -> void:
 	# (so raising debug_day mid-testing doesn't need new scene content) but
 	# are never reachable, so counting them would misreport "half the
 	# store sits empty" against sections nobody could have stocked yet.
-	var unlocked_shelves := shelves.filter(func(s): return _is_unlocked_at_x(s.global_position.x))
+	var unlocked_shelves := shelves.filter(func(s): return is_unlocked_at_x(s.global_position.x))
 	# Machine-readable, same purpose as GameLog's DATA lines: lets a test run
 	# capture every peer's own view of shelf-fill state to a log file and
 	# diff them afterward, to confirm the replicated "filled" array (see

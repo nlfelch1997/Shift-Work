@@ -305,6 +305,8 @@ func _browse_input(delta: float) -> Vector2:
 func _pick_browse_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		if not _is_section_unlocked(shelf_body.global_position.x):
+			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var slot_pos = shelf.nearest_empty_slot_position(global_position)
 		if slot_pos != null:
@@ -312,6 +314,25 @@ func _pick_browse_target() -> Vector2:
 	if candidates.is_empty() or randf() < 0.3:
 		return global_position + Vector2(randf_range(-BROWSE_RADIUS, BROWSE_RADIUS), randf_range(-BROWSE_RADIUS, BROWSE_RADIUS))
 	return candidates[randi() % candidates.size()]
+
+## Week 6 Part 1 follow-up (playtest feedback): every target search below
+## (this one, _find_stocked_item, _find_nearest_cashier,
+## _pick_disruptive_target) used to consider EVERY shelf/cashier in the
+## game regardless of section-lock state, picking whichever was
+## geometrically nearest — a shopper standing near a boundary could end up
+## targeting a locked section's cashier, then get stuck trying to reach
+## it, which read as "the barrier isn't really blocking anything" even
+## when it was. Fixed by having customers skip locked-section shelves/
+## cashiers outright: no awareness they exist, not just a physical
+## inability to reach them, matching the brief's explicit ask. Not
+## preloaded from Main.gd — Main.gd already preloads Customer.tscn to
+## spawn customers, so preloading Main.gd back from here would be a
+## cyclic preload, a real GDScript failure mode, not just messier style
+## (see Player.gd's WORLD_WIDTH/HEIGHT comment for the same reasoning).
+## get_tree().current_scene is a live node reference, not a parse-time
+## import, so it doesn't have that restriction.
+func _is_section_unlocked(world_x: float) -> bool:
+	return get_tree().current_scene.is_unlocked_at_x(world_x)
 
 func _find_carried_by_me() -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
@@ -328,6 +349,8 @@ func _find_stocked_item() -> Node2D:
 	var best: Node2D = null
 	var best_dist := INF
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		if not _is_section_unlocked(shelf_body.global_position.x):
+			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var occ: RigidBody2D = shelf.any_filled_object()
 		if occ == null:
@@ -342,6 +365,8 @@ func _find_nearest_cashier() -> Node:
 	var best: Node = null
 	var best_dist := INF
 	for cashier_body in get_tree().get_nodes_in_group("cashier"):
+		if not _is_section_unlocked(cashier_body.global_position.x):
+			continue
 		var d := global_position.distance_to(cashier_body.global_position)
 		if d < best_dist:
 			best_dist = d
@@ -367,6 +392,8 @@ func _disruptive_input(delta: float) -> Vector2:
 func _pick_disruptive_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		if not _is_section_unlocked(shelf_body.global_position.x):
+			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var occ: RigidBody2D = shelf.any_filled_object()
 		if occ:
