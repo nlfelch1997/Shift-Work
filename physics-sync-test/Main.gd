@@ -42,20 +42,35 @@ extends Node2D
 ## agnostic), just backwards art, left for real slot art later rather than
 ## a dozen per-node rotation overrides to un-rotate text in a greybox.
 ##
-## PART 1 — full store layout (Week 6): Main.tscn is now 5 uniform
-## ROOM_WIDTH x ROOM_HEIGHT rooms in a single left-to-right row sharing one
-## continuous world — room 0 is the break room (always open, no gate),
-## rooms 1-4 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind its
-## own Gate (see Gate.gd) except the break-room<->Dry-Goods doorway, which
-## has no gate at all since Dry Goods is available from Day 1. Reused
-## Shelf.tscn/Product.tscn/Cashier.tscn verbatim per the brief's "light
-## re-theming, not unique content per zone" — each section's shelves are
-## the identical Shelf1-4 layout Dry Goods already used, just modulate-
-## tinted, and every room additionally gets a flat background-color
-## Polygon2D for at-a-glance section identification. The store being wider
-## than one screen is why Player.tscn now carries a Camera2D (see
-## Player.gd) — this project had no scrolling/camera concept before Part 1
-## needed one.
+## PART 1 — full store layout (Week 6): Main.tscn is 5 uniform ROOM_WIDTH x
+## ROOM_HEIGHT rooms in a single left-to-right row sharing one continuous
+## world — room 0 is the break room (always open, no gate), rooms 1-4 are
+## Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind its own Gate (see
+## Gate.gd) except the break-room<->Dry-Goods doorway, which has no gate at
+## all since Dry Goods is available from Day 1. Reused Shelf.tscn/
+## Product.tscn/Cashier.tscn verbatim per the brief's "light re-theming,
+## not unique content per zone" — each section's shelves are the identical
+## Shelf1-4 layout Dry Goods already used, just modulate-tinted, and every
+## room additionally gets a flat background-color Polygon2D plus a large
+## text label (see Main.tscn's SectionLabels) for at-a-glance section
+## identification. The store being wider than one screen is why
+## Player.tscn now carries a Camera2D (see Player.gd) — this project had
+## no scrolling/camera concept before Part 1 needed one.
+##
+## REDESIGNED after playtest feedback: Gate.gd originally sat in a narrow
+## ~120px doorway cut into two permanent wall segments per boundary, and
+## multiple NPCs pathing through that one opening at once jammed up. Fixed
+## by removing the doorway concept entirely — a Gate's own collision now
+## spans the section boundary's FULL playable height (500px, see
+## Gate.tscn), so a locked boundary is sealed edge-to-edge (nothing to
+## funnel through even while locked) and an unlocked one opens across the
+## WHOLE boundary at once. Main.tscn no longer has separate wall segments
+## at a section boundary at all. SECTION_COLORS below is the other
+## playtest-driven addition: each section's products and shelf slot
+## indicators now share an accent color (Shelf.gd's apply_accent_color(),
+## called from _apply_section_accent_colors() below) so a product visually
+## signals which shelf it belongs on, the same way the indicators already
+## signal an empty slot.
 
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
@@ -85,6 +100,20 @@ const SECTIONS := [
 	{"name": "Dairy/Frozen", "room_index": 3, "required_day": 5},
 	{"name": "Bakery", "room_index": 4, "required_day": 7},
 ]
+## Per-section accent color, shared by that section's spawned products
+## (_spawn_product_node below) and its shelf slot indicators
+## (_apply_section_accent_colors below) — the color-coordination playtest
+## request. Dry Goods keeps the ORIGINAL always-yellow indicator color
+## exactly (1, 0.9, 0.3) rather than picking something new for it; its
+## products change color to match (were plain green before), not the
+## other way around, since the indicator color already existed everywhere
+## and a product's color was always arbitrary.
+const SECTION_COLORS := {
+	"Dry Goods": Color(1, 0.9, 0.3, 1),
+	"Meat/Deli": Color(0.85, 0.25, 0.25, 1),
+	"Dairy/Frozen": Color(0.35, 0.6, 0.9, 1),
+	"Bakery": Color(0.85, 0.6, 0.25, 1),
+}
 ## Debug/testing stand-in for the real 7-day progression the brief
 ## describes — settable via --day=N (see _parse_cli_args), since what
 ## actually carries over day to day, when a shift ends "the day", etc.
@@ -220,6 +249,7 @@ func _ready() -> void:
 	carryable_objects = get_tree().get_nodes_in_group("carryable")
 	shelves = get_tree().get_nodes_in_group("shelf")
 	cashiers = get_tree().get_nodes_in_group("cashier")
+	_apply_section_accent_colors()
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
@@ -282,6 +312,21 @@ func _configure_gates() -> void:
 		if required_days.has(gate_body.name):
 			gate.required_day = required_days[gate_body.name]
 		gate.configure(debug_day)
+
+## Recolors every shelf's slot indicators to match its section's accent
+## color (SECTION_COLORS above), called once from _ready(). Matches each
+## shelf to a section by WORLD x-position (same room_index math
+## _is_unlocked_at_x uses below), not by node path or name, so it doesn't
+## care what a given section's shelves happen to be called.
+func _apply_section_accent_colors() -> void:
+	for shelf_body in shelves:
+		var idx := int(floor(shelf_body.global_position.x / ROOM_WIDTH))
+		for section in SECTIONS:
+			if section["room_index"] == idx:
+				var shelf: Node = shelf_body.get_node("Shelf")
+				shelf.accent_color = SECTION_COLORS[section["name"]]
+				shelf.apply_accent_color()
+				break
 
 func _on_host_pressed() -> void:
 	menu_layer.hide()
@@ -459,30 +504,51 @@ func _product_baseline() -> int:
 func _customer_baseline() -> int:
 	return CUSTOMER_BASELINE * _unlocked_sections().size()
 
-## Picks a spawn point inside a random CURRENTLY UNLOCKED section's safe
-## interior band — same shape/margins the original single-room band always
-## used (clear of shelves at local y ~42-108/432-498, the walls, and the
-## cashier), just relocated per section by its room_index. Spawning a
-## RigidBody2D (a product) overlapping a StaticBody2D's collider can make
-## the physics engine's penetration-resolution fling it at an absurd speed
-## to separate them, the same class of bug Week 1-3 hit with fast-moving
-## objects tunneling through thin walls — keeping spawns in open floor
-## avoids ever creating that overlap in the first place. Never returns a
-## point in a locked section or the break room: there's nothing to stock
-## or shop for there, and a locked section has no way out anyway.
-func _pick_unlocked_spawn_pos() -> Vector2:
+## Picks a random CURRENTLY UNLOCKED section (never the break room: nothing
+## to stock or shop for there, and a locked section has no way out anyway).
+func _pick_unlocked_section() -> Dictionary:
 	var unlocked := _unlocked_sections()
-	var section = unlocked[randi() % unlocked.size()] # always has at least Dry Goods (required_day=1)
+	return unlocked[randi() % unlocked.size()] # always has at least Dry Goods (required_day=1)
+
+## A spawn point inside the given section's safe interior band — same
+## shape/margins the original single-room band always used (clear of
+## shelves at local y ~42-108/432-498, the walls, and the cashier), just
+## relocated per section by its room_index. Spawning a RigidBody2D (a
+## product) overlapping a StaticBody2D's collider can make the physics
+## engine's penetration-resolution fling it at an absurd speed to separate
+## them, the same class of bug Week 1-3 hit with fast-moving objects
+## tunneling through thin walls — keeping spawns in open floor avoids ever
+## creating that overlap in the first place.
+func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	var room_x: float = section["room_index"] * ROOM_WIDTH
 	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(120.0, 360.0))
 
+func _pick_unlocked_spawn_pos() -> Vector2:
+	return _spawn_pos_in_section(_pick_unlocked_section())
+
+## Products are colored to match the section they spawn in (SECTION_COLORS
+## above), the same accent color as that section's shelf slot indicators —
+## the color-coordination playtest request. A product spawned for Dry
+## Goods only ever gets carried onto a Dry Goods shelf in the normal flow
+## anyway (shoppers/players walk it to whichever shelf is closest, which
+## is overwhelmingly its own section), so tagging it by spawn section
+## reads as "this belongs here" without needing an actual placement
+## restriction — Shelf.gd still accepts any free item on any shelf,
+## unchanged, matching how this project's components generally stay
+## ignorant of concerns outside their own job.
 func _spawn_product(index: int) -> void:
-	product_spawner.spawn({"index": index, "pos": _pick_unlocked_spawn_pos()})
+	var section := _pick_unlocked_section()
+	product_spawner.spawn({
+		"index": index,
+		"pos": _spawn_pos_in_section(section),
+		"color": SECTION_COLORS[section["name"]],
+	})
 
 func _spawn_product_node(data: Dictionary) -> Node:
 	var p := ProductScene.instantiate()
 	p.name = "Product%d" % data["index"]
 	p.position = data["pos"]
+	p.get_node("Polygon2D").color = data["color"]
 	return p
 
 ## Same safe spawn logic as products — customers are CharacterBody2Ds, not

@@ -45,6 +45,18 @@ const REST_SPEED := 40.0 # must be moving slower than this to start settling int
 const KNOCK_SPEED := 120.0 # moving faster than this while placed immediately un-places it — placeholder
 const SETTLE_TIME := 0.35 # seconds of continuous rest before a candidate actually counts as placed
 
+## Color-coordination follow-up (playtest feedback): each section's slot
+## Indicator outlines get recolored to match that section's product
+## accent color, via apply_accent_color() below, so a product's own color
+## and the outline of the shelf it belongs on visually pair up at a
+## glance — the request was explicitly framed as "similar to how the
+## shelf slot markers already make placement targets clear," so extending
+## the EXISTING indicator rather than adding new markers. Defaults to the
+## original always-yellow indicator color, so a shelf nobody bothers to
+## configure looks exactly like it always did — no visual regression risk
+## from a missed wiring step.
+@export var accent_color := Color(1, 0.9, 0.3, 1)
+
 var body: StaticBody2D # the shelf this component is attached to
 var slots: Array[Marker2D] = []
 ## Replicated so every peer can render "how full" this shelf is without
@@ -145,6 +157,15 @@ func _find_settling_candidate(slot_index: int) -> RigidBody2D:
 			continue
 		return obj
 	return null
+
+## Called explicitly by Main.gd right after it sets accent_color (this
+## component's own _ready() already ran by then, driven by Godot's
+## children-before-parent order, so it can't pick up a later override on
+## its own) — same "export var + explicit apply call, run by Main.gd after
+## setting it" shape as Gate.gd's configure().
+func apply_accent_color() -> void:
+	for slot in slots:
+		slot.get_node("Indicator").default_color = accent_color
 
 func contains(obj: Node) -> bool:
 	return obj in _occupant

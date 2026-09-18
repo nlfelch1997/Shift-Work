@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://mainscn0001"]
+[gd_scene load_steps=8 format=3 uid="uid://mainscn0001"]
 
 [ext_resource type="Script" path="res://Main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://Shelf.tscn" id="2"]
@@ -10,9 +10,6 @@ size = Vector2(4800, 20)
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_v"]
 size = Vector2(20, 540)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_divider"]
-size = Vector2(20, 200)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_debug"]
 bg_color = Color(0, 0, 0, 0.55)
@@ -49,54 +46,6 @@ position = Vector2(4790, 270)
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/WallRight"]
 shape = SubResource("RectangleShape2D_v")
-
-[node name="Divider1Upper" type="StaticBody2D" parent="Walls"]
-position = Vector2(960, 110)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider1Upper"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider1Lower" type="StaticBody2D" parent="Walls"]
-position = Vector2(960, 430)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider1Lower"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider2Upper" type="StaticBody2D" parent="Walls"]
-position = Vector2(1920, 110)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider2Upper"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider2Lower" type="StaticBody2D" parent="Walls"]
-position = Vector2(1920, 430)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider2Lower"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider3Upper" type="StaticBody2D" parent="Walls"]
-position = Vector2(2880, 110)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider3Upper"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider3Lower" type="StaticBody2D" parent="Walls"]
-position = Vector2(2880, 430)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider3Lower"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider4Upper" type="StaticBody2D" parent="Walls"]
-position = Vector2(3840, 110)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider4Upper"]
-shape = SubResource("RectangleShape2D_divider")
-
-[node name="Divider4Lower" type="StaticBody2D" parent="Walls"]
-position = Vector2(3840, 430)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Walls/Divider4Lower"]
-shape = SubResource("RectangleShape2D_divider")
 
 [node name="Gates" type="Node2D" parent="."]
 
@@ -248,6 +197,73 @@ modulate = Color(1.3, 1.05, 0.65, 1)
 
 [node name="Cashier1" parent="Sections/Bakery" instance=ExtResource("3")]
 position = Vector2(3910, 270)
+
+[node name="SectionLabels" type="Node2D" parent="."]
+
+[node name="BreakRoom" type="Node2D" parent="SectionLabels"]
+position = Vector2(480, 50)
+
+[node name="Label" type="Label" parent="SectionLabels/BreakRoom"]
+offset_left = -150.0
+offset_top = -20.0
+offset_right = 150.0
+offset_bottom = 20.0
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.2, 0.18, 0.15, 1)
+horizontal_alignment = 1
+text = "BREAK ROOM"
+
+[node name="DryGoods" type="Node2D" parent="SectionLabels"]
+position = Vector2(1440, 50)
+
+[node name="Label" type="Label" parent="SectionLabels/DryGoods"]
+offset_left = -150.0
+offset_top = -20.0
+offset_right = 150.0
+offset_bottom = 20.0
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.2, 0.18, 0.15, 1)
+horizontal_alignment = 1
+text = "DRY GOODS"
+
+[node name="MeatDeli" type="Node2D" parent="SectionLabels"]
+position = Vector2(2400, 50)
+
+[node name="Label" type="Label" parent="SectionLabels/MeatDeli"]
+offset_left = -150.0
+offset_top = -20.0
+offset_right = 150.0
+offset_bottom = 20.0
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.2, 0.18, 0.15, 1)
+horizontal_alignment = 1
+text = "MEAT / DELI"
+
+[node name="DairyFrozen" type="Node2D" parent="SectionLabels"]
+position = Vector2(3360, 50)
+
+[node name="Label" type="Label" parent="SectionLabels/DairyFrozen"]
+offset_left = -150.0
+offset_top = -20.0
+offset_right = 150.0
+offset_bottom = 20.0
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.2, 0.18, 0.15, 1)
+horizontal_alignment = 1
+text = "DAIRY / FROZEN"
+
+[node name="Bakery" type="Node2D" parent="SectionLabels"]
+position = Vector2(4320, 50)
+
+[node name="Label" type="Label" parent="SectionLabels/Bakery"]
+offset_left = -150.0
+offset_top = -20.0
+offset_right = 150.0
+offset_bottom = 20.0
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.2, 0.18, 0.15, 1)
+horizontal_alignment = 1
+text = "BAKERY"
 
 [node name="Players" type="Node2D" parent="."]
 
