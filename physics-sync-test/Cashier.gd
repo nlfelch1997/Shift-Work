@@ -15,6 +15,15 @@ class_name Cashier
 ## needing a dedicated purchase RPC of its own.
 
 const PURCHASE_RANGE := 40.0
+## How long a shopper has to stand continuously at checkout, carrying the
+## item, before the purchase completes. Not in the code before this
+## session — the brief described it as already-confirmed Week 5B behavior,
+## but the actual _physics_process below fired the purchase the instant a
+## shopper came in range, no wait at all. Added now to match the
+## description rather than argued about, since it's small, self-contained,
+## and a beat of "checking out" reads better than an instant transaction
+## anyway.
+const CHECKOUT_WAIT_SECONDS := 3.0
 
 var body: StaticBody2D
 var checkout: Marker2D
@@ -22,6 +31,13 @@ var checkout: Marker2D
 ## them re-deriving it (only the authority actually processes purchases)
 ## — same authority-computes/everyone-displays split as Shelf's `filled`.
 var total_sold: int = 0
+## Authority-only bookkeeping: carry_id -> seconds spent continuously in
+## range at THIS cashier so far. Not replicated — only the authority needs
+## it, the same "no sync needed" reasoning as Shelf.gd's _occupant array.
+## Entries for a customer who leaves range (or despawns) just go stale and
+## sit here harmlessly rather than being actively cleaned up — negligible
+## at this session's scale, not worth extra bookkeeping to avoid.
+var _waiting: Dictionary = {}
 
 func _ready() -> void:
 	body = get_parent()
@@ -39,17 +55,26 @@ func _ready() -> void:
 	sync.set_multiplayer_authority(1)
 	add_child(sync)
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority():
 		return
 	for customer in get_tree().get_nodes_in_group("customer"):
 		if customer.role != "shopper":
 			continue
+		var carry_id: int = customer.carry_id
 		if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
+			_waiting.erase(carry_id) # stepped out of range — the wait doesn't carry over if they wander back later
 			continue
-		var item := _carried_by(customer.carry_id)
-		if item:
+		var item := _carried_by(carry_id)
+		if item == null:
+			_waiting.erase(carry_id)
+			continue
+		var elapsed: float = _waiting.get(carry_id, 0.0) + delta
+		if elapsed >= CHECKOUT_WAIT_SECONDS:
+			_waiting.erase(carry_id)
 			_complete_purchase(item)
+		else:
+			_waiting[carry_id] = elapsed
 
 func _carried_by(carry_id: int) -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):

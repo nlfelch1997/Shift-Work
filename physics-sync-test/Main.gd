@@ -16,63 +16,119 @@ extends Node2D
 ## this: it guarantees a node is spawned locally before any sync data for it
 ## is processed, on every peer, including peers that join late.
 ##
-## NOTE on Main.tscn's Shelf3/Shelf4 (Week 6 greybox layout): explained
-## here, not in the .tscn, on purpose — this project already hit a real bug
-## (see "Fix shelf invisibility: .tscn inline comment silently dropped the
-## polygon") where a comment placed in a .tscn file silently corrupted the
-## property after it instead of erroring, so nothing gets commented there
-## anymore, full stop. Shelf3/Shelf4 mirror Shelf1/Shelf2 along the top wall
-## instead of inventing new wall/divider geometry: a 180° rotation flips
+## NOTE on .tscn comments: nothing gets commented in any .tscn file in this
+## project, full stop — see "Fix shelf invisibility: .tscn inline comment
+## silently dropped the polygon" in the git log. A comment placed in a
+## .tscn silently corrupted the property after it instead of erroring, so
+## every explanation that would otherwise live next to Main.tscn's node
+## definitions lives here instead.
+##
+## NOTE on each section's Shelf3/Shelf4 (Week 6 greybox layout, now reused
+## across every section — see Part 1 below): a 180° rotation flips
 ## Shelf.gd's slots (local y=-70, i.e. "in front of" an unrotated shelf
 ## toward -y) to the opposite side, so these two face DOWN into the room
 ## the same way Shelf1/2 face UP into it. Checked against Shelf.gd's own
-## collision math, not guessed: body spans y 42-108 there, slots land at
-## y=130, both clear of the top wall (inner edge y=20) and of this file's
-## PRODUCT_SPAWN_DELAY-triggered spawn band (y 120-360 in _spawn_product/
-## _spawn_customer below). Result: a shelved wall on both sides of the room
-## forms one legible central aisle, without interior divider walls whose
-## collision shapes there's no way to verify visually in this environment
-## (no Godot binary here to actually run and look at it). KNOWN COSMETIC
-## QUIRK, not a bug: each slot's Indicator outline and "C" Prompt label
-## (Shelf.tscn) rotate along with the 180° parent, so they render
-## upside-down on these two shelves — functionally identical either way
-## (Shelf.gd's placement math is orientation-agnostic), just backwards art,
-## left for real slot art later rather than a dozen per-node rotation
-## overrides to un-rotate text in a greybox.
+## collision math, not guessed: body spans local y 42-108 there, slots land
+## at local y=130, both clear of the top wall (inner edge local y=20) and
+## of this file's per-section spawn band (local y 120-360 — see
+## _pick_unlocked_spawn_pos below). Result: a shelved wall on both sides of
+## each room forms one legible central aisle, without interior divider
+## walls inside a section whose collision shapes there's no way to verify
+## visually in this environment (no Godot binary here to actually run and
+## look at it). KNOWN COSMETIC QUIRK, not a bug: each slot's Indicator
+## outline and "C" Prompt label (Shelf.tscn) rotate along with the 180°
+## parent, so they render upside-down on these shelves — functionally
+## identical either way (Shelf.gd's placement math is orientation-
+## agnostic), just backwards art, left for real slot art later rather than
+## a dozen per-node rotation overrides to un-rotate text in a greybox.
+##
+## PART 1 — full store layout (Week 6): Main.tscn is now 5 uniform
+## ROOM_WIDTH x ROOM_HEIGHT rooms in a single left-to-right row sharing one
+## continuous world — room 0 is the break room (always open, no gate),
+## rooms 1-4 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind its
+## own Gate (see Gate.gd) except the break-room<->Dry-Goods doorway, which
+## has no gate at all since Dry Goods is available from Day 1. Reused
+## Shelf.tscn/Product.tscn/Cashier.tscn verbatim per the brief's "light
+## re-theming, not unique content per zone" — each section's shelves are
+## the identical Shelf1-4 layout Dry Goods already used, just modulate-
+## tinted, and every room additionally gets a flat background-color
+## Polygon2D for at-a-glance section identification. The store being wider
+## than one screen is why Player.tscn now carries a Camera2D (see
+## Player.gd) — this project had no scrolling/camera concept before Part 1
+## needed one.
 
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
+## Room 0 (the break room) center — unchanged from before Part 1, since
+## room 0 happens to occupy the exact same world coordinates the old
+## single-room store used to. Players spawn here, not in Dry Goods: you
+## clock in at the break room and walk the always-open doorway into Dry
+## Goods to start your shift.
 const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
 
-## --- Week 4/5B shift-economy placeholders — every number below is a guess
-## to make the system testable, not a tuned value. Flagging for design
-## input once this is in your hands, not picking silently:
-## - PRODUCT_BASELINE / PRODUCT_PER_EXTRA_PLAYER: as of Week 5B these are a
-##   POOL CAP, not a one-time spawn — _restock_products() below tops the
-##   floor back up to this count every RESTOCK_CHECK_INTERVAL, for as long
-##   as the shift runs, since shoppers now permanently remove stock at the
-##   cashier and there's no fixed target to stop refilling at. Still scales
-##   UP with headcount, same reasoning as Week 4: solo gets a full pool,
-##   not a thin trickle, and more players means proportionally more.
-##   BASELINE bumped 6->12 for Week 6's larger store (4 shelves x 3 slots
-##   instead of 2x3): the old value happened to exactly match the old total
-##   slot count, so leaving it at 6 against 12 slots would mean half the
-##   store stays visibly empty all shift even at a perfect stocking rate.
-##   Doubling it to match is a judgment call to preserve that same ratio,
-##   not a confirmed design decision — the Week 5B solo playtest (15 sold in
-##   120s) was tuned against the smaller store, so this wants re-validating
-##   against the fuller one, not assumed to still be right.
-## - CUSTOMER_BASELINE / CUSTOMER_PER_EXTRA_PLAYER: same pool-cap shape,
-##   for the combined shopper+disruptive population.
-## - CUSTOMER_DISRUPTIVE_RATIO: what fraction of that population is
+const ROOM_WIDTH := 960.0
+const ROOM_HEIGHT := 540.0
+const NUM_ROOMS := 5 # break room + 4 retail sections, single left-to-right row (see Main.tscn)
+const WORLD_WIDTH := ROOM_WIDTH * NUM_ROOMS
+const WORLD_HEIGHT := ROOM_HEIGHT
+## room_index matches each section's position in Main.tscn's row (0 = break
+## room, not listed here since it has no gate and no shelves). required_day
+## mirrors the brief's Day 1-2 / 3-4 / 5-6 / 7 schedule exactly, and is also
+## what _configure_gates() below sets on each matching Gate instance by
+## node name (not a .tscn property override — see that function's own
+## comment on why), so this table and the actual physical doors can't
+## quietly drift apart from each other.
+const SECTIONS := [
+	{"name": "Dry Goods", "room_index": 1, "required_day": 1},
+	{"name": "Meat/Deli", "room_index": 2, "required_day": 3},
+	{"name": "Dairy/Frozen", "room_index": 3, "required_day": 5},
+	{"name": "Bakery", "room_index": 4, "required_day": 7},
+]
+## Debug/testing stand-in for the real 7-day progression the brief
+## describes — settable via --day=N (see _parse_cli_args), since what
+## actually carries over day to day, when a shift ends "the day", etc.
+## isn't wired up yet. Defaults to 1 (Dry Goods only), i.e. a genuine Day 1
+## shift, so plain Host-Game-button play is unaffected unless --day= is
+## passed.
+var debug_day := 1
+
+## --- Week 4/5B/6 shift-economy placeholders — every number below is a
+## guess to make the system testable, not a tuned value. Flagging for
+## design input once this is in your hands, not picking silently:
+## - Product/customer baselines: as of Week 5B these are a POOL CAP, not a
+##   one-time spawn — _restock_products()/_restock_customers() below top
+##   the floor back up to their cap every RESTOCK_CHECK_INTERVAL, for as
+##   long as the shift runs, since shoppers now permanently remove stock at
+##   the cashier and there's no fixed target to stop refilling at. Still
+##   scales UP with headcount (PRODUCT/CUSTOMER_PER_EXTRA_PLAYER), same
+##   reasoning as Week 4: solo gets a full pool, not a thin trickle.
+##   AS OF WEEK 6 PART 1, the baseline itself also scales with how many
+##   sections are currently unlocked (_product_baseline()/
+##   _customer_baseline() below), not a flat constant — the OLD flat
+##   PRODUCT_BASELINE=12 happened to exactly match Dry-Goods-only's total
+##   slot count (4 shelves x 3 slots), so leaving it flat while debug_day
+##   opens 2-4 more sections would mean most of the newly-opened floor sits
+##   empty all shift even at a perfect stocking rate. Scaling it by
+##   unlocked-section-count preserves that same "baseline ~= reachable slot
+##   count" ratio Week 6 already established — a judgment call, not a
+##   confirmed design decision, and CUSTOMER_BASELINE scaling the same way
+##   is an extra judgment call on top of that (the brief didn't ask for it,
+##   but a customer population that stays flat while the floor quadruples
+##   would read as an increasingly empty store). Day 1-2 behavior is
+##   unaffected either way (1 section unlocked = the exact old numbers).
+##   The Week 5B solo playtest (15 sold in 120s) was tuned against the
+##   original single-section store, so ANY of this wants re-validating at
+##   higher debug days, not assumed to still be right.
+## - CUSTOMER_DISRUPTIVE_RATIO: what fraction of the customer population is
 ##   disruptive rather than shopper. My best guess for Day 1 is that it
 ##   should trend UP on later days (a calm first shift should be mostly
 ##   good pressure — restocking demand — with disruption as a minor
 ##   complication; escalating days should tilt toward more disruption),
 ##   mirroring the same "this wants to become per-day" placeholder shape
 ##   as SHIFT_DURATION_DEFAULT below. Left as a single Day-1 constant since
-##   no day/level system exists yet to hang a per-day curve off of.
+##   the day/level system is still just a debug int (debug_day above), not
+##   a real progression to hang a per-day curve off of yet.
 ## - SHIFT_DURATION_DEFAULT: solo has no second player to create pressure,
 ##   so a countdown is solo's placeholder source of tension. Override with
 ##   --shift-seconds= for faster test iteration. Currently calibrated for a
@@ -80,7 +136,6 @@ const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this poi
 ##   feel more pressured, so this single constant will want to become
 ##   per-day once a day/level system exists, not a permanent
 ##   one-size-fits-all value.
-const PRODUCT_BASELINE := 12
 const PRODUCT_PER_EXTRA_PLAYER := 3
 const CUSTOMER_BASELINE := 3
 const CUSTOMER_PER_EXTRA_PLAYER := 2
@@ -195,12 +250,38 @@ func _parse_cli_args() -> void:
 			shift_duration = float(arg.substr("--shift-seconds=".length()))
 		elif arg.begins_with("--bot-roles="):
 			bot_roles.assign(arg.substr("--bot-roles=".length()).split(","))
+		elif arg.begins_with("--day="):
+			debug_day = int(arg.substr("--day=".length()))
+	# Every peer configures its own gates independently right after parsing
+	# --day= (or falling back to the default of 1) — unconditionally, not
+	# just for --server/--client CLI runs, so a plain Host-Game-button
+	# session also gets a correctly gated store. See _configure_gates()'s
+	# own comment for why this doesn't need network sync.
+	_configure_gates()
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
 		# Give the separately launched host process a moment to start listening.
 		await get_tree().create_timer(1.0).timeout
 		_on_join_pressed()
+
+## Sets every Gate's locked/unlocked state from debug_day. Node name ->
+## required_day is matched here in code, NOT via a .tscn property override
+## on the nested "Gate" child of each Gate.tscn instance — this project
+## already lost a shelf polygon once to a .tscn property silently
+## corrupted by an inline comment (see the file-header NOTE on .tscn
+## comments above), and while a property override isn't a comment, I
+## couldn't be fully certain of Godot's exact nested-instance-override
+## syntax without a way to load and inspect the scene here — a plain
+## name->value lookup in plain GDScript is just as easy and isn't a syntax
+## I have to trust blind.
+func _configure_gates() -> void:
+	var required_days := {"GateMeatDeli": 3, "GateDairyFrozen": 5, "GateBakery": 7}
+	for gate_body in get_tree().get_nodes_in_group("gate"):
+		var gate: Node = gate_body.get_node("Gate")
+		if required_days.has(gate_body.name):
+			gate.required_day = required_days[gate_body.name]
+		gate.configure(debug_day)
 
 func _on_host_pressed() -> void:
 	menu_layer.hide()
@@ -316,7 +397,7 @@ func _start_shift() -> void:
 	_restock_customers()
 	shift_time_left = shift_duration
 
-## Tops the floor back up to PRODUCT_BASELINE + PRODUCT_PER_EXTRA_PLAYER
+## Tops the floor back up to _product_baseline() + PRODUCT_PER_EXTRA_PLAYER
 ## whenever it's fallen below that (shoppers permanently remove stock at
 ## the cashier, so this alone is what keeps the loop from ever running dry
 ## for the rest of the shift). Counts EVERY carryable object that currently
@@ -324,7 +405,7 @@ func _start_shift() -> void:
 ## either a player or a customer — not just free-floating ones, since
 ## those all still count as "not yet sold" supply.
 func _restock_products() -> void:
-	var cap: int = PRODUCT_BASELINE + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	var cap: int = _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
 	var current := get_tree().get_nodes_in_group("carryable").size()
 	while current < cap:
 		_spawn_product(_product_spawn_index)
@@ -332,31 +413,71 @@ func _restock_products() -> void:
 		current += 1
 
 ## Same shape as _restock_products(), for the combined shopper+disruptive
-## population — tops back up to CUSTOMER_BASELINE + PER_EXTRA_PLAYER
+## population — tops back up to _customer_baseline() + PER_EXTRA_PLAYER
 ## whenever a customer has despawned (finished shopping, gave up and left,
 ## or timed out), keeping demand and chaos both roughly constant across
 ## the whole shift instead of a batch that eventually all finish and go
 ## idle. Each new spawn's role is picked independently by
 ## CUSTOMER_DISRUPTIVE_RATIO, not assigned as a fixed up-front split.
 func _restock_customers() -> void:
-	var cap: int = CUSTOMER_BASELINE + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	var cap: int = _customer_baseline() + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
 	var current := get_tree().get_nodes_in_group("customer").size()
 	while current < cap:
 		var role := "disruptive" if randf() < CUSTOMER_DISRUPTIVE_RATIO else "shopper"
 		_spawn_customer(role)
 		current += 1
 
-## Random within a band well clear of the shelves (y ~462-498), the walls,
-## and the cashier (tucked against the left wall at x~40-100, well left of
-## this band's x>=180 floor) — spawning a RigidBody2D overlapping a
-## StaticBody2D's collider can make the physics engine's penetration-
-## resolution fling it at an absurd speed to separate them, the same class
-## of bug Week 1-3 hit with fast-moving objects tunneling through thin
-## walls. Keeping spawns in open floor avoids ever creating that overlap in
-## the first place.
+## --- Week 6 Part 1: section helpers --------------------------------------
+
+func _unlocked_sections() -> Array:
+	var result := []
+	for section in SECTIONS:
+		if debug_day >= section["required_day"]:
+			result.append(section)
+	return result
+
+## True if the given WORLD x-coordinate falls inside a section that's
+## currently unlocked. Used to keep the debug HUD and the restock-baseline
+## scaling honest about which shelves are actually reachable this session
+## — a shelf behind a locked gate physically exists (so raising debug_day
+## mid-testing doesn't need new scene content) but isn't "in play" for
+## either purpose until its gate opens.
+func _is_unlocked_at_x(world_x: float) -> bool:
+	var idx := int(floor(world_x / ROOM_WIDTH))
+	for section in SECTIONS:
+		if section["room_index"] == idx:
+			return debug_day >= section["required_day"]
+	return false # room 0 (break room) has no shelves, so never matters here
+
+## 12 = one section's slot count (4 shelves x 3 slots) — see the big
+## comment block above CUSTOMER_BASELINE for why these scale with
+## unlocked-section-count instead of staying flat, and why that's flagged
+## as a judgment call rather than a confirmed decision.
+func _product_baseline() -> int:
+	return 12 * _unlocked_sections().size()
+
+func _customer_baseline() -> int:
+	return CUSTOMER_BASELINE * _unlocked_sections().size()
+
+## Picks a spawn point inside a random CURRENTLY UNLOCKED section's safe
+## interior band — same shape/margins the original single-room band always
+## used (clear of shelves at local y ~42-108/432-498, the walls, and the
+## cashier), just relocated per section by its room_index. Spawning a
+## RigidBody2D (a product) overlapping a StaticBody2D's collider can make
+## the physics engine's penetration-resolution fling it at an absurd speed
+## to separate them, the same class of bug Week 1-3 hit with fast-moving
+## objects tunneling through thin walls — keeping spawns in open floor
+## avoids ever creating that overlap in the first place. Never returns a
+## point in a locked section or the break room: there's nothing to stock
+## or shop for there, and a locked section has no way out anyway.
+func _pick_unlocked_spawn_pos() -> Vector2:
+	var unlocked := _unlocked_sections()
+	var section = unlocked[randi() % unlocked.size()] # always has at least Dry Goods (required_day=1)
+	var room_x: float = section["room_index"] * ROOM_WIDTH
+	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(120.0, 360.0))
+
 func _spawn_product(index: int) -> void:
-	var pos := Vector2(randf_range(180.0, 780.0), randf_range(120.0, 360.0))
-	product_spawner.spawn({"index": index, "pos": pos})
+	product_spawner.spawn({"index": index, "pos": _pick_unlocked_spawn_pos()})
 
 func _spawn_product_node(data: Dictionary) -> Node:
 	var p := ProductScene.instantiate()
@@ -364,12 +485,12 @@ func _spawn_product_node(data: Dictionary) -> Node:
 	p.position = data["pos"]
 	return p
 
-## Same safe spawn band as products — customers are CharacterBody2Ds, not
+## Same safe spawn logic as products — customers are CharacterBody2Ds, not
 ## RigidBody2Ds, so they wouldn't get flung by a collision-shape overlap
 ## the way a product could, but starting them clear of the shelves/cashier
 ## still avoids an instant, confusing shove on spawn.
 func _spawn_customer(role: String) -> void:
-	var pos := Vector2(randf_range(180.0, 780.0), randf_range(120.0, 360.0))
+	var pos := _pick_unlocked_spawn_pos()
 	var carry_id := _next_customer_carry_id
 	_next_customer_carry_id -= 1
 	customer_spawner.spawn({"index": _customer_spawn_index, "pos": pos, "role": role, "carry_id": carry_id})
@@ -388,8 +509,8 @@ func _process(delta: float) -> void:
 	var role := "OFFLINE"
 	if connected:
 		role = "HOST" if multiplayer.is_server() else "CLIENT"
-	var lines := ["peer id: %d  (%s)  players: %d" % [
-		multiplayer.get_unique_id() if connected else 0, role, players.size(),
+	var lines := ["peer id: %d  (%s)  players: %d  day: %d" % [
+		multiplayer.get_unique_id() if connected else 0, role, players.size(), debug_day,
 	]]
 	for obj in carryable_objects:
 		var c: Node = obj.get_node("Carryable")
@@ -408,6 +529,12 @@ func _process(delta: float) -> void:
 			_restock_timer = RESTOCK_CHECK_INTERVAL
 			_restock_products()
 			_restock_customers()
+	# Only currently-unlocked shelves count below (log, HUD, and the
+	# stocked/sold totals) — a locked section's shelves physically exist
+	# (so raising debug_day mid-testing doesn't need new scene content) but
+	# are never reachable, so counting them would misreport "half the
+	# store sits empty" against sections nobody could have stocked yet.
+	var unlocked_shelves := shelves.filter(func(s): return _is_unlocked_at_x(s.global_position.x))
 	# Machine-readable, same purpose as GameLog's DATA lines: lets a test run
 	# capture every peer's own view of shelf-fill state to a log file and
 	# diff them afterward, to confirm the replicated "filled" array (see
@@ -417,7 +544,7 @@ func _process(delta: float) -> void:
 	if _shelf_log_timer <= 0.0:
 		_shelf_log_timer = 1.0
 		var my_id := multiplayer.get_unique_id() if connected else 0
-		for shelf_body in shelves:
+		for shelf_body in unlocked_shelves:
 			var s_log: Node = shelf_body.get_node("Shelf")
 			print("SHELFDATA,%s,%d,%d,%d" % [shelf_body.name, my_id, s_log.filled_count(), s_log.slot_count()])
 		var total_sold_log := 0
@@ -426,7 +553,7 @@ func _process(delta: float) -> void:
 		print("SOLDDATA,%d,%d" % [my_id, total_sold_log])
 	var total_filled := 0
 	var total_slots := 0
-	for shelf_body in shelves:
+	for shelf_body in unlocked_shelves:
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var f: int = shelf.filled_count()
 		var s: int = shelf.slot_count()

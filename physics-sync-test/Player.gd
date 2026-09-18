@@ -35,6 +35,16 @@ const INTERACT_COOLDOWN := 3.0
 ## one like pickup.
 const DEFEND_RANGE := 70.0
 const DEFEND_COOLDOWN := 0.8
+## Week 6 Part 1 — the store is now 5 rooms wide (960x540 each), wider than
+## the fixed 960x540 window, so this project needed its first-ever
+## scrolling camera. Duplicated from Main.gd's WORLD_WIDTH/WORLD_HEIGHT
+## rather than preloaded from there — Main.gd already preloads Player.tscn
+## (to spawn players), so preloading Main.gd back from here would be a
+## CYCLIC preload, a real GDScript failure mode, not just messier style.
+## Must be kept in sync by hand with Main.gd's own ROOM_WIDTH x
+## ROOM_HEIGHT x NUM_ROOMS math (960 x 540 x 5 = 4800 x 540 currently).
+const WORLD_WIDTH := 4800.0
+const WORLD_HEIGHT := 540.0
 const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Carryable.gd's PICKUP_RANGE is the real check
 const BOT_CARRY_DURATION := 2.5
 ## Referenced via preload rather than the global "Carryable" class_name —
@@ -87,6 +97,25 @@ func _ready() -> void:
 	set_physics_process(true)
 	target_position = position
 	$Polygon2D.color = Color(0.25, 0.55, 1.0) if get_multiplayer_authority() == 1 else Color(1.0, 0.55, 0.15)
+
+	# Week 6 Part 1: only the LOCAL peer's own player should drive this
+	# process's view — every peer's Player.tscn instances include one for
+	# every connected player (host and every client, replicated via
+	# MultiplayerSpawner), but host and client are always separate OS
+	# processes/windows (see Main.gd's --server/--client split), so only
+	# one Camera2D should ever be enabled per process: this one, if and
+	# only if it's the player this process actually controls. Created in
+	# code rather than baked into Player.tscn, same reasoning as the Sync
+	# node below — it needs is_multiplayer_authority() to decide, which
+	# isn't known until the node's authority is set (before this runs).
+	var camera := Camera2D.new()
+	camera.name = "Camera"
+	camera.enabled = is_multiplayer_authority()
+	camera.limit_left = 0
+	camera.limit_top = 0
+	camera.limit_right = int(WORLD_WIDTH)
+	camera.limit_bottom = int(WORLD_HEIGHT)
+	add_child(camera)
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
