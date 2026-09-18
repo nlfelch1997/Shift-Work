@@ -287,14 +287,31 @@ func _browse_input(delta: float) -> Vector2:
 ## below, for the same reason: a shopper here isn't picking a stocked item
 ## (that's _find_stocked_item's job, checked first in _shopper_input), just
 ## somewhere plausible to walk toward while waiting for one to appear.
+##
+## FOUND BY TESTING (well, by the report that customers still weren't
+## moving): the first version of this used shelf_body.global_position
+## directly as the candidate. That's the ShelfBody's own local origin,
+## which sits INSIDE its own CollisionShape2D (the shape is offset (0,-15)
+## with half-height 33, so it spans y -48..+18 — right through y=0). A
+## StaticBody2D obviously isn't walkable, so a browsing shopper would head
+## straight for an unreachable point, get physically stopped at the
+## shelf's edge, and just sit there leaning into it every retarget — which
+## looks exactly like standing still, not "still moving, just badly aimed."
+## nearest_empty_slot_position() is the fix: it's the same guaranteed-
+## reachable, open-floor point stocker bots already walk to and
+## successfully place items at (see Shelf.gd's header on why slots sit in
+## front of the collision box specifically so they CAN be reached), so
+## using it here can't reproduce the same class of bug.
 func _pick_browse_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
-		candidates.append(shelf_body.global_position)
+		var shelf: Node = shelf_body.get_node("Shelf")
+		var slot_pos = shelf.nearest_empty_slot_position(global_position)
+		if slot_pos != null:
+			candidates.append(slot_pos)
 	if candidates.is_empty() or randf() < 0.3:
 		return global_position + Vector2(randf_range(-BROWSE_RADIUS, BROWSE_RADIUS), randf_range(-BROWSE_RADIUS, BROWSE_RADIUS))
-	var target: Vector2 = candidates[randi() % candidates.size()]
-	return target + Vector2(randf_range(-50.0, 50.0), randf_range(-50.0, 50.0))
+	return candidates[randi() % candidates.size()]
 
 func _find_carried_by_me() -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
