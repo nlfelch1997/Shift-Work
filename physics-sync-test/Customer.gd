@@ -13,7 +13,10 @@ extends CharacterBody2D
 ##   Shelf.gd's "authority watches, carrier doesn't need to announce
 ##   anything" pattern) does the actual purchase. Despawns once it's sold
 ##   its item (or after MAX_LIFETIME, if it never managed to find one —
-##   Main.gd's population cap spawns a replacement either way).
+##   Main.gd's population cap spawns a replacement either way). While
+##   nothing's stocked yet, wanders the store (_browse_input) rather than
+##   standing frozen in place — added by request after playtesting showed
+##   an idle shopper reading as a stuck/broken prop, not a customer.
 ## - "disruptive": erratic movement that actively retargets toward whatever
 ##   placed item or player is nearest every RETARGET_INTERVAL, so it reads
 ##   as "aiming to get in the way" rather than ambient wander. No Carryable
@@ -34,12 +37,25 @@ extends CharacterBody2D
 ## chaos with no counter-play — a shoved customer (either role) goes into a
 ## brief knockback/stun and its normal AI picks back up once that ends.
 
-const SPEED := 160.0
+## Slowed 160->120 by request — customers reading as a brisk-walking player
+## didn't feel right for either role; shoppers should read as browsing, not
+## rushing, and disruptive should read as an annoyance you can react to, not
+## something that closes distance as fast as a player can. Shared by both
+## roles, same as before.
+const SPEED := 120.0
 const PUSH_FORCE := 9000.0 # matches Player.gd's — identical push mechanic, duplicated rather than shared, consistent with this project's existing per-script style
 const PICKUP_RANGE := 55.0
 const SMOOTHING_RATE := 15.0
 const INTERACT_COOLDOWN := 1.0
 const RETARGET_INTERVAL := 1.5 # disruptive: how often to pick a new thing to bump toward — short, so it reads as erratic, not a smooth pursuit
+## Shopper: how often an idle shopper (nothing currently stocked to buy)
+## picks a new spot to wander toward. By request — a shopper used to just
+## stand frozen in place until a slot filled, which read as a static prop
+## rather than a customer. Longer than RETARGET_INTERVAL on purpose: this is
+## meant to read as unhurried browsing, not the same erratic energy as
+## disruptive's retargeting.
+const BROWSE_RETARGET_INTERVAL := 2.5
+const BROWSE_RADIUS := 200.0 # how far a browse destination can land from the shopper's current spot
 const MAX_LIFETIME_SHOPPER := 30.0 # safety valve: if nothing's ever stocked, don't camp forever — leave and let the population cap spawn a replacement
 const MAX_LIFETIME_DISRUPTIVE := 45.0
 ## Week 6 — the defend/shove counter-play (see Player.gd's _try_defend()).
@@ -82,6 +98,8 @@ var _knockback_velocity := Vector2.ZERO
 # --- shopper state ---
 var _committed_item: Node2D = null
 var _committed_cashier: Node = null
+var _browse_timer := 0.0
+var _browse_pos := Vector2.ZERO
 
 # --- disruptive state ---
 var _retarget_timer := 0.0
@@ -134,7 +152,7 @@ func _physics_process(delta: float) -> void:
 	_interact_cooldown -= delta
 	var dir := Vector2.ZERO
 	if role == "shopper":
-		dir = _shopper_input()
+		dir = _shopper_input(delta)
 		_shopper_maybe_interact()
 	else:
 		dir = _disruptive_input(delta)
@@ -204,7 +222,7 @@ func request_shove(from_position: Vector2) -> void:
 
 ## --- Shopper -------------------------------------------------------------
 
-func _shopper_input() -> Vector2:
+func _shopper_input(delta: float) -> Vector2:
 	var carried := _find_carried_by_me()
 	if carried == null:
 		if _committed_item and (not is_instance_valid(_committed_item) or _item_taken_by_someone_else(_committed_item)):
@@ -212,7 +230,7 @@ func _shopper_input() -> Vector2:
 		if _committed_item == null:
 			_committed_item = _find_stocked_item()
 			if _committed_item == null:
-				return Vector2.ZERO # nothing stocked to buy right now — wait
+				return _browse_input(delta) # nothing stocked to buy right now — browse instead of standing frozen
 		var to_item := _committed_item.global_position - global_position
 		if to_item.length() < PICKUP_RANGE:
 			return Vector2.ZERO
@@ -244,6 +262,39 @@ func _shopper_maybe_interact() -> void:
 		print("[%s] attempting pickup of %s" % [name, _committed_item.name])
 		c.try_pickup(carry_id, global_position)
 		_interact_cooldown = INTERACT_COOLDOWN
+
+## Nothing's currently stocked to buy — wander instead of standing frozen,
+## same "erratic every RETARGET_INTERVAL" shape as disruptive's
+## _disruptive_input, just on a slower, calmer cadence (BROWSE_RETARGET_
+## INTERVAL) since this should read as idle browsing, not chaos-seeking.
+## Checked for a stocked item again every tick regardless (that check lives
+## in _shopper_input, above, which calls this only when there isn't one) —
+## a shelf filling mid-wander is picked up on the very next physics tick.
+func _browse_input(delta: float) -> Vector2:
+	_browse_timer -= delta
+	if _browse_timer <= 0.0:
+		_browse_timer = BROWSE_RETARGET_INTERVAL
+		_browse_pos = _pick_browse_target()
+	var to_target := _browse_pos - global_position
+	if to_target.length() < 8.0:
+		return Vector2.ZERO
+	return to_target.normalized()
+
+## Biased toward shelves ("browsing" reads as walking up to look at
+## shelves, not aimless wandering) with a chance of a plain nearby point so
+## it doesn't look like it's beelining to a shelf every single retarget —
+## same candidates-plus-random-fallback shape as _pick_disruptive_target()
+## below, for the same reason: a shopper here isn't picking a stocked item
+## (that's _find_stocked_item's job, checked first in _shopper_input), just
+## somewhere plausible to walk toward while waiting for one to appear.
+func _pick_browse_target() -> Vector2:
+	var candidates: Array[Vector2] = []
+	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		candidates.append(shelf_body.global_position)
+	if candidates.is_empty() or randf() < 0.3:
+		return global_position + Vector2(randf_range(-BROWSE_RADIUS, BROWSE_RADIUS), randf_range(-BROWSE_RADIUS, BROWSE_RADIUS))
+	var target: Vector2 = candidates[randi() % candidates.size()]
+	return target + Vector2(randf_range(-50.0, 50.0), randf_range(-50.0, 50.0))
 
 func _find_carried_by_me() -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
