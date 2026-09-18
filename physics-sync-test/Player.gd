@@ -59,6 +59,12 @@ var target_position: Vector2
 var facing_angle := 0.0
 var _bot_interact_cooldown := 0.0
 var _bot_carry_timer := 0.0
+## Local-only (never replicated — this is per-viewer UI, not shared game
+## state, same reasoning as the "C" prompt it drives): which slot, if any,
+## carrying-and-aiming would currently place into. Recomputed every tick
+## for the human-controlled local player only; bots don't use it, they
+## still call try_drop()/try_throw() directly exactly as before.
+var _place_target_slot: Marker2D = null
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
@@ -102,6 +108,7 @@ func _physics_process(delta: float) -> void:
 	var dir := Vector2.ZERO
 	var interact_pressed := false
 	var throw_pressed := false
+	var place_pressed := false
 	if bot_mode:
 		dir = _bot_input(delta)
 		_bot_maybe_interact(delta)
@@ -113,18 +120,24 @@ func _physics_process(delta: float) -> void:
 		dir = Input.get_vector("host_move_left", "host_move_right", "host_move_up", "host_move_down")
 		interact_pressed = Input.is_action_just_pressed("host_interact")
 		throw_pressed = Input.is_action_just_pressed("host_throw")
+		place_pressed = Input.is_action_just_pressed("host_place")
 	else:
 		dir = Input.get_vector("client_move_left", "client_move_right", "client_move_up", "client_move_down")
 		interact_pressed = Input.is_action_just_pressed("client_interact")
 		throw_pressed = Input.is_action_just_pressed("client_throw")
+		place_pressed = Input.is_action_just_pressed("client_place")
 	if dir.length() > 0.1:
 		_last_move_dir = dir.normalized()
 		facing_angle = _last_move_dir.angle()
 		$Polygon2D.rotation = facing_angle
+	if not bot_mode:
+		_update_place_target()
 	if throw_pressed:
 		_try_throw()
 	elif interact_pressed:
 		_try_interact()
+	if place_pressed:
+		_try_place()
 	velocity = dir * SPEED
 	move_and_slide()
 	_push_rigid_bodies(delta)
@@ -386,12 +399,28 @@ func _bot_find_disruption_target() -> Node2D:
 			return occupant
 	return _find_nearest_free_carryable()
 
-## Drop/pickup toggle. A "contest" bot always acts on its assigned
-## _target_obj; every other case (manual play, and the "stocker"/
-## "interferer" bot roles, which pick a fresh target each cycle rather than
-## a fixed one) acts on whatever's already carried, or else the nearest
-## free object in range — since a human player wants to interact with
-## whatever's actually nearby, not a scripted assignment.
+## Drop/pickup toggle, bound to "E" — DECIDED, not guessed: E keeps this
+## exact unconditional behavior (pick up if empty-handed, else drop right
+## here, no slot check) whether or not a shelf is nearby, unchanged from
+## before "C" existed. "C" (_try_place, below) is purely additive: a second,
+## more deliberate action that only ever does anything when the on-screen
+## prompt says it will succeed. Reasoning: E remains the always-available
+## "let go of what I'm holding" escape hatch (put something down without
+## committing to a shelf, or without throwing it), while C becomes the
+## confident, prompted way to place precisely — splitting the KEYS without
+## removing any existing behavior seemed better than making plain drop
+## impossible outside a slot, which would leave no way to just set
+## something down. If playtesting says E dropping near a slot (and
+## incidentally landing inside CAPTURE_RADIUS, same as it always could) is
+## confusing alongside C, that's the next thing to reconsider — flagging
+## rather than deciding it silently.
+##
+## A "contest" bot always acts on its assigned _target_obj; every other
+## case (manual play, and the "stocker"/"interferer" bot roles, which pick
+## a fresh target each cycle rather than a fixed one) acts on whatever's
+## already carried, or else the nearest free object in range — since a
+## human player wants to interact with whatever's actually nearby, not a
+## scripted assignment.
 func _try_interact() -> void:
 	var my_id := multiplayer.get_unique_id()
 	if bot_mode and bot_role == "contest":
@@ -428,6 +457,46 @@ func _try_throw() -> void:
 	var c: Node = obj.get_node("Carryable")
 	if c.carrier_id == my_id:
 		c.try_throw(my_id, _last_move_dir)
+
+## Human-only (see the "not bot_mode" guard where this is called): recomputes
+## every physics tick whether placing right now would land in an empty
+## slot, and shows/hides that slot's "C" prompt (see Shelf.tscn) to match.
+## Uses the EXACT same formula Carryable.gd's drop/throw finalization uses
+## — carrier position + CARRY_OFFSET rotated by facing — so "the prompt is
+## showing" and "placing will succeed" can never disagree with each other.
+func _update_place_target() -> void:
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	var new_target: Marker2D = null
+	if carried:
+		var predicted := global_position + CarryableScript.CARRY_OFFSET.rotated(facing_angle)
+		for shelf_body in get_tree().get_nodes_in_group("shelf"):
+			var shelf: Node = shelf_body.get_node("Shelf")
+			var slot: Marker2D = shelf.placeable_slot_at(predicted)
+			if slot:
+				new_target = slot
+				break
+	if new_target != _place_target_slot:
+		if _place_target_slot:
+			_place_target_slot.get_node("Prompt").visible = false
+		if new_target:
+			new_target.get_node("Prompt").visible = true
+		_place_target_slot = new_target
+
+## Bound to "C" — only does anything when _update_place_target() found a
+## valid slot this tick (i.e. the prompt is actually showing). Calls the
+## same try_drop() as E; the only difference is WHEN each key does
+## something, not what happens once it does — see the design-decision
+## comment on _try_interact().
+func _try_place() -> void:
+	if _place_target_slot == null:
+		return
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	if carried:
+		var c: Node = carried.get_node("Carryable")
+		if c.carrier_id == my_id:
+			c.try_drop(my_id)
 
 func _find_carried_object(my_id: int) -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):

@@ -92,6 +92,21 @@ func _physics_process(delta: float) -> void:
 		else:
 			_settle_check_empty(i, delta)
 
+## Runs on EVERY peer (no authority check) — purely visual, driven off the
+## already-replicated `filled` array, same split as the rest of this file:
+## authority computes, everyone just displays. Each slot's "Indicator" child
+## (see Shelf.tscn) is the empty-slot outline box; visible exactly when
+## that slot isn't filled, regardless of whether anyone's currently near it
+## or carrying anything — a permanent "stock goes here" reference, not a
+## contextual prompt (that's the separate "Prompt" child, driven per-peer
+## from Player.gd instead, since it depends on which player is carrying
+## what, not on shared shelf state).
+func _process(_delta: float) -> void:
+	if not Net.is_active():
+		return
+	for i in slots.size():
+		slots[i].get_node("Indicator").visible = not filled[i]
+
 ## An occupied slot's item is un-placed the instant it's picked back up,
 ## drifts out past LEAVE_RADIUS, or gets knocked hard enough — no grace
 ## period on the way OUT (only settling IN is debounced), so a knockdown
@@ -165,3 +180,22 @@ func nearest_empty_slot_position(from: Vector2) -> Variant:
 			best_dist = d
 			best_pos = slots[i].global_position
 	return best_pos
+
+## Used by the local player's "C" placement prompt/key (see Player.gd) to
+## find which of THIS shelf's empty slots (if any) a given predicted drop
+## position — carrier position + the rotated carry offset, i.e. "where the
+## item would land if dropped right now" — actually lands inside. Distinct
+## from nearest_empty_slot_position(): that one always returns the closest
+## slot regardless of distance (for bots walking toward one); this one
+## returns null unless the position is ACTUALLY within CAPTURE_RADIUS,
+## matching the real placement condition exactly — the prompt should show
+## if and only if pressing place right now would actually succeed. Safe to
+## call from any peer: read-only, uses only the already-replicated `filled`
+## array and static slot positions.
+func placeable_slot_at(predicted_pos: Vector2) -> Marker2D:
+	for i in slots.size():
+		if filled[i]:
+			continue
+		if predicted_pos.distance_to(slots[i].global_position) <= CAPTURE_RADIUS:
+			return slots[i]
+	return null
