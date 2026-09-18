@@ -52,7 +52,13 @@ const PRODUCT_BASELINE := 6
 const PRODUCT_PER_EXTRA_PLAYER := 3
 const CUSTOMER_BASELINE := 3
 const CUSTOMER_PER_EXTRA_PLAYER := 2
-const CUSTOMER_DISRUPTIVE_RATIO := 0.35
+## TEMPORARILY 0.0, not the intended 0.35 — disruptive customers have no
+## counter-play yet (the defend action doesn't exist until Week 6 pairs
+## them together), so testing the shopper/continuous-demand economy with
+## disruptive customers active isn't a fair read of either system. Restore
+## to 0.35 (or whatever the last-agreed value was) once Week 6 builds the
+## defend action alongside them.
+const CUSTOMER_DISRUPTIVE_RATIO := 0.0
 const SHIFT_DURATION_DEFAULT := 120.0
 ## How long after hosting starts before the shift begins — gives CLI-
 ## launched bot/client processes a moment to connect first, so the product/
