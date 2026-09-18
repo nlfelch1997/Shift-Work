@@ -54,6 +54,14 @@ position = Vector2(220, 480)
 [node name="Shelf2" parent="Shelves" instance=ExtResource("2")]
 position = Vector2(740, 480)
 
+[node name="Shelf3" parent="Shelves" instance=ExtResource("2")]
+position = Vector2(220, 60)
+rotation = 3.14159265
+
+[node name="Shelf4" parent="Shelves" instance=ExtResource("2")]
+position = Vector2(740, 60)
+rotation = 3.14159265
+
 [node name="Cashier1" parent="." instance=ExtResource("3")]
 position = Vector2(70, 270)
 

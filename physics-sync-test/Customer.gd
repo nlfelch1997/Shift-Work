@@ -27,6 +27,12 @@ extends CharacterBody2D
 ##
 ## carry_id: see the long comment on Carryable.gd's _find_carrier() for why
 ## this exists instead of reusing multiplayer authority.
+##
+## Week 6: the spacebar defend/shove action (Player.gd's _try_defend(), this
+## file's request_shove()) is now live, which is what makes turning
+## CUSTOMER_DISRUPTIVE_RATIO back on in Main.gd a fair fight instead of pure
+## chaos with no counter-play — a shoved customer (either role) goes into a
+## brief knockback/stun and its normal AI picks back up once that ends.
 
 const SPEED := 160.0
 const PUSH_FORCE := 9000.0 # matches Player.gd's — identical push mechanic, duplicated rather than shared, consistent with this project's existing per-script style
@@ -36,6 +42,18 @@ const INTERACT_COOLDOWN := 1.0
 const RETARGET_INTERVAL := 1.5 # disruptive: how often to pick a new thing to bump toward — short, so it reads as erratic, not a smooth pursuit
 const MAX_LIFETIME_SHOPPER := 30.0 # safety valve: if nothing's ever stocked, don't camp forever — leave and let the population cap spawn a replacement
 const MAX_LIFETIME_DISRUPTIVE := 45.0
+## Week 6 — the defend/shove counter-play (see Player.gd's _try_defend()).
+## Knocks ANY nearby customer away, not just disruptive ones: this component
+## stays as ignorant of "which role is being shoved" as it already is of
+## which role is doing the shoving, matching this project's existing
+## "components don't special-case each other" style (Carryable doesn't know
+## about shelves; Shelf doesn't add its own pickup RPC). A shopper caught in
+## the blast just gets knocked off its current approach and re-evaluates
+## once the stun ends — no extra bookkeeping needed since _shopper_input()
+## already re-resolves _committed_item/_committed_cashier from scratch.
+const DEFEND_KNOCKBACK_SPEED := 380.0 # placeholder — wants playtesting, same as this file's other tuning constants
+const DEFEND_KNOCKBACK_DECEL := 700.0 # px/s^2 — brings knockback to rest a bit before the stun ends, so it doesn't carry all the way to STUN_DURATION at full speed
+const DEFEND_STUN_DURATION := 0.6 # seconds normal AI (shopper seeking/disruptive retargeting) is suppressed after being shoved
 const CarryableScript := preload("res://Carryable.gd")
 const CashierScript := preload("res://Cashier.gd")
 ## Stop walking toward the cashier once safely inside its own purchase-
@@ -58,6 +76,8 @@ var facing_angle := 0.0
 var _last_move_dir := Vector2.RIGHT
 var _interact_cooldown := 0.0
 var _lifetime := 0.0
+var _stun_timer := 0.0
+var _knockback_velocity := Vector2.ZERO
 
 # --- shopper state ---
 var _committed_item: Node2D = null
@@ -95,6 +115,15 @@ func _physics_process(delta: float) -> void:
 		return
 	if not is_multiplayer_authority():
 		return # smoothing happens in _process, see below
+
+	if _stun_timer > 0.0:
+		_stun_timer -= delta
+		velocity = _knockback_velocity
+		_knockback_velocity = _knockback_velocity.move_toward(Vector2.ZERO, DEFEND_KNOCKBACK_DECEL * delta)
+		move_and_slide()
+		_push_rigid_bodies(delta)
+		target_position = position
+		return # normal shopper/disruptive AI suppressed for the whole stun
 
 	_lifetime += delta
 	var max_lifetime := MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
@@ -156,6 +185,22 @@ func _push_rigid_bodies(delta: float) -> void:
 			collider.apply_central_impulse(impulse)
 		else:
 			carryable.rpc_id(carryable.get_multiplayer_authority(), "request_push", impulse)
+
+## Week 6 defend/shove counter-play. Called by Player.gd's _try_defend()
+## either locally (if the calling process IS this customer's authority —
+## always host, peer 1) or via rpc_id otherwise — identical call-site shape
+## to Carryable.gd's request_push, and reliable for the same reason: a
+## dropped shove impulse never gets applied at all, unlike a dropped
+## position-sync packet which just gets superseded by the next one.
+@rpc("any_peer", "reliable")
+func request_shove(from_position: Vector2) -> void:
+	if not is_multiplayer_authority():
+		return
+	var dir := global_position - from_position
+	if dir.length() < 0.01:
+		dir = Vector2.RIGHT.rotated(randf_range(0.0, TAU)) # shover standing exactly on top of us — pick an arbitrary direction rather than dividing by ~zero
+	_knockback_velocity = dir.normalized() * DEFEND_KNOCKBACK_SPEED
+	_stun_timer = DEFEND_STUN_DURATION
 
 ## --- Shopper -------------------------------------------------------------
 

@@ -26,6 +26,15 @@ const SPEED := 220.0
 const PUSH_FORCE := 9000.0 # tuned by testing; impulse-per-second while overlapping
 const SMOOTHING_RATE := 15.0 # matches Carryable.gd — see its comment for why this exists
 const INTERACT_COOLDOWN := 3.0
+## Week 6 — the defend/shove counter-play, built alongside re-enabling
+## disruptive customers (see Main.gd's CUSTOMER_DISRUPTIVE_RATIO) so there's
+## actually a response available once they go live. Radius and cooldown are
+## placeholders, same as this project's other unplaytested tuning constants
+## — a shorter cooldown than INTERACT_COOLDOWN on purpose, since this is
+## meant to be a reactive move you can use again quickly, not a deliberate
+## one like pickup.
+const DEFEND_RANGE := 70.0
+const DEFEND_COOLDOWN := 0.8
 const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Carryable.gd's PICKUP_RANGE is the real check
 const BOT_CARRY_DURATION := 2.5
 ## Referenced via preload rather than the global "Carryable" class_name —
@@ -59,6 +68,7 @@ var target_position: Vector2
 var facing_angle := 0.0
 var _bot_interact_cooldown := 0.0
 var _bot_carry_timer := 0.0
+var _defend_cooldown := 0.0
 ## Local-only (never replicated — this is per-viewer UI, not shared game
 ## state, same reasoning as the "C" prompt it drives): which slot, if any,
 ## carrying-and-aiming would currently place into. Recomputed every tick
@@ -109,6 +119,7 @@ func _physics_process(delta: float) -> void:
 	var interact_pressed := false
 	var throw_pressed := false
 	var place_pressed := false
+	var defend_pressed := false
 	if bot_mode:
 		dir = _bot_input(delta)
 		_bot_maybe_interact(delta)
@@ -121,11 +132,13 @@ func _physics_process(delta: float) -> void:
 		interact_pressed = Input.is_action_just_pressed("host_interact")
 		throw_pressed = Input.is_action_just_pressed("host_throw")
 		place_pressed = Input.is_action_just_pressed("host_place")
+		defend_pressed = Input.is_action_just_pressed("host_defend")
 	else:
 		dir = Input.get_vector("client_move_left", "client_move_right", "client_move_up", "client_move_down")
 		interact_pressed = Input.is_action_just_pressed("client_interact")
 		throw_pressed = Input.is_action_just_pressed("client_throw")
 		place_pressed = Input.is_action_just_pressed("client_place")
+		defend_pressed = Input.is_action_just_pressed("client_defend")
 	if dir.length() > 0.1:
 		_last_move_dir = dir.normalized()
 		facing_angle = _last_move_dir.angle()
@@ -138,6 +151,10 @@ func _physics_process(delta: float) -> void:
 		_try_interact()
 	if place_pressed:
 		_try_place()
+	_defend_cooldown -= delta
+	if defend_pressed and _defend_cooldown <= 0.0:
+		_try_defend()
+		_defend_cooldown = DEFEND_COOLDOWN
 	velocity = dir * SPEED
 	move_and_slide()
 	_push_rigid_bodies(delta)
@@ -497,6 +514,26 @@ func _try_place() -> void:
 		var c: Node = carried.get_node("Carryable")
 		if c.carrier_id == my_id:
 			c.try_drop(my_id)
+
+## Week 6 defend/shove — radial, hits every customer in DEFEND_RANGE
+## regardless of role (see the matching note on Customer.gd's request_shove
+## for why this deliberately doesn't special-case shopper vs. disruptive).
+## Bound to Space for both host and client; bots don't use it (out of scope
+## — this is the human counter-play to disruptive customers, not something
+## the contest/stocker/interferer test bots need to exercise).
+func _try_defend() -> void:
+	for customer in get_tree().get_nodes_in_group("customer"):
+		if global_position.distance_to(customer.global_position) > DEFEND_RANGE:
+			continue
+		# Same "call locally if I'm already the authority, else RPC the
+		# authority" split as _push_rigid_bodies uses for request_push —
+		# customer authority is always host (peer 1), so this is exactly
+		# "am I the host" in practice, but written generically like the
+		# original so it doesn't hardcode that assumption.
+		if customer.is_multiplayer_authority():
+			customer.request_shove(global_position)
+		else:
+			customer.rpc_id(customer.get_multiplayer_authority(), "request_shove", global_position)
 
 func _find_carried_object(my_id: int) -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):

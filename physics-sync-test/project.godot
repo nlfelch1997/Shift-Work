@@ -112,6 +112,24 @@ client_place={
 ]
 }
 
+; Week 6 — Space bar for BOTH host_defend and client_defend: unlike every
+; other action pair above, this one deliberately reuses the same physical
+; key for both roles instead of picking a different key per cluster. Host
+; and client are always separate OS processes/windows (see Main.gd's
+; --server/--client split), so only whichever window has OS focus ever
+; receives the keypress — there's no risk of one key press double-firing
+; both roles at once, and "spacebar" is the actual, explicit ask.
+host_defend={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":32,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+client_defend={
+"deadzone": 0.2,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":32,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+
 [physics]
 
 common/physics_ticks_per_second=60

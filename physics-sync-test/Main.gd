@@ -15,6 +15,30 @@ extends Node2D
 ## found" errors. MultiplayerSpawner is Godot's built-in fix for exactly
 ## this: it guarantees a node is spawned locally before any sync data for it
 ## is processed, on every peer, including peers that join late.
+##
+## NOTE on Main.tscn's Shelf3/Shelf4 (Week 6 greybox layout): explained
+## here, not in the .tscn, on purpose — this project already hit a real bug
+## (see "Fix shelf invisibility: .tscn inline comment silently dropped the
+## polygon") where a comment placed in a .tscn file silently corrupted the
+## property after it instead of erroring, so nothing gets commented there
+## anymore, full stop. Shelf3/Shelf4 mirror Shelf1/Shelf2 along the top wall
+## instead of inventing new wall/divider geometry: a 180° rotation flips
+## Shelf.gd's slots (local y=-70, i.e. "in front of" an unrotated shelf
+## toward -y) to the opposite side, so these two face DOWN into the room
+## the same way Shelf1/2 face UP into it. Checked against Shelf.gd's own
+## collision math, not guessed: body spans y 42-108 there, slots land at
+## y=130, both clear of the top wall (inner edge y=20) and of this file's
+## PRODUCT_SPAWN_DELAY-triggered spawn band (y 120-360 in _spawn_product/
+## _spawn_customer below). Result: a shelved wall on both sides of the room
+## forms one legible central aisle, without interior divider walls whose
+## collision shapes there's no way to verify visually in this environment
+## (no Godot binary here to actually run and look at it). KNOWN COSMETIC
+## QUIRK, not a bug: each slot's Indicator outline and "C" Prompt label
+## (Shelf.tscn) rotate along with the 180° parent, so they render
+## upside-down on these two shelves — functionally identical either way
+## (Shelf.gd's placement math is orientation-agnostic), just backwards art,
+## left for real slot art later rather than a dozen per-node rotation
+## overrides to un-rotate text in a greybox.
 
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
@@ -31,6 +55,14 @@ const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this poi
 ##   cashier and there's no fixed target to stop refilling at. Still scales
 ##   UP with headcount, same reasoning as Week 4: solo gets a full pool,
 ##   not a thin trickle, and more players means proportionally more.
+##   BASELINE bumped 6->12 for Week 6's larger store (4 shelves x 3 slots
+##   instead of 2x3): the old value happened to exactly match the old total
+##   slot count, so leaving it at 6 against 12 slots would mean half the
+##   store stays visibly empty all shift even at a perfect stocking rate.
+##   Doubling it to match is a judgment call to preserve that same ratio,
+##   not a confirmed design decision — the Week 5B solo playtest (15 sold in
+##   120s) was tuned against the smaller store, so this wants re-validating
+##   against the fuller one, not assumed to still be right.
 ## - CUSTOMER_BASELINE / CUSTOMER_PER_EXTRA_PLAYER: same pool-cap shape,
 ##   for the combined shopper+disruptive population.
 ## - CUSTOMER_DISRUPTIVE_RATIO: what fraction of that population is
@@ -48,17 +80,16 @@ const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this poi
 ##   feel more pressured, so this single constant will want to become
 ##   per-day once a day/level system exists, not a permanent
 ##   one-size-fits-all value.
-const PRODUCT_BASELINE := 6
+const PRODUCT_BASELINE := 12
 const PRODUCT_PER_EXTRA_PLAYER := 3
 const CUSTOMER_BASELINE := 3
 const CUSTOMER_PER_EXTRA_PLAYER := 2
-## TEMPORARILY 0.0, not the intended 0.35 — disruptive customers have no
-## counter-play yet (the defend action doesn't exist until Week 6 pairs
-## them together), so testing the shopper/continuous-demand economy with
-## disruptive customers active isn't a fair read of either system. Restore
-## to 0.35 (or whatever the last-agreed value was) once Week 6 builds the
-## defend action alongside them.
-const CUSTOMER_DISRUPTIVE_RATIO := 0.0
+## Week 6: restored to 0.35 now that the spacebar defend/shove action
+## (Player.gd's _try_defend(), Customer.gd's request_shove()) gives players
+## an actual counter-play — disruptive customers are no longer pure
+## unanswerable chaos. Still a placeholder value, like the rest of this
+## block: it's an educated guess for Day 1, not a playtested number.
+const CUSTOMER_DISRUPTIVE_RATIO := 0.35
 const SHIFT_DURATION_DEFAULT := 120.0
 ## How long after hosting starts before the shift begins — gives CLI-
 ## launched bot/client processes a moment to connect first, so the product/
