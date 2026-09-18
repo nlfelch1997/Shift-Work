@@ -1,0 +1,21 @@
+[gd_scene load_steps=3 format=3 uid="uid://ecashierscn0001"]
+
+[ext_resource type="Script" path="res://Cashier.gd" id="1"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_cashier"]
+size = Vector2(60, 40)
+
+[node name="CashierBody" type="StaticBody2D"]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_cashier")
+
+[node name="Polygon2D" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-30, -20, 30, -20, 30, 20, -30, 20)
+color = Color(0.2, 0.4, 0.6, 1)
+
+[node name="Checkout" type="Marker2D" parent="."]
+position = Vector2(50, 0)
+
+[node name="Cashier" type="Node" parent="."]
+script = ExtResource("1")

@@ -114,7 +114,7 @@ func _physics_process(_delta: float) -> void:
 		return
 	if is_multiplayer_authority():
 		if carrier_id != 0:
-			var carrier := _find_player(carrier_id)
+			var carrier := _find_carrier(carrier_id)
 			if carrier:
 				# Rotated by the carrier's own facing so the item stays
 				# "in front of you" as you turn, instead of pinned to a
@@ -145,10 +145,25 @@ func _physics_process(_delta: float) -> void:
 		target_rotation = body.rotation
 	GameLog.log_object_state(body.name, multiplayer.get_unique_id(), body.position, body.linear_velocity)
 
-func _find_player(peer_id: int) -> Node2D:
+## Renamed from _find_player: as of Week 5B, "who's carrying this" isn't
+## always a Player. Customer.gd (shopper NPCs) can carry things too, but
+## unlike a Player they don't have a unique real multiplayer authority to
+## match on -- every customer is host-authority (peer 1), same as every
+## OTHER customer, so matching by get_multiplayer_authority() would be
+## ambiguous the moment two customers carry two different items at once.
+## Customers instead get a unique synthetic "carry_id" (a negative int,
+## assigned by Main.gd at spawn -- negative so it can never collide with a
+## real peer id, which ENet always assigns as positive) and are matched by
+## that instead. Carryable.gd stays exactly as ignorant of "customer" as it
+## already is of "shelf" -- this just widens WHERE it looks, not what it
+## assumes about what it finds.
+func _find_carrier(id: int) -> Node2D:
 	for p in get_tree().get_nodes_in_group("player"):
-		if p.get_multiplayer_authority() == peer_id:
+		if p.get_multiplayer_authority() == id:
 			return p
+	for c in get_tree().get_nodes_in_group("customer"):
+		if c.get("carry_id") == id:
+			return c
 	return null
 
 ## Smoothing runs in _process (tied to actual render rate), not
@@ -290,7 +305,7 @@ func _rpc_set_carrier(id: int) -> void:
 		# invisible pixels; now that the offset rotates with facing (see
 		# below), a tick of stale facing can miss by a lot more.
 		if is_multiplayer_authority() and old_carrier_id != 0:
-			var carrier := _find_player(old_carrier_id)
+			var carrier := _find_carrier(old_carrier_id)
 			if carrier:
 				var facing: float = carrier.get("facing_angle")
 				if facing == null:
@@ -329,7 +344,7 @@ func _rpc_throw(direction: Vector2) -> void:
 	# but launching from a stale position is still a real, if smaller, aim
 	# error, so fixed the same way for consistency.
 	if is_multiplayer_authority() and old_carrier_id != 0:
-		var carrier := _find_player(old_carrier_id)
+		var carrier := _find_carrier(old_carrier_id)
 		if carrier:
 			var facing: float = carrier.get("facing_angle")
 			if facing == null:

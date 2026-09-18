@@ -18,34 +18,52 @@ extends Node2D
 
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
+const CustomerScene := preload("res://Customer.tscn")
 const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
 
-## --- Week 4 shift-objective placeholders — all three numbers below are
-## guesses to make the system testable, not tuned values. Flagging for
-## design input once this is in your hands, not picking silently:
-## - PRODUCT_BASELINE: how much product a SOLO shift gets. Deliberately a
-##   full amount, not a thin trickle — solo shouldn't feel like a lesser
-##   version of the game (see our solo-verification pass).
-## - PRODUCT_PER_EXTRA_PLAYER: how much MORE product each additional player
-##   adds. Product volume scales UP with headcount, not down — more hands
-##   means proportionally more to stock, not just more difficulty.
+## --- Week 4/5B shift-economy placeholders — every number below is a guess
+## to make the system testable, not a tuned value. Flagging for design
+## input once this is in your hands, not picking silently:
+## - PRODUCT_BASELINE / PRODUCT_PER_EXTRA_PLAYER: as of Week 5B these are a
+##   POOL CAP, not a one-time spawn — _restock_products() below tops the
+##   floor back up to this count every RESTOCK_CHECK_INTERVAL, for as long
+##   as the shift runs, since shoppers now permanently remove stock at the
+##   cashier and there's no fixed target to stop refilling at. Still scales
+##   UP with headcount, same reasoning as Week 4: solo gets a full pool,
+##   not a thin trickle, and more players means proportionally more.
+## - CUSTOMER_BASELINE / CUSTOMER_PER_EXTRA_PLAYER: same pool-cap shape,
+##   for the combined shopper+disruptive population.
+## - CUSTOMER_DISRUPTIVE_RATIO: what fraction of that population is
+##   disruptive rather than shopper. My best guess for Day 1 is that it
+##   should trend UP on later days (a calm first shift should be mostly
+##   good pressure — restocking demand — with disruption as a minor
+##   complication; escalating days should tilt toward more disruption),
+##   mirroring the same "this wants to become per-day" placeholder shape
+##   as SHIFT_DURATION_DEFAULT below. Left as a single Day-1 constant since
+##   no day/level system exists yet to hang a per-day curve off of.
 ## - SHIFT_DURATION_DEFAULT: solo has no second player to create pressure,
-##   so a countdown is solo's placeholder source of tension until Week 5's
-##   customers give it a better one. Override with --shift-seconds= for
-##   faster test iteration. Currently calibrated for a calm Day 1
-##   orientation shift specifically (bumped from 90s after playtesting felt
-##   it too tight for that) — later days are meant to feel more pressured,
-##   so this single constant will want to become per-day once a day/level
-##   system exists, not a permanent one-size-fits-all value.
+##   so a countdown is solo's placeholder source of tension. Override with
+##   --shift-seconds= for faster test iteration. Currently calibrated for a
+##   calm Day 1 orientation shift specifically — later days are meant to
+##   feel more pressured, so this single constant will want to become
+##   per-day once a day/level system exists, not a permanent
+##   one-size-fits-all value.
 const PRODUCT_BASELINE := 6
 const PRODUCT_PER_EXTRA_PLAYER := 3
+const CUSTOMER_BASELINE := 3
+const CUSTOMER_PER_EXTRA_PLAYER := 2
+const CUSTOMER_DISRUPTIVE_RATIO := 0.35
 const SHIFT_DURATION_DEFAULT := 120.0
 ## How long after hosting starts before the shift begins — gives CLI-
-## launched bot/client processes a moment to connect first, so the product
-## count reflects the actual party size instead of just the host alone.
-## Placeholder: a real lobby would spawn products on an explicit "ready up"
+## launched bot/client processes a moment to connect first, so the product/
+## customer counts reflect the actual party size instead of just the host
+## alone. Placeholder: a real lobby would spawn on an explicit "ready up"
 ## instead of a fixed delay.
 const PRODUCT_SPAWN_DELAY := 5.0
+## How often the population-maintenance check tops up products/customers
+## back up to their pool caps. Shared by both since they're the same shape
+## of system; no reason for them to run on different cadences right now.
+const RESTOCK_CHECK_INTERVAL := 3.0
 
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
@@ -55,6 +73,8 @@ const PRODUCT_SPAWN_DELAY := 5.0
 @onready var players_root: Node2D = $Players
 @onready var product_spawner: MultiplayerSpawner = $ProductSpawner
 @onready var products_root: Node2D = $Products
+@onready var customer_spawner: MultiplayerSpawner = $CustomerSpawner
+@onready var customers_root: Node2D = $Customers
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -69,6 +89,8 @@ const PRODUCT_SPAWN_DELAY := 5.0
 var carryable_objects: Array[Node] = []
 ## Every ShelfBody found generically, same reasoning as carryable_objects.
 var shelves: Array[Node] = []
+## Every CashierBody found generically, same reasoning.
+var cashiers: Array[Node] = []
 var players := {} # peer_id -> Player node (populated on every peer)
 var bot_mode := false
 var bot_run_seconds := 20.0
@@ -85,6 +107,14 @@ var shift_duration := SHIFT_DURATION_DEFAULT
 var shift_active := false
 var shift_time_left := 0.0
 var _shelf_log_timer := 0.0
+var _restock_timer := 0.0
+var _product_spawn_index := 0
+var _customer_spawn_index := 0
+## Unique synthetic carry-id pool for customers — decremented (stays
+## negative) so it can never collide with a real ENet peer id, which is
+## always positive. See Carryable.gd's _find_carrier() for why customers
+## need this instead of reusing multiplayer authority.
+var _next_customer_carry_id := -1
 
 func _ready() -> void:
 	# Children's _ready() runs before their parent's in Godot, so every
@@ -92,8 +122,10 @@ func _ready() -> void:
 	# group by the time this line runs.
 	carryable_objects = get_tree().get_nodes_in_group("carryable")
 	shelves = get_tree().get_nodes_in_group("shelf")
+	cashiers = get_tree().get_nodes_in_group("cashier")
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
+	customer_spawner.spawn_function = _spawn_customer_node
 
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -226,25 +258,60 @@ func _spawn_player_node(data: Dictionary) -> Node:
 
 ## Called once, PRODUCT_SPAWN_DELAY after hosting starts, so CLI-launched
 ## bot/client processes have had a moment to connect and count toward the
-## party size the product formula scales against. Guarded so a stray extra
-## call (there shouldn't be one) can't double-spawn a shift's worth of
-## product.
+## party size the pool-cap formulas scale against. Guarded so a stray extra
+## call (there shouldn't be one) can't double-start the shift. Does an
+## initial top-up immediately, then _process() below calls _restock_*()
+## periodically for the rest of the shift — Week 5B removed the one-time
+## fixed batch entirely: there's no finish line except the clock, so supply
+## (product) and demand (customers) both have to keep replenishing for as
+## long as the shift runs, not just spawn once and taper off.
 func _start_shift() -> void:
 	if not multiplayer.is_server() or shift_active:
 		return
 	shift_active = true
-	var count: int = PRODUCT_BASELINE + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
-	print("[Main] Shift starting — %d player(s), spawning %d product, %.0fs on the clock" % [players.size(), count, shift_duration])
-	for i in count:
-		_spawn_product(i)
+	print("[Main] Shift starting — %d player(s), %.0fs on the clock, no fixed stock target" % [players.size(), shift_duration])
+	_restock_products()
+	_restock_customers()
 	shift_time_left = shift_duration
 
-## Random within a band well clear of both the shelves (y ~462-498) and the
-## walls — spawning a RigidBody2D overlapping a StaticBody2D's collider can
-## make the physics engine's penetration-resolution fling it at an absurd
-## speed to separate them, the same class of bug Week 1-3 hit with fast-
-## moving objects tunneling through thin walls. Keeping spawns in open
-## floor avoids ever creating that overlap in the first place.
+## Tops the floor back up to PRODUCT_BASELINE + PRODUCT_PER_EXTRA_PLAYER
+## whenever it's fallen below that (shoppers permanently remove stock at
+## the cashier, so this alone is what keeps the loop from ever running dry
+## for the rest of the shift). Counts EVERY carryable object that currently
+## exists anywhere — on the floor, placed on a shelf, or mid-carry by
+## either a player or a customer — not just free-floating ones, since
+## those all still count as "not yet sold" supply.
+func _restock_products() -> void:
+	var cap: int = PRODUCT_BASELINE + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	var current := get_tree().get_nodes_in_group("carryable").size()
+	while current < cap:
+		_spawn_product(_product_spawn_index)
+		_product_spawn_index += 1
+		current += 1
+
+## Same shape as _restock_products(), for the combined shopper+disruptive
+## population — tops back up to CUSTOMER_BASELINE + PER_EXTRA_PLAYER
+## whenever a customer has despawned (finished shopping, gave up and left,
+## or timed out), keeping demand and chaos both roughly constant across
+## the whole shift instead of a batch that eventually all finish and go
+## idle. Each new spawn's role is picked independently by
+## CUSTOMER_DISRUPTIVE_RATIO, not assigned as a fixed up-front split.
+func _restock_customers() -> void:
+	var cap: int = CUSTOMER_BASELINE + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	var current := get_tree().get_nodes_in_group("customer").size()
+	while current < cap:
+		var role := "disruptive" if randf() < CUSTOMER_DISRUPTIVE_RATIO else "shopper"
+		_spawn_customer(role)
+		current += 1
+
+## Random within a band well clear of the shelves (y ~462-498), the walls,
+## and the cashier (tucked against the left wall at x~40-100, well left of
+## this band's x>=180 floor) — spawning a RigidBody2D overlapping a
+## StaticBody2D's collider can make the physics engine's penetration-
+## resolution fling it at an absurd speed to separate them, the same class
+## of bug Week 1-3 hit with fast-moving objects tunneling through thin
+## walls. Keeping spawns in open floor avoids ever creating that overlap in
+## the first place.
 func _spawn_product(index: int) -> void:
 	var pos := Vector2(randf_range(180.0, 780.0), randf_range(120.0, 360.0))
 	product_spawner.spawn({"index": index, "pos": pos})
@@ -254,6 +321,25 @@ func _spawn_product_node(data: Dictionary) -> Node:
 	p.name = "Product%d" % data["index"]
 	p.position = data["pos"]
 	return p
+
+## Same safe spawn band as products — customers are CharacterBody2Ds, not
+## RigidBody2Ds, so they wouldn't get flung by a collision-shape overlap
+## the way a product could, but starting them clear of the shelves/cashier
+## still avoids an instant, confusing shove on spawn.
+func _spawn_customer(role: String) -> void:
+	var pos := Vector2(randf_range(180.0, 780.0), randf_range(120.0, 360.0))
+	var carry_id := _next_customer_carry_id
+	_next_customer_carry_id -= 1
+	customer_spawner.spawn({"index": _customer_spawn_index, "pos": pos, "role": role, "carry_id": carry_id})
+	_customer_spawn_index += 1
+
+func _spawn_customer_node(data: Dictionary) -> Node:
+	var c := CustomerScene.instantiate()
+	c.name = "Customer%d" % data["index"]
+	c.position = data["pos"]
+	c.role = data["role"]
+	c.carry_id = data["carry_id"]
+	return c
 
 func _process(delta: float) -> void:
 	var connected := Net.is_active()
@@ -270,6 +356,16 @@ func _process(delta: float) -> void:
 
 	if shift_active and shift_time_left > 0.0:
 		shift_time_left = max(0.0, shift_time_left - delta)
+	# Population maintenance — only the host actually spawns anything (both
+	# _restock_* functions no-op their spawning on non-authority peers via
+	# the spawners themselves being authority-driven), but the timer is
+	# harmless to tick on every peer, so it's not worth an extra guard here.
+	if shift_active and multiplayer.is_server():
+		_restock_timer -= delta
+		if _restock_timer <= 0.0:
+			_restock_timer = RESTOCK_CHECK_INTERVAL
+			_restock_products()
+			_restock_customers()
 	# Machine-readable, same purpose as GameLog's DATA lines: lets a test run
 	# capture every peer's own view of shelf-fill state to a log file and
 	# diff them afterward, to confirm the replicated "filled" array (see
@@ -282,6 +378,10 @@ func _process(delta: float) -> void:
 		for shelf_body in shelves:
 			var s_log: Node = shelf_body.get_node("Shelf")
 			print("SHELFDATA,%s,%d,%d,%d" % [shelf_body.name, my_id, s_log.filled_count(), s_log.slot_count()])
+		var total_sold_log := 0
+		for cashier_body in cashiers:
+			total_sold_log += cashier_body.get_node("Cashier").total_sold
+		print("SOLDDATA,%d,%d" % [my_id, total_sold_log])
 	var total_filled := 0
 	var total_slots := 0
 	for shelf_body in shelves:
@@ -291,10 +391,15 @@ func _process(delta: float) -> void:
 		total_filled += f
 		total_slots += s
 		lines.append("%s: %d/%d" % [shelf_body.name, f, s])
+	var total_sold := 0
+	for cashier_body in cashiers:
+		total_sold += cashier_body.get_node("Cashier").total_sold
+	# No fixed completion state as of Week 5B — stock demand is continuous
+	# for the whole shift, so there's nothing to declare "complete." The
+	# only thing that ends the shift is the clock; the ongoing scoreboard
+	# (see the session's flagged scoring decision) is total items sold.
 	if shift_active:
-		lines.append("Shift: %d/%d stocked  |  %.0fs left" % [total_filled, total_slots, shift_time_left])
-		if total_slots > 0 and total_filled >= total_slots:
-			lines.append("SHIFT COMPLETE")
-		elif shift_time_left <= 0.0:
-			lines.append("SHIFT FAILED — time's up")
+		lines.append("Stocked now: %d/%d  |  Sold: %d  |  %.0fs left" % [total_filled, total_slots, total_sold, shift_time_left])
+		if shift_time_left <= 0.0:
+			lines.append("SHIFT OVER — Sold: %d" % total_sold)
 	debug_label.text = "\n".join(lines)

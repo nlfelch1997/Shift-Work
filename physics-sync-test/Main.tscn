@@ -1,7 +1,8 @@
-[gd_scene load_steps=6 format=3 uid="uid://mainscn0001"]
+[gd_scene load_steps=7 format=3 uid="uid://mainscn0001"]
 
 [ext_resource type="Script" path="res://Main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://Shelf.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://Cashier.tscn" id="3"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_h"]
 size = Vector2(960, 20)
@@ -53,6 +54,9 @@ position = Vector2(220, 480)
 [node name="Shelf2" parent="Shelves" instance=ExtResource("2")]
 position = Vector2(740, 480)
 
+[node name="Cashier1" parent="." instance=ExtResource("3")]
+position = Vector2(70, 270)
+
 [node name="Players" type="Node2D" parent="."]
 
 [node name="PlayerSpawner" type="MultiplayerSpawner" parent="."]
@@ -62,6 +66,11 @@ spawn_path = NodePath("../Players")
 
 [node name="ProductSpawner" type="MultiplayerSpawner" parent="."]
 spawn_path = NodePath("../Products")
+
+[node name="Customers" type="Node2D" parent="."]
+
+[node name="CustomerSpawner" type="MultiplayerSpawner" parent="."]
+spawn_path = NodePath("../Customers")
 
 [node name="MenuLayer" type="CanvasLayer" parent="."]
 
