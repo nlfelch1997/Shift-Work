@@ -37,12 +37,12 @@ extends CharacterBody2D
 ## chaos with no counter-play — a shoved customer (either role) goes into a
 ## brief knockback/stun and its normal AI picks back up once that ends.
 
-## Slowed 160->120 by request — customers reading as a brisk-walking player
-## didn't feel right for either role; shoppers should read as browsing, not
-## rushing, and disruptive should read as an annoyance you can react to, not
-## something that closes distance as fast as a player can. Shared by both
-## roles, same as before.
-const SPEED := 120.0
+## Slowed 160->120->90 by request, across two rounds of feedback — 120 still
+## read as too close to a player's own pace (Player.gd's SPEED is 220).
+## Shoppers should read as unhurried browsing, disruptive should read as a
+## reactable annoyance, not something that closes distance as fast as a
+## player can. Shared by both roles, same as before.
+const SPEED := 90.0
 const PUSH_FORCE := 9000.0 # matches Player.gd's — identical push mechanic, duplicated rather than shared, consistent with this project's existing per-script style
 const PICKUP_RANGE := 55.0
 const SMOOTHING_RATE := 15.0

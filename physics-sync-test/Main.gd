@@ -95,8 +95,13 @@ const SHIFT_DURATION_DEFAULT := 120.0
 ## launched bot/client processes a moment to connect first, so the product/
 ## customer counts reflect the actual party size instead of just the host
 ## alone. Placeholder: a real lobby would spawn on an explicit "ready up"
-## instead of a fixed delay.
-const PRODUCT_SPAWN_DELAY := 5.0
+## instead of a fixed delay. Shortened 5.0->2.0 by request ("have them
+## automatically start walking around once the game starts") — a solo
+## human clicking Host Game doesn't need 5 whole seconds of an empty store
+## before anything (products, customers) exists to see move; a CLI client
+## launched separately still only needs ~1s (see its own await in
+## _parse_cli_args) plus a moment for the ENet handshake, well under 2s.
+const PRODUCT_SPAWN_DELAY := 2.0
 ## How often the population-maintenance check tops up products/customers
 ## back up to their pool caps. Shared by both since they're the same shape
 ## of system; no reason for them to run on different cadences right now.
