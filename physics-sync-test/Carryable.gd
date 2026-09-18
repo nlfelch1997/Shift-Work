@@ -116,7 +116,18 @@ func _physics_process(_delta: float) -> void:
 		if carrier_id != 0:
 			var carrier := _find_player(carrier_id)
 			if carrier:
-				body.position = carrier.global_position + CARRY_OFFSET
+				# Rotated by the carrier's own facing so the item stays
+				# "in front of you" as you turn, instead of pinned to a
+				# fixed world-space offset regardless of which way you're
+				# looking. Read dynamically via get() rather than a typed
+				# reference — this component stays deliberately ignorant
+				# of what kind of node carries it (see the header comment
+				# on why Carryable.gd doesn't know shelves exist either);
+				# a carrier with no facing_angle just falls back to 0.0.
+				var facing: float = carrier.get("facing_angle")
+				if facing == null:
+					facing = 0.0
+				body.position = carrier.global_position + CARRY_OFFSET.rotated(facing)
 				body.rotation = 0.0
 			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
 			# position moved this tick (see the longer note on _rpc_set_carrier)
@@ -261,6 +272,7 @@ func force_drop_if_carrier(id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func _rpc_set_carrier(id: int) -> void:
 	print("[%s] carrier -> %d (seen by peer %d)" % [body.name, id, multiplayer.get_unique_id()])
+	var old_carrier_id := carrier_id
 	carrier_id = id
 	if id != 0:
 		body.linear_velocity = Vector2.ZERO
@@ -269,6 +281,21 @@ func _rpc_set_carrier(id: int) -> void:
 		body.collision_layer = 0
 		body.collision_mask = 0
 	else:
+		# Finalize the drop position HERE, at the exact moment of the
+		# transition — found by testing: _physics_process's own repositioning
+		# (further down) only runs `if carrier_id != 0`, which is now false,
+		# so it would otherwise leave the item exactly one physics tick
+		# stale — wherever it was computed on the tick BEFORE the drop, not
+		# at the drop itself. With a fixed carry offset that was a few
+		# invisible pixels; now that the offset rotates with facing (see
+		# below), a tick of stale facing can miss by a lot more.
+		if is_multiplayer_authority() and old_carrier_id != 0:
+			var carrier := _find_player(old_carrier_id)
+			if carrier:
+				var facing: float = carrier.get("facing_angle")
+				if facing == null:
+					facing = 0.0
+				body.position = carrier.global_position + CARRY_OFFSET.rotated(facing)
 		body.collision_layer = 1
 		body.collision_mask = 1
 		if is_multiplayer_authority():
@@ -295,7 +322,19 @@ func _rpc_set_carrier(id: int) -> void:
 @rpc("authority", "call_local", "reliable")
 func _rpc_throw(direction: Vector2) -> void:
 	print("[%s] thrown dir=%s (seen by peer %d)" % [body.name, direction, multiplayer.get_unique_id()])
+	var old_carrier_id := carrier_id
 	carrier_id = 0
+	# Same one-tick-stale-position fix as _rpc_set_carrier(0) — see its
+	# comment. Matters less here (a thrown object is about to move anyway),
+	# but launching from a stale position is still a real, if smaller, aim
+	# error, so fixed the same way for consistency.
+	if is_multiplayer_authority() and old_carrier_id != 0:
+		var carrier := _find_player(old_carrier_id)
+		if carrier:
+			var facing: float = carrier.get("facing_angle")
+			if facing == null:
+				facing = 0.0
+			body.position = carrier.global_position + CARRY_OFFSET.rotated(facing)
 	body.collision_layer = 1
 	body.collision_mask = 1
 	if is_multiplayer_authority():

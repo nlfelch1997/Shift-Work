@@ -3,11 +3,12 @@
 [ext_resource type="Script" path="res://Shelf.gd" id="1"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_shelf"]
-size = Vector2(180, 36)
+size = Vector2(180, 66)
 
 [node name="ShelfBody" type="StaticBody2D"]
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(0, -15)
 shape = SubResource("RectangleShape2D_shelf")
 
 [node name="Polygon2D" type="Polygon2D" parent="."]
@@ -15,13 +16,13 @@ polygon = PackedVector2Array(-90, -48, 90, -48, 90, 18, -90, 18)
 color = Color(0.35, 0.3, 0.25, 1)
 
 [node name="Slot1" type="Marker2D" parent="."]
-position = Vector2(-60, -40)
+position = Vector2(-60, -70)
 
 [node name="Slot2" type="Marker2D" parent="."]
-position = Vector2(0, -40)
+position = Vector2(0, -70)
 
 [node name="Slot3" type="Marker2D" parent="."]
-position = Vector2(60, -40)
+position = Vector2(60, -70)
 
 [node name="Shelf" type="Node" parent="."]
 script = ExtResource("1")

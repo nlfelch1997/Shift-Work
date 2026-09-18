@@ -263,14 +263,16 @@ func _bot_stocker_input(_delta: float) -> Vector2:
 		_bot_committed_slot_pos = _bot_find_empty_slot()
 	if _bot_committed_slot_pos == null:
 		return Vector2.ZERO # nothing open anywhere right now
-	# Aim so the carried item — which trails at carrier position +
-	# Carryable.CARRY_OFFSET — lands ON the slot marker when dropped, not
-	# just near the bot itself.
-	var approach: Vector2 = _bot_committed_slot_pos - CarryableScript.CARRY_OFFSET
-	var to_approach := approach - global_position
-	if to_approach.length() < 6.0:
+	# Walk STRAIGHT at the slot rather than at a precomputed offset point —
+	# now that Carryable.gd rotates CARRY_OFFSET to match facing direction,
+	# "the direction I'm walking" and "the direction the item trails toward"
+	# are the same thing, so stopping CARRY_OFFSET's own length away from
+	# the slot lands the item on it regardless of which side the bot
+	# approached from (a fixed offset point only worked from one side).
+	var to_slot: Vector2 = _bot_committed_slot_pos - global_position
+	if to_slot.length() < CarryableScript.CARRY_OFFSET.length():
 		return Vector2.ZERO
-	return to_approach.normalized()
+	return to_slot.normalized()
 
 func _bot_stocker_maybe_interact(delta: float) -> void:
 	_bot_interact_cooldown -= delta
@@ -283,7 +285,20 @@ func _bot_stocker_maybe_interact(delta: float) -> void:
 		if target and global_position.distance_to(target.global_position) < BOT_PICKUP_RANGE:
 			_interact_with(target, my_id)
 			_bot_interact_cooldown = INTERACT_COOLDOWN
-	elif _bot_committed_slot_pos != null and global_position.distance_to(_bot_committed_slot_pos) < BOT_PICKUP_RANGE:
+	elif _bot_committed_slot_pos != null and global_position.distance_to(_bot_committed_slot_pos) < CarryableScript.CARRY_OFFSET.length() + 4.0:
+		# Explicitly face the slot right before dropping, rather than trusting
+		# whatever facing_angle happens to hold — found by testing: if the
+		# picked-up product was already sitting within CARRY_OFFSET's length
+		# of the slot (leftover from an earlier failed placement), the "stop
+		# once close enough" check can trigger on the very first carrying
+		# tick, before the bot ever actually walks toward the SLOT at all —
+		# facing_angle would still reflect whichever direction it was walking
+		# to reach the PRODUCT, unrelated to the slot, and the rotated offset
+		# would fling the item in a stale, essentially arbitrary direction.
+		var to_slot: Vector2 = _bot_committed_slot_pos - global_position
+		if to_slot.length() > 0.01:
+			facing_angle = to_slot.angle()
+			$Polygon2D.rotation = facing_angle
 		_interact_with(carried, my_id)
 		_bot_interact_cooldown = INTERACT_COOLDOWN
 		_bot_committed_slot_pos = null

@@ -32,10 +32,14 @@ const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this poi
 ## - SHIFT_DURATION_DEFAULT: solo has no second player to create pressure,
 ##   so a countdown is solo's placeholder source of tension until Week 5's
 ##   customers give it a better one. Override with --shift-seconds= for
-##   faster test iteration.
+##   faster test iteration. Currently calibrated for a calm Day 1
+##   orientation shift specifically (bumped from 90s after playtesting felt
+##   it too tight for that) — later days are meant to feel more pressured,
+##   so this single constant will want to become per-day once a day/level
+##   system exists, not a permanent one-size-fits-all value.
 const PRODUCT_BASELINE := 6
 const PRODUCT_PER_EXTRA_PLAYER := 3
-const SHIFT_DURATION_DEFAULT := 90.0
+const SHIFT_DURATION_DEFAULT := 120.0
 ## How long after hosting starts before the shift begins — gives CLI-
 ## launched bot/client processes a moment to connect first, so the product
 ## count reflects the actual party size instead of just the host alone.
