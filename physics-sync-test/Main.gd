@@ -119,13 +119,68 @@ const SECTION_COLORS := {
 ## inactive rather than identical to an unlocked one — placeholder
 ## darkening amount, wants a look before calling it final.
 const LOCKED_DIM := Color(0.55, 0.55, 0.55, 1)
-## Debug/testing stand-in for the real 7-day progression the brief
-## describes — settable via --day=N (see _parse_cli_args), since what
-## actually carries over day to day, when a shift ends "the day", etc.
-## isn't wired up yet. Defaults to 1 (Dry Goods only), i.e. a genuine Day 1
-## shift, so plain Host-Game-button play is unaffected unless --day= is
-## passed.
+## WEEK 7: real day progression. debug_day is now ONLY the requested
+## STARTING day, read once from --day=N (see _parse_cli_args) and applied
+## to current_day the moment hosting begins (_on_host_pressed) — it has no
+## further effect after that. current_day is the actual, live, host-
+## authoritative day counter: it advances on its own when a shift's clock
+## runs out (_end_shift), which is the real thing driving section gates
+## now, not a flag anyone has to remember to pass. A client no longer
+## needs to pass --day= at all — only the host's copy is ever consulted,
+## since current_day reaches every peer via replication (see _day_sync in
+## _ready()), the same pattern every other piece of shared state in this
+## project already uses.
 var debug_day := 1
+## The real, live day counter — host-authoritative, replicated via
+## _day_sync (see _ready()). Every peer reacts to CHANGES in this value
+## (not just reads it) via the check at the top of _process(), which also
+## catches a late-joining client up to whatever day is already in
+## progress, the same self-healing property Shelf.gd's `filled` array
+## already relies on for late joiners.
+var current_day := 1
+## Sentinel (-1, below any real day) guarantees the first _process() tick
+## on EVERY peer — host at start, or a client the moment current_day's
+## first replicated value arrives — runs _configure_gates()/
+## _apply_section_lock_visuals() at least once, without a separate
+## "initial setup" call duplicating that logic.
+var _last_configured_day := -1
+## FLAGGED DESIGN DECISION — score/sold-count continuity across days,
+## explicitly asked to be surfaced rather than picked silently:
+##
+## My recommendation is to track BOTH a per-day count and a running week
+## total, rather than choosing one over the other. They answer different
+## questions — a per-day number says "was today better than yesterday,"
+## a week total says "how did the whole week go" — and dropping either
+## loses a real, distinct piece of feedback a player would want. Keeping
+## both costs nothing extra: Cashier.gd's total_sold already never resets
+## (it's the natural week/session total), so "today's sold" is just that
+## cumulative number minus a snapshot taken at the moment the day's shift
+## began (_sold_at_day_start below, set in _start_shift()). See
+## _process()'s debug HUD for both numbers shown side by side.
+##
+## If you'd rather have just one: for "reset each day," drop
+## _sold_at_day_start and always display _total_sold() itself, resetting
+## each cashier's total_sold to 0 in _start_shift() instead of snapshotting
+## it — a bigger change, since total_sold is a REPLICATED cashier
+## property, not something Main.gd owns directly. For "accumulate only,"
+## just drop the "today" number from the HUD and keep showing
+## _total_sold() labeled as the running total — no code change needed
+## beyond the display line. I picked "track both" as the default because
+## it's the only option that doesn't foreclose either interpretation once
+## you've actually played a multi-day session and have an opinion.
+var _sold_at_day_start := 0
+## Non-empty while the "Day N complete — starting Day N+1" pause is
+## showing (see _end_shift()); replicated via _day_sync so every peer
+## shows the same message at the same time. Empty = normal shift or the
+## pre-shift menu.
+var day_transition_message := ""
+## How long the transition message stays up before the next day's shift
+## starts — placeholder, not tuned; "doesn't need to be polished, just
+## functional" per the brief, so this is a debug-label message, not a
+## real pause/blocking screen. Gameplay keeps running underneath it
+## (players can still walk around); only the economy (_restock_*) is
+## paused, via the same shift_active guard those already checked.
+const DAY_TRANSITION_PAUSE := 4.0
 
 ## --- Week 4/5B/6 shift-economy placeholders — every number below is a
 ## guess to make the system testable, not a tuned value. Flagging for
@@ -141,8 +196,8 @@ var debug_day := 1
 ##   sections are currently unlocked (_product_baseline()/
 ##   _customer_baseline() below), not a flat constant — the OLD flat
 ##   PRODUCT_BASELINE=12 happened to exactly match Dry-Goods-only's total
-##   slot count (4 shelves x 3 slots), so leaving it flat while debug_day
-##   opens 2-4 more sections would mean most of the newly-opened floor sits
+##   slot count (4 shelves x 3 slots), so leaving it flat while later days
+##   open 2-4 more sections would mean most of the newly-opened floor sits
 ##   empty all shift even at a perfect stocking rate. Scaling it by
 ##   unlocked-section-count preserves that same "baseline ~= reachable slot
 ##   count" ratio Week 6 already established — a judgment call, not a
@@ -153,7 +208,7 @@ var debug_day := 1
 ##   unaffected either way (1 section unlocked = the exact old numbers).
 ##   The Week 5B solo playtest (15 sold in 120s) was tuned against the
 ##   original single-section store, so ANY of this wants re-validating at
-##   higher debug days, not assumed to still be right.
+##   later days, not assumed to still be right.
 ## - CUSTOMER_DISRUPTIVE_RATIO: what fraction of the customer population is
 ##   disruptive rather than shopper. My best guess for Day 1 is that it
 ##   should trend UP on later days (a calm first shift should be mostly
@@ -161,8 +216,9 @@ var debug_day := 1
 ##   complication; escalating days should tilt toward more disruption),
 ##   mirroring the same "this wants to become per-day" placeholder shape
 ##   as SHIFT_DURATION_DEFAULT below. Left as a single Day-1 constant since
-##   the day/level system is still just a debug int (debug_day above), not
-##   a real progression to hang a per-day curve off of yet.
+##   — even with Week 7's real current_day counter now driving section
+##   gates — there's still no per-day CURVE system to hang a ratio-by-day
+##   formula off of, just a live day number.
 ## - SHIFT_DURATION_DEFAULT: solo has no second player to create pressure,
 ##   so a countdown is solo's placeholder source of tension. Override with
 ##   --shift-seconds= for faster test iteration. Currently calibrated for a
@@ -255,9 +311,37 @@ func _ready() -> void:
 	shelves = get_tree().get_nodes_in_group("shelf")
 	cashiers = get_tree().get_nodes_in_group("cashier")
 	_apply_section_accent_colors()
+	_cache_original_colors()
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
+
+	# WEEK 7 — host-authoritative day/shift state, replicated to every peer
+	# the same way every other piece of shared state in this project is
+	# (see Carryable/Shelf/Cashier's own near-identical setup). Added to
+	# Main's own root node rather than a spawned child: Main is present,
+	# identically, on every peer from the start (it's the scene root, not
+	# something MultiplayerSpawner creates), so a late joiner gets caught
+	# up to the CURRENT values automatically via plain ALWAYS-mode sync —
+	# no special "catch up a new joiner" RPC needed, the same reasoning
+	# Shelf.gd's `filled` array already relies on. shift_active/
+	# shift_time_left are included here too, not just current_day/
+	# day_transition_message/_sold_at_day_start: they used to tick down
+	# independently on every peer, which was harmless only because
+	# shift_active never actually changed value before Week 7's day-end/
+	# transition/next-shift cycle existed — an un-replicated client-local
+	# copy would otherwise just stay true forever, never showing the
+	# transition message a client should see.
+	var day_sync := MultiplayerSynchronizer.new()
+	var day_config := SceneReplicationConfig.new()
+	for prop in [".:current_day", ".:day_transition_message", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left"]:
+		var path := NodePath(prop)
+		day_config.add_property(path)
+		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+	day_sync.replication_config = day_config
+	day_sync.name = "DaySync" # explicit, identical name on every peer — see Player.gd's note on why an auto-generated name breaks replication
+	day_sync.set_multiplayer_authority(1)
+	add_child(day_sync)
 
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -271,8 +355,7 @@ func _ready() -> void:
 	host_button.pressed.connect(_on_host_pressed)
 	join_button.pressed.connect(_on_join_pressed)
 
-	_parse_cli_args() # sets debug_day (synchronously, before any internal await — see its own comment) and calls _configure_gates()
-	_apply_section_lock_visuals() # must run AFTER _parse_cli_args(), since it needs the now-final debug_day
+	_parse_cli_args()
 
 func _parse_cli_args() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -288,12 +371,6 @@ func _parse_cli_args() -> void:
 			bot_roles.assign(arg.substr("--bot-roles=".length()).split(","))
 		elif arg.begins_with("--day="):
 			debug_day = int(arg.substr("--day=".length()))
-	# Every peer configures its own gates independently right after parsing
-	# --day= (or falling back to the default of 1) — unconditionally, not
-	# just for --server/--client CLI runs, so a plain Host-Game-button
-	# session also gets a correctly gated store. See _configure_gates()'s
-	# own comment for why this doesn't need network sync.
-	_configure_gates()
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
@@ -301,7 +378,7 @@ func _parse_cli_args() -> void:
 		await get_tree().create_timer(1.0).timeout
 		_on_join_pressed()
 
-## Sets every Gate's locked/unlocked state from debug_day. Node name ->
+## Sets every Gate's locked/unlocked state from current_day. Node name ->
 ## required_day is matched here in code, NOT via a .tscn property override
 ## on the nested "Gate" child of each Gate.tscn instance — this project
 ## already lost a shelf polygon once to a .tscn property silently
@@ -310,14 +387,17 @@ func _parse_cli_args() -> void:
 ## couldn't be fully certain of Godot's exact nested-instance-override
 ## syntax without a way to load and inspect the scene here — a plain
 ## name->value lookup in plain GDScript is just as easy and isn't a syntax
-## I have to trust blind.
+## I have to trust blind. Called from _process()'s day-change check now
+## (Week 7), not from _parse_cli_args() — every peer reacts uniformly to
+## current_day actually changing (initial arrival or a later day-advance),
+## rather than each peer computing it once from its own local CLI flag.
 func _configure_gates() -> void:
 	var required_days := {"GateMeatDeli": 3, "GateDairyFrozen": 5, "GateBakery": 7}
 	for gate_body in get_tree().get_nodes_in_group("gate"):
 		var gate: Node = gate_body.get_node("Gate")
 		if required_days.has(gate_body.name):
 			gate.required_day = required_days[gate_body.name]
-		gate.configure(debug_day)
+		gate.configure(current_day)
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
@@ -338,32 +418,70 @@ func _apply_section_accent_colors() -> void:
 ## normal except for the Gate's own thin barrier line at its entrance —
 ## easy to miss, and gave no sense at a glance that the whole section was
 ## inactive. Darkens every locked section's shelves, cashier, floor tint,
-## and label together, once, right after debug_day is finalized (must run
-## AFTER _parse_cli_args() — see _ready()'s call order comment). Unlocked
-## sections are untouched, including Dry Goods, which is never locked.
+## and label together. Unlocked sections (including Dry Goods, which is
+## never locked) are restored to their ORIGINAL color, not just left
+## alone — WEEK 7 CHANGE: this now runs every time current_day changes
+## (see _process()'s day-change check), not just once at startup, since a
+## section can go from locked to unlocked mid-session. Recomputing from
+## the cached _original_*_color dictionaries (populated once by
+## _cache_original_colors() in _ready()) rather than multiplying
+## LOCKED_DIM onto whatever the PREVIOUS call left behind is what keeps a
+## still-locked section from getting darker on every single day-advance,
+## and correctly brightens a section the moment it unlocks.
 func _apply_section_lock_visuals() -> void:
 	for section in SECTIONS:
-		if debug_day >= section["required_day"]:
-			continue # unlocked — leave it at full color
+		var unlocked: bool = current_day >= section["required_day"]
 		var room_x: float = section["room_index"] * ROOM_WIDTH
 		var room_x_end: float = room_x + ROOM_WIDTH
 		for shelf_body in shelves:
 			if shelf_body.global_position.x >= room_x and shelf_body.global_position.x < room_x_end:
-				shelf_body.modulate *= LOCKED_DIM
+				var base: Color = _original_shelf_modulate[shelf_body]
+				shelf_body.modulate = base if unlocked else base * LOCKED_DIM
 		for cashier_body in cashiers:
 			if cashier_body.global_position.x >= room_x and cashier_body.global_position.x < room_x_end:
-				cashier_body.modulate *= LOCKED_DIM
+				var base: Color = _original_cashier_modulate[cashier_body]
+				cashier_body.modulate = base if unlocked else base * LOCKED_DIM
 		var bg := get_node_or_null("RoomBackgrounds/%sBg" % section["node_name"])
 		if bg:
-			bg.color *= LOCKED_DIM
+			var base_bg: Color = _original_bg_color[section["node_name"]]
+			bg.color = base_bg if unlocked else base_bg * LOCKED_DIM
 		var label := get_node_or_null("SectionLabels/%s/Label" % section["node_name"])
 		if label:
-			label.modulate = LOCKED_DIM
+			label.modulate = Color(1, 1, 1, 1) if unlocked else LOCKED_DIM
+
+## Snapshots every shelf/cashier/background's color BEFORE any locking
+## dims it, so _apply_section_lock_visuals() above always has an
+## undimmed original to compute from no matter how many times (or in
+## what order) it later runs. Called once from _ready(); order relative
+## to _apply_section_accent_colors() doesn't matter, since that touches a
+## different property (Shelf.gd's own accent_color/indicator, not the
+## ShelfBody root's modulate this reads).
+var _original_shelf_modulate := {} # shelf_body (Node) -> Color
+var _original_cashier_modulate := {} # cashier_body (Node) -> Color
+var _original_bg_color := {} # section node_name (String) -> Color
+
+func _cache_original_colors() -> void:
+	for shelf_body in shelves:
+		_original_shelf_modulate[shelf_body] = shelf_body.modulate
+	for cashier_body in cashiers:
+		_original_cashier_modulate[cashier_body] = cashier_body.modulate
+	for section in SECTIONS:
+		var bg := get_node_or_null("RoomBackgrounds/%sBg" % section["node_name"])
+		if bg:
+			_original_bg_color[section["node_name"]] = bg.color
 
 func _on_host_pressed() -> void:
 	menu_layer.hide()
 	if not Net.host_game():
 		return
+	# WEEK 7: only the HOST's --day= (or the default of 1) decides the
+	# real starting day now — a client's own --day=, if it even passed
+	# one, is simply never consulted, since current_day reaches every
+	# peer via replication (see _day_sync in _ready()). Applying it
+	# (gates, lock visuals) isn't done here — the day-change check at the
+	# top of _process() handles that uniformly for every peer, whether
+	# it's the very first tick or a later day-advance.
+	current_day = debug_day
 	_spawn_player(multiplayer.get_unique_id())
 	if bot_mode:
 		_start_bot_timer()
@@ -465,14 +583,59 @@ func _spawn_player_node(data: Dictionary) -> Node:
 ## fixed batch entirely: there's no finish line except the clock, so supply
 ## (product) and demand (customers) both have to keep replenishing for as
 ## long as the shift runs, not just spawn once and taper off.
+##
+## WEEK 7: also the entry point for every day AFTER the first — _end_shift()
+## below calls this exact same function once the transition pause elapses,
+## rather than a separate "day 2+" code path. Nothing here resets or
+## despawns existing products/customers/shelf state between days; only
+## _restock_* topping up to the (likely now-larger, since more sections may
+## have just unlocked) population caps changes anything. The brief's
+## minimum bar for between-day continuity was day number + section-unlock
+## state, both of which already follow from current_day automatically —
+## I didn't add reset logic beyond that since nothing asked for it yet.
 func _start_shift() -> void:
 	if not multiplayer.is_server() or shift_active:
 		return
 	shift_active = true
-	print("[Main] Shift starting — %d player(s), %.0fs on the clock, no fixed stock target" % [players.size(), shift_duration])
+	_sold_at_day_start = _total_sold()
+	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, no fixed stock target" % [current_day, players.size(), shift_duration])
 	_restock_products()
 	_restock_customers()
 	shift_time_left = shift_duration
+
+## Host-only: called the instant the clock hits zero (see _process()'s
+## shift-timer check). Ends the current day, shows the transition message
+## (replicated via _day_sync, so every peer sees the same text at the same
+## time) for DAY_TRANSITION_PAUSE seconds, then advances current_day and
+## starts the next day's shift via _start_shift() above — the exact same
+## function Day 1 used, not a separate path. Gameplay keeps running during
+## the pause (players can still walk around, a shopper mid-purchase can
+## still complete it — Cashier.gd/Shelf.gd don't check shift_active at
+## all); only the economy restock is paused, via the same shift_active
+## guard _process() already checks before calling _restock_*().
+func _end_shift() -> void:
+	if not multiplayer.is_server() or not shift_active:
+		return
+	shift_active = false
+	var completed_day := current_day
+	current_day += 1
+	day_transition_message = "Day %d complete — starting Day %d" % [completed_day, current_day]
+	print("[Main] %s" % day_transition_message)
+	get_tree().create_timer(DAY_TRANSITION_PAUSE).timeout.connect(func():
+		day_transition_message = ""
+		_start_shift()
+	)
+
+## Cumulative total across every cashier, for as long as the session has
+## run — never reset, unlike _sold_at_day_start (see the score-continuity
+## comment above _sold_at_day_start's declaration). Used both directly (as
+## the week/session total) and as the basis for "today's sold"
+## (_total_sold() - _sold_at_day_start) in _process()'s debug HUD.
+func _total_sold() -> int:
+	var total := 0
+	for cashier_body in cashiers:
+		total += cashier_body.get_node("Cashier").total_sold
+	return total
 
 ## Tops the floor back up to _product_baseline() + PRODUCT_PER_EXTRA_PLAYER
 ## whenever it's fallen below that (shoppers permanently remove stock at
@@ -509,16 +672,16 @@ func _restock_customers() -> void:
 func _unlocked_sections() -> Array:
 	var result := []
 	for section in SECTIONS:
-		if debug_day >= section["required_day"]:
+		if current_day >= section["required_day"]:
 			result.append(section)
 	return result
 
 ## True if the given WORLD x-coordinate falls inside a section that's
 ## currently unlocked. Used to keep the debug HUD and the restock-baseline
 ## scaling honest about which shelves are actually reachable this session
-## — a shelf behind a locked gate physically exists (so raising debug_day
-## mid-testing doesn't need new scene content) but isn't "in play" for
-## either purpose until its gate opens.
+## — a shelf behind a locked gate physically exists (so the day advancing
+## past it mid-session doesn't need new scene content) but isn't "in play"
+## for either purpose until its gate opens.
 ##
 ## Public (no underscore), unlike this file's other section helpers,
 ## because Customer.gd calls it too (via get_tree().current_scene, not a
@@ -541,7 +704,7 @@ func is_unlocked_at_x(world_x: float) -> bool:
 	var idx := int(floor(world_x / ROOM_WIDTH))
 	for section in SECTIONS:
 		if section["room_index"] == idx:
-			return debug_day >= section["required_day"]
+			return current_day >= section["required_day"]
 	return false # room 0 (break room) has no shelves, so never matters here
 
 ## 12 = one section's slot count (4 shelves x 3 slots) — see the big
@@ -621,20 +784,39 @@ func _spawn_customer_node(data: Dictionary) -> Node:
 	return c
 
 func _process(delta: float) -> void:
+	# WEEK 7 — runs on every peer, purely reactive to current_day (which is
+	# host-authoritative, replicated — see _day_sync in _ready()), not
+	# something this check itself changes. Catches: the very first tick on
+	# any peer (thanks to _last_configured_day's sentinel), a later day-
+	# advance on the host, and a late-joining client the moment
+	# current_day's first replicated value arrives — one code path for all
+	# three instead of separate "initial setup" and "day changed" cases.
+	if current_day != _last_configured_day:
+		_last_configured_day = current_day
+		_configure_gates()
+		_apply_section_lock_visuals()
+		print("[Main] Day is now %d" % current_day)
+
 	var connected := Net.is_active()
 	var role := "OFFLINE"
 	if connected:
 		role = "HOST" if multiplayer.is_server() else "CLIENT"
 	var lines := ["peer id: %d  (%s)  players: %d  day: %d" % [
-		multiplayer.get_unique_id() if connected else 0, role, players.size(), debug_day,
+		multiplayer.get_unique_id() if connected else 0, role, players.size(), current_day,
 	]]
 	for obj in carryable_objects:
 		var c: Node = obj.get_node("Carryable")
 		var carried := "carried by %d" % c.carrier_id if c.carrier_id != 0 else "free"
 		lines.append("%s: (%.0f, %.0f)  %s" % [obj.name, obj.position.x, obj.position.y, carried])
 
-	if shift_active and shift_time_left > 0.0:
+	# WEEK 7: host-authoritative now, not ticked locally on every peer —
+	# see _ready()'s _day_sync comment for why an un-replicated
+	# shift_active/shift_time_left became a real bug once a shift could
+	# actually END and transition, not just count down forever.
+	if multiplayer.is_server() and shift_active and shift_time_left > 0.0:
 		shift_time_left = max(0.0, shift_time_left - delta)
+		if shift_time_left <= 0.0:
+			_end_shift()
 	# Population maintenance — only the host actually spawns anything (both
 	# _restock_* functions no-op their spawning on non-authority peers via
 	# the spawners themselves being authority-driven), but the timer is
@@ -647,9 +829,10 @@ func _process(delta: float) -> void:
 			_restock_customers()
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist
-	# (so raising debug_day mid-testing doesn't need new scene content) but
-	# are never reachable, so counting them would misreport "half the
-	# store sits empty" against sections nobody could have stocked yet.
+	# (so the day advancing past it mid-session doesn't need new scene
+	# content) but are never reachable, so counting them would misreport
+	# "half the store sits empty" against sections nobody could have
+	# stocked yet.
 	var unlocked_shelves := shelves.filter(func(s): return is_unlocked_at_x(s.global_position.x))
 	# Machine-readable, same purpose as GameLog's DATA lines: lets a test run
 	# capture every peer's own view of shelf-fill state to a log file and
@@ -663,10 +846,7 @@ func _process(delta: float) -> void:
 		for shelf_body in unlocked_shelves:
 			var s_log: Node = shelf_body.get_node("Shelf")
 			print("SHELFDATA,%s,%d,%d,%d" % [shelf_body.name, my_id, s_log.filled_count(), s_log.slot_count()])
-		var total_sold_log := 0
-		for cashier_body in cashiers:
-			total_sold_log += cashier_body.get_node("Cashier").total_sold
-		print("SOLDDATA,%d,%d" % [my_id, total_sold_log])
+		print("SOLDDATA,%d,%d,%d" % [my_id, current_day, _total_sold()])
 	var total_filled := 0
 	var total_slots := 0
 	for shelf_body in unlocked_shelves:
@@ -676,15 +856,15 @@ func _process(delta: float) -> void:
 		total_filled += f
 		total_slots += s
 		lines.append("%s: %d/%d" % [shelf_body.name, f, s])
-	var total_sold := 0
-	for cashier_body in cashiers:
-		total_sold += cashier_body.get_node("Cashier").total_sold
 	# No fixed completion state as of Week 5B — stock demand is continuous
-	# for the whole shift, so there's nothing to declare "complete." The
-	# only thing that ends the shift is the clock; the ongoing scoreboard
-	# (see the session's flagged scoring decision) is total items sold.
-	if shift_active:
-		lines.append("Stocked now: %d/%d  |  Sold: %d  |  %.0fs left" % [total_filled, total_slots, total_sold, shift_time_left])
-		if shift_time_left <= 0.0:
-			lines.append("SHIFT OVER — Sold: %d" % total_sold)
+	# for the whole shift, so there's nothing to declare "complete" within
+	# a day. WEEK 7: the clock now ends the DAY, not the session — see
+	# _end_shift(). Both a per-day and a running week total are shown; see
+	# the flagged score-continuity comment above _sold_at_day_start.
+	if day_transition_message != "":
+		lines.append("=== %s ===" % day_transition_message)
+	elif shift_active:
+		var week_sold := _total_sold()
+		var today_sold := week_sold - _sold_at_day_start
+		lines.append("Stocked now: %d/%d  |  Today: %d  |  Week total: %d  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, shift_time_left])
 	debug_label.text = "\n".join(lines)
