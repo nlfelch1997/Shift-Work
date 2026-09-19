@@ -155,8 +155,32 @@ func _find_settling_candidate(slot_index: int) -> RigidBody2D:
 			continue
 		if obj.linear_velocity.length() > REST_SPEED:
 			continue
+		if not _color_matches(obj):
+			continue
 		return obj
 	return null
+
+## Slot color-matching (playtest request): an item only counts as placed if
+## its own color matches this shelf's accent_color — a Dry Goods product can
+## no longer settle into a Meat/Deli shelf's slot just because it physically
+## fits within CAPTURE_RADIUS. No rejection animation/sound yet, per the
+## request — a non-matching item just never settles; it sits there as an
+## ordinary free object, same as standing anywhere else on the open floor,
+## and _find_settling_candidate() above keeps re-checking it every tick like
+## any other nearby candidate in case it's later replaced by a matching one.
+## Reads color generically off the object's "Polygon2D" child — the same
+## node Main.gd's _spawn_product_node already colors at spawn time — rather
+## than adding a dedicated color property to Carryable.gd, matching this
+## component's existing "stay ignorant of what kind of object this is"
+## style (see the file header). An object with no Polygon2D (only the
+## unused Week 1-3 Can/Box/Crate test props, never spawned by default) has
+## no color to check against, so it's let through rather than silently made
+## unplaceable on every shelf everywhere.
+func _color_matches(obj: Node) -> bool:
+	var visual := obj.get_node_or_null("Polygon2D")
+	if visual == null:
+		return true
+	return visual.color.is_equal_approx(accent_color)
 
 ## Called explicitly by Main.gd right after it sets accent_color (this
 ## component's own _ready() already ran by then, driven by Godot's
@@ -213,10 +237,12 @@ func nearest_empty_slot_position(from: Vector2) -> Variant:
 ## if and only if pressing place right now would actually succeed. Safe to
 ## call from any peer: read-only, uses only the already-replicated `filled`
 ## array and static slot positions.
-func placeable_slot_at(predicted_pos: Vector2) -> Marker2D:
+func placeable_slot_at(predicted_pos: Vector2, obj: Node = null) -> Marker2D:
 	for i in slots.size():
 		if filled[i]:
 			continue
 		if predicted_pos.distance_to(slots[i].global_position) <= CAPTURE_RADIUS:
+			if obj != null and not _color_matches(obj):
+				continue
 			return slots[i]
 	return null

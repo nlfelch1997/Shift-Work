@@ -48,14 +48,17 @@ extends Node2D
 ## Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind its own Gate (see
 ## Gate.gd) except the break-room<->Dry-Goods doorway, which has no gate at
 ## all since Dry Goods is available from Day 1. Reused Shelf.tscn/
-## Product.tscn/Cashier.tscn verbatim per the brief's "light re-theming,
-## not unique content per zone" — each section's shelves are the identical
-## Shelf1-4 layout Dry Goods already used, just modulate-tinted, and every
-## room additionally gets a flat background-color Polygon2D plus a large
-## text label (see Main.tscn's SectionLabels) for at-a-glance section
+## Product.tscn verbatim per the brief's "light re-theming, not unique
+## content per zone" — each section's shelves are the identical Shelf1-4
+## layout Dry Goods already used, just modulate-tinted, and every room
+## additionally gets a flat background-color Polygon2D plus a large text
+## label (see Main.tscn's SectionLabels) for at-a-glance section
 ## identification. The store being wider than one screen is why
 ## Player.tscn now carries a Camera2D (see Player.gd) — this project had
-## no scrolling/camera concept before Part 1 needed one.
+## no scrolling/camera concept before Part 1 needed one. Cashier.tscn is
+## NO LONGER per-section as of this session's checkout-consolidation
+## request — see Main.tscn's CentralCheckout (in the break room) and
+## _configure_cashiers() below.
 ##
 ## REDESIGNED after playtest feedback: Gate.gd originally sat in a narrow
 ## ~120px doorway cut into two permanent wall segments per boundary, and
@@ -169,24 +172,19 @@ var _last_configured_day := -1
 ## it's the only option that doesn't foreclose either interpretation once
 ## you've actually played a multi-day session and have an opinion.
 var _sold_at_day_start := 0
-## Non-empty during either stage of the day transition (see _end_shift()/
-## _begin_next_day()) — "Day N complete! Sold today: X | Week total: Y",
-## then "Starting Day N+1..." — replicated via _day_sync so every peer
-## shows the same message at the same time. Empty = normal shift or the
-## pre-shift menu.
-var day_transition_message := ""
-## Stage 1: how long the end-of-day report stays up before moving to
-## stage 2 — playtest request for "a real 'how'd you do' moment," not
-## just an immediate "next day" message. Placeholder, not tuned.
-const DAY_REPORT_PAUSE := 5.0
-## Stage 2: how long "Starting Day N+1..." stays up before the next
-## day's shift actually begins — placeholder, not tuned; "doesn't need to
-## be polished, just functional" per the original brief, so both stages
-## are debug-label messages, not a real pause/blocking screen. Gameplay
-## keeps running underneath either one (players can still walk around);
-## only the economy (_restock_*) is paused, via the same shift_active
-## guard those already checked.
-const DAY_TRANSITION_PAUSE := 3.0
+## True while the full-screen end-of-day report (ReportLayer, see
+## _end_shift()/_advance_to_next_day()) is up, replicated via _day_sync so
+## every peer shows/hides it at the same moment. UPGRADED from the old
+## "day_transition_message" debug-label text: that string only ever showed
+## up buried inside DebugLabel's wall of per-frame peer/shelf/carry state,
+## which is very likely WHY the "no end-of-day report" playtest bug was
+## filed even though a message was technically already being set — nothing
+## about it looked like a report. Replaced with a real full-screen
+## CanvasLayer (ReportLayer in Main.tscn) showing Sold Today/Week Total and
+## a Continue button. See _process() for the show/hide + label-text logic,
+## and _on_continue_pressed() for what ends this stage — no more automatic
+## timed transition; the player decides when to move on.
+var _day_report_active := false
 
 ## --- Week 4/5B/6 shift-economy placeholders — every number below is a
 ## guess to make the system testable, not a tuned value. Flagging for
@@ -207,14 +205,17 @@ const DAY_TRANSITION_PAUSE := 3.0
 ##   empty all shift even at a perfect stocking rate. Scaling it by
 ##   unlocked-section-count preserves that same "baseline ~= reachable slot
 ##   count" ratio Week 6 already established — a judgment call, not a
-##   confirmed design decision, and CUSTOMER_BASELINE scaling the same way
-##   is an extra judgment call on top of that (the brief didn't ask for it,
-##   but a customer population that stays flat while the floor quadruples
-##   would read as an increasingly empty store). Day 1-2 behavior is
-##   unaffected either way (1 section unlocked = the exact old numbers).
-##   The Week 5B solo playtest (15 sold in 120s) was tuned against the
-##   original single-section store, so ANY of this wants re-validating at
-##   later days, not assumed to still be right.
+##   confirmed design decision. The customer cap (_customer_baseline() below)
+##   no longer scales the same multiplicative way as of this session's
+##   cashier-consolidation request — it now reads explicit FLAGGED per-tier
+##   numbers off CUSTOMER_CAP_BY_TIER instead (see that constant's own
+##   comment for the actual numbers and reasoning), since "increase the
+##   customer cap per day" was an explicit ask this round, not an inferred
+##   judgment call the way it was in Week 6. Day 1-2 behavior is close to
+##   the old numbers either way (1 section unlocked = tier 0). The Week 5B
+##   solo playtest (15 sold in 120s) was tuned against the original
+##   single-section store, so ANY of this wants re-validating at later days,
+##   not assumed to still be right.
 ## - CUSTOMER_DISRUPTIVE_RATIO: what fraction of the customer population is
 ##   disruptive rather than shopper. My best guess for Day 1 is that it
 ##   should trend UP on later days (a calm first shift should be mostly
@@ -233,7 +234,32 @@ const DAY_TRANSITION_PAUSE := 3.0
 ##   per-day once a day/level system exists, not a permanent
 ##   one-size-fits-all value.
 const PRODUCT_PER_EXTRA_PLAYER := 3
-const CUSTOMER_BASELINE := 3
+## FLAGGED SCALING NUMBERS — explicitly asked to be surfaced rather than
+## picked silently, per this session's cashier-consolidation request.
+## Indexed by (unlocked-section-count - 1), same tier boundary the store
+## already uses for everything else section-count-driven (products, the
+## old per-section customer baseline, SECTION_TIME_BONUS) — Day 1-2 = 1
+## section, Day 3-4 = 2, Day 5-6 = 3, Day 7+ = 4. Both arrays are a
+## judgment call, not a tuned value:
+## - CUSTOMER_CAP_BY_TIER: replaces the old flat "CUSTOMER_BASELINE * unlocked
+##   sections" formula (3/6/9/12) with explicit per-tier numbers, bumped up
+##   as requested ("increase the customer cap per day") — same rough shape
+##   (roughly +4 per tier) but a higher floor, since a store with a real
+##   central checkout can clear a line faster than 4 scattered single-lane
+##   cashiers ever could, so a flat customer-per-section ratio tuned against
+##   the OLD layout likely reads as too sparse now.
+## - CASHIER_COUNT_BY_TIER: how many of the central checkout's stations
+##   (CentralCheckout in Main.tscn, up to CASHIER_COUNT_BY_TIER.max() = 5
+##   physically placed) are active at each tier — scales throughput
+##   alongside the customer cap so a bigger crowd doesn't just pile up at
+##   the same number of registers. Started at 2 (not 1) even for Day 1-2,
+##   since a single-lane central checkout serving what used to be 4
+##   separate sections' worth of foot traffic would be an obvious
+##   bottleneck from the very first day.
+## Re-tune both freely once played — these are a starting point, not a
+## final balance pass.
+const CUSTOMER_CAP_BY_TIER := [5, 9, 13, 17]
+const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
 const CUSTOMER_PER_EXTRA_PLAYER := 2
 ## Week 6: restored to 0.35 now that the spacebar defend/shove action
 ## (Player.gd's _try_defend(), Customer.gd's request_shove()) gives players
@@ -262,10 +288,35 @@ const RESTOCK_CHECK_INTERVAL := 3.0
 ## get initial product stocked before anyone shows up to buy or disrupt
 ## it. Applies to EVERY day, not just Day 1, since _customer_grace_timer
 ## is reset in _start_shift(), which now runs at the start of every day
-## (see its own comment). Products are NOT held back the same way —
-## _restock_products() still runs immediately, since there'd be nothing
-## to stock during the grace period otherwise. Placeholder, not tuned.
+## (see its own comment) — and, as of this session's root-cause fix,
+## _start_shift() also force-despawns any customer still on the floor from
+## the previous day BEFORE this timer starts counting down
+## (_despawn_all_customers()), so the grace period actually means "zero
+## customers" every day now, not just "no NEW customers" while old ones
+## linger. Products are NOT held back the same way — _restock_products()
+## still runs immediately, since there'd be nothing to stock during the
+## grace period otherwise. Placeholder, not tuned.
 const CUSTOMER_GRACE_PERIOD := 9.0
+## Playtest request: each ADDITIONAL section that's unlocked (beyond the
+## first, Dry Goods) buys the player 10 more seconds of both the pre-shift
+## grace period and the shift clock itself, cumulative — a bigger store
+## means more ground to cover, so both numbers should grow together, not
+## just the shift length. Read via _current_customer_grace_period()/
+## _current_shift_duration() below, evaluated fresh in _start_shift() every
+## day (using _unlocked_sections(), which is already current_day-driven), so
+## Day 1-2 (1 section) is unaffected and later days automatically pick up
+## whatever's unlocked that day.
+const SECTION_TIME_BONUS := 10.0
+
+## See SECTION_TIME_BONUS above.
+func _current_customer_grace_period() -> float:
+	return CUSTOMER_GRACE_PERIOD + SECTION_TIME_BONUS * max(0, _unlocked_sections().size() - 1)
+
+## See SECTION_TIME_BONUS above. shift_duration is still the Day-1/single-
+## section BASE (and still overridable via --shift-seconds=) — this is what
+## actually gets loaded into shift_time_left at the start of every shift.
+func _current_shift_duration() -> float:
+	return shift_duration + SECTION_TIME_BONUS * max(0, _unlocked_sections().size() - 1)
 
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
@@ -277,6 +328,12 @@ const CUSTOMER_GRACE_PERIOD := 9.0
 @onready var products_root: Node2D = $Products
 @onready var customer_spawner: MultiplayerSpawner = $CustomerSpawner
 @onready var customers_root: Node2D = $Customers
+@onready var report_layer: CanvasLayer = $ReportLayer
+@onready var report_title_label: Label = $ReportLayer/Panel/TitleLabel
+@onready var report_today_label: Label = $ReportLayer/Panel/TodayLabel
+@onready var report_week_label: Label = $ReportLayer/Panel/WeekLabel
+@onready var save_button: Button = $ReportLayer/Panel/ButtonRow/SaveButton
+@onready var continue_button: Button = $ReportLayer/Panel/ButtonRow/ContinueButton
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -348,7 +405,7 @@ func _ready() -> void:
 	# no special "catch up a new joiner" RPC needed, the same reasoning
 	# Shelf.gd's `filled` array already relies on. shift_active/
 	# shift_time_left are included here too, not just current_day/
-	# day_transition_message/_sold_at_day_start: they used to tick down
+	# _day_report_active/_sold_at_day_start: they used to tick down
 	# independently on every peer, which was harmless only because
 	# shift_active never actually changed value before Week 7's day-end/
 	# transition/next-shift cycle existed — an un-replicated client-local
@@ -356,7 +413,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:day_transition_message", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -376,6 +433,8 @@ func _ready() -> void:
 
 	host_button.pressed.connect(_on_host_pressed)
 	join_button.pressed.connect(_on_join_pressed)
+	continue_button.pressed.connect(_on_continue_pressed)
+	save_button.pressed.connect(_on_save_pressed)
 
 	_parse_cli_args()
 
@@ -439,8 +498,9 @@ func _apply_section_accent_colors() -> void:
 ## Playtest feedback: a locked section previously looked completely
 ## normal except for the Gate's own thin barrier line at its entrance —
 ## easy to miss, and gave no sense at a glance that the whole section was
-## inactive. Darkens every locked section's shelves, cashier, floor tint,
-## and label together. Unlocked sections (including Dry Goods, which is
+## inactive. Darkens every locked section's shelves, floor tint, and label
+## together (cashiers are no longer per-section — see this function's own
+## note below). Unlocked sections (including Dry Goods, which is
 ## never locked) are restored to their ORIGINAL color, not just left
 ## alone — WEEK 7 CHANGE: this now runs every time current_day changes
 ## (see _process()'s day-change check), not just once at startup, since a
@@ -459,10 +519,12 @@ func _apply_section_lock_visuals() -> void:
 			if shelf_body.global_position.x >= room_x and shelf_body.global_position.x < room_x_end:
 				var base: Color = _original_shelf_modulate[shelf_body]
 				shelf_body.modulate = base if unlocked else base * LOCKED_DIM
-		for cashier_body in cashiers:
-			if cashier_body.global_position.x >= room_x and cashier_body.global_position.x < room_x_end:
-				var base: Color = _original_cashier_modulate[cashier_body]
-				cashier_body.modulate = base if unlocked else base * LOCKED_DIM
+		# Cashiers are no longer per-section (see CentralCheckout in
+		# Main.tscn), so there's nothing to dim/undim here any more — a
+		# locked section's own shelves/products are still unreachable via
+		# the section-lock check everywhere else, and the central
+		# checkout's own active/inactive station count is driven
+		# separately by _configure_cashiers().
 		var bg := get_node_or_null("RoomBackgrounds/%sBg" % section["node_name"])
 		if bg:
 			var base_bg: Color = _original_bg_color[section["node_name"]]
@@ -471,22 +533,21 @@ func _apply_section_lock_visuals() -> void:
 		if label:
 			label.modulate = Color(1, 1, 1, 1) if unlocked else LOCKED_DIM
 
-## Snapshots every shelf/cashier/background's color BEFORE any locking
-## dims it, so _apply_section_lock_visuals() above always has an
-## undimmed original to compute from no matter how many times (or in
-## what order) it later runs. Called once from _ready(); order relative
-## to _apply_section_accent_colors() doesn't matter, since that touches a
+## Snapshots every shelf/background's color BEFORE any locking dims it, so
+## _apply_section_lock_visuals() above always has an undimmed original to
+## compute from no matter how many times (or in what order) it later runs.
+## Called once from _ready(); order relative to
+## _apply_section_accent_colors() doesn't matter, since that touches a
 ## different property (Shelf.gd's own accent_color/indicator, not the
-## ShelfBody root's modulate this reads).
+## ShelfBody root's modulate this reads). No longer caches a cashier
+## dictionary — cashiers moved to one shared CentralCheckout, no longer
+## dimmed per-section (see _apply_section_lock_visuals()'s own comment).
 var _original_shelf_modulate := {} # shelf_body (Node) -> Color
-var _original_cashier_modulate := {} # cashier_body (Node) -> Color
 var _original_bg_color := {} # section node_name (String) -> Color
 
 func _cache_original_colors() -> void:
 	for shelf_body in shelves:
 		_original_shelf_modulate[shelf_body] = shelf_body.modulate
-	for cashier_body in cashiers:
-		_original_cashier_modulate[cashier_body] = cashier_body.modulate
 	for section in SECTIONS:
 		var bg := get_node_or_null("RoomBackgrounds/%sBg" % section["node_name"])
 		if bg:
@@ -630,74 +691,121 @@ func _reset_players_to_break_room() -> void:
 ## _process()'s periodic restock check is what actually starts spawning
 ## them, once the grace period elapses.
 ##
-## Also the entry point for every day AFTER the first — _begin_next_day()
-## below calls this exact same function once its pause elapses, rather
-## than a separate "day 2+" code path. Nothing here resets or despawns
-## existing PRODUCTS or shelf state between days (only _restock_products()
-## topping up to the — likely now-larger, since more sections may have
-## just unlocked — cap changes anything); it DOES reset player position
-## (_reset_players_to_break_room, playtest bug fix) and the customer
-## population (see CUSTOMER_GRACE_PERIOD's own comment on why existing
-## customers aren't force-cleared, just new spawning paused).
+## Also the entry point for every day AFTER the first — _advance_to_next_day()
+## below calls this exact same function once a player clicks Continue on the
+## end-of-day report, rather than a separate "day 2+" code path. Nothing here
+## resets or despawns existing PRODUCTS or shelf state between days (only
+## _restock_products() topping up to the — likely now-larger, since more
+## sections may have just unlocked — cap changes anything); it DOES reset
+## player position (_reset_players_to_break_room, playtest bug fix) and, as
+## of this session's root-cause fix, force-clears the ENTIRE customer
+## population (_despawn_all_customers(), below) before the grace period
+## starts counting down — see that function's own comment for why a
+## leftover customer surviving the day boundary was the real bug behind
+## both "grace period only works on Day 1" and "customers don't spawn from
+## the entrance".
 func _start_shift() -> void:
 	if not multiplayer.is_server() or shift_active:
 		return
 	shift_active = true
 	_sold_at_day_start = _total_sold()
-	_customer_grace_timer = CUSTOMER_GRACE_PERIOD
+	# PLAYTEST ROOT-CAUSE FIX: a customer left over from the previous day's
+	# shift used to just keep existing into the new one (nothing ever
+	# force-cleared the population, only paused new spawning) — see
+	# _despawn_all_customers()'s own comment for why that alone was enough
+	# to make BOTH the grace period and the entrance-spawn fix look broken
+	# on Day 2+ even though each was individually working correctly for any
+	# customer actually newly spawned.
+	_despawn_all_customers()
+	var grace := _current_customer_grace_period()
+	var duration := _current_shift_duration()
+	_customer_grace_timer = grace
 	_restock_timer = 0.0
 	_reset_players_to_break_room()
-	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, %.0fs customer grace period, no fixed stock target" % [current_day, players.size(), shift_duration, CUSTOMER_GRACE_PERIOD])
+	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, %.0fs customer grace period, no fixed stock target" % [current_day, players.size(), duration, grace])
 	_restock_products()
-	shift_time_left = shift_duration
+	shift_time_left = duration
+
+## PLAYTEST ROOT-CAUSE FIX (see _start_shift()'s call site): forces every
+## currently-existing customer to leave immediately, the same cleanup
+## Customer.gd's own lifetime-timeout _leave() already does (drop whatever
+## they're carrying, then queue_free), just triggered by "a new day is
+## starting" instead of "this one customer's clock ran out". Without this,
+## a customer that happened to still be on the floor from the tail end of
+## the previous day's shift was indistinguishable, on sight, from a customer
+## that "ignored" the grace period or "ignored" the entrance-spawn point —
+## it was neither; it just never left. Host-only (same guard as the rest of
+## _start_shift()) — freeing a MultiplayerSpawner-spawned node on its
+## authority side is what propagates the despawn to every other peer, same
+## reasoning as Main.gd's existing disconnect-safety sweep.
+func _despawn_all_customers() -> void:
+	for customer in get_tree().get_nodes_in_group("customer"):
+		customer.force_leave()
 
 ## Host-only: called the instant the clock hits zero (see _process()'s
-## shift-timer check). This is STAGE 1 of the day transition — the
-## end-of-day report the brief asked for ("a real 'how'd you do' moment",
-## not just an immediate "next day" message): shows today's and the
-## week's sold count for DAY_REPORT_PAUSE seconds (replicated via
-## _day_sync, so every peer reads the same numbers at the same time),
-## THEN moves to _begin_next_day() (stage 2) below. Gameplay keeps running
-## during both stages (players can still walk around, a shopper mid-
-## purchase can still complete it — Cashier.gd/Shelf.gd don't check
-## shift_active at all); only the economy restock is paused, via the same
-## shift_active guard _process() already checks before calling
-## _restock_*().
+## shift-timer check). Raises the full-screen end-of-day report (ReportLayer,
+## via replicated _day_report_active — see its own comment) instead of the
+## old auto-advancing debug-label message. UPGRADED per this session's
+## request: no timed auto-continue any more — the report stays up
+## indefinitely until a player clicks Continue (_on_continue_pressed() /
+## _advance_to_next_day() below). Gameplay keeps running underneath (players
+## can still walk around, a shopper mid-purchase can still complete it —
+## Cashier.gd/Shelf.gd don't check shift_active at all); only the economy
+## restock is paused, via the same shift_active guard _process() already
+## checks before calling _restock_*().
 func _end_shift() -> void:
 	if not multiplayer.is_server() or not shift_active:
 		return
 	shift_active = false
-	var today_sold := _total_sold() - _sold_at_day_start
-	var week_sold := _total_sold()
-	day_transition_message = "Day %d complete!  Sold today: %d  |  Week total: %d" % [current_day, today_sold, week_sold]
-	print("[Main] %s" % day_transition_message)
-	get_tree().create_timer(DAY_REPORT_PAUSE).timeout.connect(_begin_next_day)
+	_day_report_active = true
+	print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d" % [current_day, _total_sold() - _sold_at_day_start, _total_sold()])
 
-## Host-only: STAGE 2 of the day transition, run once the end-of-day
-## report (_end_shift() above) has been up for DAY_REPORT_PAUSE seconds.
-## Advances current_day and — PLAYTEST BUG FIX — reconfigures gates/lock
-## visuals EXPLICITLY and IMMEDIATELY right here, rather than relying only
-## on _process()'s day-change poll to catch it on the next frame. That
-## poll should already do this correctly (it's still there, and is what
-## catches a client up via replication), but a playtest report found
-## newly-unlocked sections not actually opening on a day advance, and I
-## couldn't rule out some interaction with it I hadn't spotted without a
-## way to run the game here — so the host now does it directly and
-## unconditionally at the one moment "a new day started" unambiguously
-## means something, instead of trusting an async side effect alone.
-func _begin_next_day() -> void:
+## Any peer's Continue click routes here. Only the host actually drives the
+## day advance (current_day/gates/shift are all host-authoritative), so a
+## non-host click asks the host over RPC instead of touching anything
+## locally — same "any peer may ask, only the authority acts" shape as
+## Carryable.gd's request_push / Customer.gd's request_shove.
+func _on_continue_pressed() -> void:
+	if multiplayer.is_server():
+		_advance_to_next_day()
+	else:
+		rpc_id(1, "_request_advance_day")
+
+@rpc("any_peer", "reliable")
+func _request_advance_day() -> void:
 	if not multiplayer.is_server():
 		return
+	_advance_to_next_day()
+
+## VISIBLE PLACEHOLDER ONLY, per this session's request — real save/load is
+## a separate, bigger system for a future session. Exists so the button is
+## there to design around (layout, a future confirmation toast, etc.)
+## without pretending it persists anything yet.
+func _on_save_pressed() -> void:
+	print("[Main] Save pressed — placeholder only, no save/load system yet.")
+
+## Host-only: ends the end-of-day report and starts the next day. Guarded on
+## _day_report_active (not just multiplayer.is_server()) so a duplicate
+## Continue click/RPC — e.g. two players clicking in the same frame — can't
+## advance current_day twice; the first call flips _day_report_active false
+## before a second could ever get here. Reconfigures gates/cashiers/lock
+## visuals EXPLICITLY and IMMEDIATELY here (PLAYTEST BUG FIX carried over
+## from the previous round of fixes), rather than relying only on
+## _process()'s day-change poll to catch it on the next frame — that poll
+## still exists too (it's what catches a late-joining/reconnecting client),
+## this just makes the connection unmissable at the one moment "a new day
+## started" unambiguously means something.
+func _advance_to_next_day() -> void:
+	if not multiplayer.is_server() or not _day_report_active:
+		return
+	_day_report_active = false
 	current_day += 1
 	_configure_gates()
+	_configure_cashiers()
 	_apply_section_lock_visuals()
 	_last_configured_day = current_day
-	day_transition_message = "Starting Day %d..." % current_day
-	print("[Main] %s" % day_transition_message)
-	get_tree().create_timer(DAY_TRANSITION_PAUSE).timeout.connect(func():
-		day_transition_message = ""
-		_start_shift()
-	)
+	print("[Main] Starting Day %d..." % current_day)
+	_start_shift()
 
 ## Cumulative total across every cashier, for as long as the session has
 ## run — never reset, unlike _sold_at_day_start (see the score-continuity
@@ -782,14 +890,39 @@ func is_unlocked_at_x(world_x: float) -> bool:
 	return false # room 0 (break room) has no shelves, so never matters here
 
 ## 12 = one section's slot count (4 shelves x 3 slots) — see the big
-## comment block above CUSTOMER_BASELINE for why these scale with
+## comment block above PRODUCT_PER_EXTRA_PLAYER for why this scales with
 ## unlocked-section-count instead of staying flat, and why that's flagged
 ## as a judgment call rather than a confirmed decision.
 func _product_baseline() -> int:
 	return 12 * _unlocked_sections().size()
 
+## See CUSTOMER_CAP_BY_TIER's own comment for what these numbers are and why.
 func _customer_baseline() -> int:
-	return CUSTOMER_BASELINE * _unlocked_sections().size()
+	var tier := clampi(_unlocked_sections().size() - 1, 0, CUSTOMER_CAP_BY_TIER.size() - 1)
+	return CUSTOMER_CAP_BY_TIER[tier]
+
+## See CASHIER_COUNT_BY_TIER's own comment. Called from _configure_cashiers()
+## below, which is what actually enables/disables that many of the central
+## checkout's stations.
+func _active_cashier_count() -> int:
+	var tier := clampi(_unlocked_sections().size() - 1, 0, CASHIER_COUNT_BY_TIER.size() - 1)
+	return CASHIER_COUNT_BY_TIER[tier]
+
+## Enables the first N of the central checkout's Cashier stations (N =
+## _active_cashier_count()) and disables the rest — called alongside
+## _configure_gates() both from _process()'s day-change poll and explicitly
+## from _advance_to_next_day(), same "every peer reacts uniformly, and the
+## host also does it immediately at the moment a new day starts" shape
+## those two already use. `cashiers` is populated once in _ready() from the
+## "cashier" group, which (for CentralCheckout's Cashier1..Cashier5, static
+## scene nodes, not dynamically spawned) reflects their declaration order in
+## Main.tscn — stations activate in that same fixed order every time, not a
+## different subset day to day.
+func _configure_cashiers() -> void:
+	var count := _active_cashier_count()
+	for i in cashiers.size():
+		var cashier: Node = cashiers[i].get_node("Cashier")
+		cashier.set_active(i < count)
 
 ## Picks a random CURRENTLY UNLOCKED section (never the break room: nothing
 ## to stock or shop for there, and a locked section has no way out anyway).
@@ -799,8 +932,8 @@ func _pick_unlocked_section() -> Dictionary:
 
 ## A spawn point inside the given section's safe interior band — same
 ## shape/margins the original single-room band always used (clear of
-## shelves at local y ~42-108/432-498, the walls, and the cashier), just
-## relocated per section by its room_index. Spawning a RigidBody2D (a
+## shelves at local y ~42-108/432-498 and the walls), just relocated per
+## section by its room_index. Spawning a RigidBody2D (a
 ## product) overlapping a StaticBody2D's collider can make the physics
 ## engine's penetration-resolution fling it at an absurd speed to separate
 ## them, the same class of bug Week 1-3 hit with fast-moving objects
@@ -817,11 +950,11 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 ## moves WHERE they start), rather than appearing already scattered
 ## around the section's interior. Placed just past each section's LEFT
 ## boundary — the doorway/gate a customer would actually walk in
-## through — comfortably clear of that section's own cashier: every
-## section's Cashier1 sits at local x=70 with a 60px-wide collision box
-## (half-width 30), so x=190 clears it by a wide margin, and the same
-## offset works for every section since they're all uniform ROOM_WIDTH
-## rooms. Small random jitter so several customers spawning together
+## through, x=190 clear of the shelves/walls either way (the offset that
+## used to also clear each section's own cashier still works fine now that
+## cashiers are consolidated into one CentralCheckout — a shopper who picks
+## something up here now walks there instead, see _find_nearest_cashier() in
+## Customer.gd). Small random jitter so several customers spawning together
 ## don't stack exactly on top of each other, while still reading as "came
 ## in the same door."
 func _customer_entrance_pos(section: Dictionary) -> Vector2:
@@ -830,14 +963,14 @@ func _customer_entrance_pos(section: Dictionary) -> Vector2:
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS
 ## above), the same accent color as that section's shelf slot indicators —
-## the color-coordination playtest request. A product spawned for Dry
-## Goods only ever gets carried onto a Dry Goods shelf in the normal flow
-## anyway (shoppers/players walk it to whichever shelf is closest, which
-## is overwhelmingly its own section), so tagging it by spawn section
-## reads as "this belongs here" without needing an actual placement
-## restriction — Shelf.gd still accepts any free item on any shelf,
-## unchanged, matching how this project's components generally stay
-## ignorant of concerns outside their own job.
+## the color-coordination playtest request. UPGRADED this session:
+## Shelf.gd's own settling check (_color_matches()) now ENFORCES this — a
+## product only counts as placed if its color approx-matches the shelf's
+## accent_color — so a Dry Goods product spawned here genuinely can't be
+## placed on a Meat/Deli shelf any more, not just "usually doesn't end up
+## there" by proximity. Shelf.gd still doesn't know anything about
+## "sections" as a concept, just colors, matching how this project's
+## components generally stay ignorant of concerns outside their own job.
 func _spawn_product(index: int) -> void:
 	var section := _pick_unlocked_section()
 	product_spawner.spawn({
@@ -856,8 +989,8 @@ func _spawn_product_node(data: Dictionary) -> Node:
 ## Spawns at the assigned section's ENTRANCE (see _customer_entrance_pos),
 ## not a random interior position — customers are CharacterBody2Ds, not
 ## RigidBody2Ds, so they wouldn't get flung by a collision-shape overlap
-## the way a product could, but starting clear of the cashier still avoids
-## an instant, confusing shove on spawn.
+## the way a product could, but starting clear of the shelves/walls still
+## avoids an instant, confusing shove on spawn.
 func _spawn_customer(role: String) -> void:
 	var pos := _customer_entrance_pos(_pick_unlocked_section())
 	var carry_id := _next_customer_carry_id
@@ -884,8 +1017,24 @@ func _process(delta: float) -> void:
 	if current_day != _last_configured_day:
 		_last_configured_day = current_day
 		_configure_gates()
+		_configure_cashiers()
 		_apply_section_lock_visuals()
 		print("[Main] Day is now %d" % current_day)
+
+	# End-of-day report (see _end_shift()/_advance_to_next_day()) — a real
+	# full-screen CanvasLayer now, replacing the old debug-label-only
+	# message that was easy to miss buried in DebugLabel's wall of text.
+	# Driven off the replicated _day_report_active flag so every peer shows/
+	# hides it at the same moment; the sold numbers are recomputed from
+	# already-replicated state (_total_sold()/_sold_at_day_start), not a
+	# separate replicated pair, so there's nothing new to keep in sync here.
+	report_layer.visible = _day_report_active
+	if _day_report_active:
+		var week_sold := _total_sold()
+		var today_sold := week_sold - _sold_at_day_start
+		report_title_label.text = "Day %d Complete!" % current_day
+		report_today_label.text = "Sold Today: %d" % today_sold
+		report_week_label.text = "Week Total: %d" % week_sold
 
 	var connected := Net.is_active()
 	var role := "OFFLINE"
@@ -957,10 +1106,10 @@ func _process(delta: float) -> void:
 	# for the whole shift, so there's nothing to declare "complete" within
 	# a day. WEEK 7: the clock now ends the DAY, not the session — see
 	# _end_shift(). Both a per-day and a running week total are shown; see
-	# the flagged score-continuity comment above _sold_at_day_start.
-	if day_transition_message != "":
-		lines.append("=== %s ===" % day_transition_message)
-	elif shift_active:
+	# the flagged score-continuity comment above _sold_at_day_start. The
+	# end-of-day report itself is now the full-screen ReportLayer above, not
+	# a line in this debug HUD.
+	if shift_active:
 		var week_sold := _total_sold()
 		var today_sold := week_sold - _sold_at_day_start
 		lines.append("Stocked now: %d/%d  |  Today: %d  |  Week total: %d  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, shift_time_left])

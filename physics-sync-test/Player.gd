@@ -510,6 +510,10 @@ func _try_throw() -> void:
 ## Uses the EXACT same formula Carryable.gd's drop/throw finalization uses
 ## — carrier position + CARRY_OFFSET rotated by facing — so "the prompt is
 ## showing" and "placing will succeed" can never disagree with each other.
+## Passes the carried object itself through to placeable_slot_at() now too
+## (slot color-matching, this session's request) — the prompt would
+## otherwise show over a color-mismatched slot promising a placement that
+## Shelf.gd's own settle check would silently refuse.
 func _update_place_target() -> void:
 	var my_id := multiplayer.get_unique_id()
 	var carried := _find_carried_object(my_id)
@@ -518,7 +522,7 @@ func _update_place_target() -> void:
 		var predicted := global_position + CarryableScript.CARRY_OFFSET.rotated(facing_angle)
 		for shelf_body in get_tree().get_nodes_in_group("shelf"):
 			var shelf: Node = shelf_body.get_node("Shelf")
-			var slot: Marker2D = shelf.placeable_slot_at(predicted)
+			var slot: Marker2D = shelf.placeable_slot_at(predicted, carried)
 			if slot:
 				new_target = slot
 				break

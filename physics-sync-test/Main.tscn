@@ -126,9 +126,6 @@ rotation = 3.14159265
 position = Vector2(1700, 60)
 rotation = 3.14159265
 
-[node name="Cashier1" parent="Sections/DryGoods" instance=ExtResource("3")]
-position = Vector2(1030, 270)
-
 [node name="MeatDeli" type="Node2D" parent="Sections"]
 
 [node name="Shelf1" parent="Sections/MeatDeli" instance=ExtResource("2")]
@@ -148,9 +145,6 @@ modulate = Color(1.4, 0.75, 0.75, 1)
 position = Vector2(2660, 60)
 rotation = 3.14159265
 modulate = Color(1.4, 0.75, 0.75, 1)
-
-[node name="Cashier1" parent="Sections/MeatDeli" instance=ExtResource("3")]
-position = Vector2(1990, 270)
 
 [node name="DairyFrozen" type="Node2D" parent="Sections"]
 
@@ -172,9 +166,6 @@ position = Vector2(3620, 60)
 rotation = 3.14159265
 modulate = Color(0.75, 1.05, 1.35, 1)
 
-[node name="Cashier1" parent="Sections/DairyFrozen" instance=ExtResource("3")]
-position = Vector2(2950, 270)
-
 [node name="Bakery" type="Node2D" parent="Sections"]
 
 [node name="Shelf1" parent="Sections/Bakery" instance=ExtResource("2")]
@@ -195,8 +186,22 @@ position = Vector2(4580, 60)
 rotation = 3.14159265
 modulate = Color(1.3, 1.05, 0.65, 1)
 
-[node name="Cashier1" parent="Sections/Bakery" instance=ExtResource("3")]
-position = Vector2(3910, 270)
+[node name="CentralCheckout" type="Node2D" parent="."]
+
+[node name="Cashier1" parent="CentralCheckout" instance=ExtResource("3")]
+position = Vector2(150, 430)
+
+[node name="Cashier2" parent="CentralCheckout" instance=ExtResource("3")]
+position = Vector2(340, 430)
+
+[node name="Cashier3" parent="CentralCheckout" instance=ExtResource("3")]
+position = Vector2(530, 430)
+
+[node name="Cashier4" parent="CentralCheckout" instance=ExtResource("3")]
+position = Vector2(720, 430)
+
+[node name="Cashier5" parent="CentralCheckout" instance=ExtResource("3")]
+position = Vector2(910, 430)
 
 [node name="SectionLabels" type="Node2D" parent="."]
 
@@ -312,3 +317,60 @@ offset_bottom = 420.0
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_styles/normal = SubResource("StyleBoxFlat_debug")
 text = "peer id: -"
+
+[node name="ReportLayer" type="CanvasLayer" parent="."]
+visible = false
+
+[node name="Background" type="ColorRect" parent="ReportLayer"]
+anchors_preset = 15
+anchor_left = 0.0
+anchor_top = 0.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.05, 0.05, 0.08, 0.92)
+
+[node name="Panel" type="VBoxContainer" parent="ReportLayer"]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -170.0
+offset_right = 220.0
+offset_bottom = 170.0
+theme_override_constants/separation = 18
+
+[node name="TitleLabel" type="Label" parent="ReportLayer/Panel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 40
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+horizontal_alignment = 1
+text = "Day 1 Complete!"
+
+[node name="TodayLabel" type="Label" parent="ReportLayer/Panel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+horizontal_alignment = 1
+text = "Sold Today: 0"
+
+[node name="WeekLabel" type="Label" parent="ReportLayer/Panel"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 26
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+horizontal_alignment = 1
+text = "Week Total: 0"
+
+[node name="ButtonRow" type="HBoxContainer" parent="ReportLayer/Panel"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 20
+
+[node name="SaveButton" type="Button" parent="ReportLayer/Panel/ButtonRow"]
+layout_mode = 2
+text = "Save (coming soon)"
+
+[node name="ContinueButton" type="Button" parent="ReportLayer/Panel/ButtonRow"]
+layout_mode = 2
+text = "Continue"

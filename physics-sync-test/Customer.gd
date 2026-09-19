@@ -175,14 +175,30 @@ func _process(delta: float) -> void:
 
 ## If still carrying something (e.g. it timed out before ever reaching a
 ## cashier), drop it first so it doesn't vanish along with a held item —
-## same reasoning as Main.gd's force_drop_if_carrier on disconnect.
+## same reasoning as Main.gd's force_drop_if_carrier on disconnect. Shared by
+## the lifetime timeout above and Main.gd's force_leave() below (day-start
+## population clear), not just the timeout case any more.
 func _leave() -> void:
-	print("[%s] leaving (lifetime timeout, role=%s)" % [name, role])
+	print("[%s] leaving (role=%s)" % [name, role])
 	var carried := _find_carried_by_me()
 	if carried:
 		var c: Node = carried.get_node("Carryable")
 		c.try_drop(carry_id)
 	queue_free()
+
+## Called by Main.gd's _despawn_all_customers() at the start of every day's
+## shift (see that function's comment for why this exists — a leftover
+## customer from the previous day surviving into the new one was the real
+## root cause behind "grace period only works on Day 1" and "customers don't
+## spawn from the entrance": both fixes only affect the NEXT customer
+## spawned, so an existing one just standing there since before the day
+## rolled over made both look broken on Day 2+ even though they were working
+## correctly for anything actually newly spawned. Thin public wrapper around
+## the existing _leave() cleanup (drop-if-carrying, then queue_free) rather
+## than duplicating it — this isn't a lifetime timeout, but the cleanup work
+## is identical.
+func force_leave() -> void:
+	_leave()
 
 ## move_and_slide() doesn't push a RigidBody2D it walks into on its own —
 ## identical mechanic and reasoning to Player.gd's own _push_rigid_bodies,
@@ -361,11 +377,17 @@ func _find_stocked_item() -> Node2D:
 			best = occ
 	return best
 
+## Central-checkout consolidation: cashiers no longer live inside any of the
+## SECTIONS rooms (they're all in one shared CentralCheckout area — see
+## Main.tscn), so the section-lock skip every OTHER target search here still
+## uses no longer applies to this one — a cashier's reachability is never
+## gated by a Gate, only by whether Main.gd's _configure_cashiers() has
+## currently activated that particular station (see Cashier.gd's `active`).
 func _find_nearest_cashier() -> Node:
 	var best: Node = null
 	var best_dist := INF
 	for cashier_body in get_tree().get_nodes_in_group("cashier"):
-		if not _is_section_unlocked(cashier_body.global_position.x):
+		if not cashier_body.get_node("Cashier").active:
 			continue
 		var d := global_position.distance_to(cashier_body.global_position)
 		if d < best_dist:

@@ -25,6 +25,18 @@ const PURCHASE_RANGE := 40.0
 ## anyway.
 const CHECKOUT_WAIT_SECONDS := 3.0
 
+## Central-checkout consolidation: Main.tscn now places up to
+## CASHIER_COUNT_BY_TIER.max() stations in one shared CentralCheckout area
+## instead of one per section, and Main.gd's _configure_cashiers() enables
+## only the first N of them (N scaling with the customer cap — see that
+## constant's comment) via set_active() below, toggling both this flag and
+## visibility. Not replicated: like Gate.gd's required_day/configure(), every
+## peer runs the exact same host-authoritative current_day through the exact
+## same _active_cashier_count() formula and gets the identical result
+## independently, so there's no live, unpredictable state here that needs a
+## broadcast source of truth.
+var active := true
+
 var body: StaticBody2D
 var checkout: Marker2D
 ## Replicated so every peer can show the running total without each of
@@ -55,8 +67,13 @@ func _ready() -> void:
 	sync.set_multiplayer_authority(1)
 	add_child(sync)
 
+## Called by Main.gd's _configure_cashiers() — see `active`'s own comment.
+func set_active(v: bool) -> void:
+	active = v
+	body.visible = v
+
 func _physics_process(delta: float) -> void:
-	if not Net.is_active() or not is_multiplayer_authority():
+	if not Net.is_active() or not is_multiplayer_authority() or not active:
 		return
 	for customer in get_tree().get_nodes_in_group("customer"):
 		if customer.role != "shopper":
