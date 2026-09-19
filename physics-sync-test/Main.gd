@@ -30,8 +30,8 @@ extends Node2D
 ## the same way Shelf1/2 face UP into it. Checked against Shelf.gd's own
 ## collision math, not guessed: body spans local y 42-108 there, slots land
 ## at local y=130, both clear of the top wall (inner edge local y=20) and
-## of this file's per-section spawn band (local y 120-360 — see
-## _pick_unlocked_spawn_pos below). Result: a shelved wall on both sides of
+## of this file's per-section product spawn band (local y 120-360 — see
+## _spawn_pos_in_section below). Result: a shelved wall on both sides of
 ## each room forms one legible central aisle, without interior divider
 ## walls inside a section whose collision shapes there's no way to verify
 ## visually in this environment (no Godot binary here to actually run and
@@ -169,18 +169,24 @@ var _last_configured_day := -1
 ## it's the only option that doesn't foreclose either interpretation once
 ## you've actually played a multi-day session and have an opinion.
 var _sold_at_day_start := 0
-## Non-empty while the "Day N complete — starting Day N+1" pause is
-## showing (see _end_shift()); replicated via _day_sync so every peer
+## Non-empty during either stage of the day transition (see _end_shift()/
+## _begin_next_day()) — "Day N complete! Sold today: X | Week total: Y",
+## then "Starting Day N+1..." — replicated via _day_sync so every peer
 ## shows the same message at the same time. Empty = normal shift or the
 ## pre-shift menu.
 var day_transition_message := ""
-## How long the transition message stays up before the next day's shift
-## starts — placeholder, not tuned; "doesn't need to be polished, just
-## functional" per the brief, so this is a debug-label message, not a
-## real pause/blocking screen. Gameplay keeps running underneath it
-## (players can still walk around); only the economy (_restock_*) is
-## paused, via the same shift_active guard those already checked.
-const DAY_TRANSITION_PAUSE := 4.0
+## Stage 1: how long the end-of-day report stays up before moving to
+## stage 2 — playtest request for "a real 'how'd you do' moment," not
+## just an immediate "next day" message. Placeholder, not tuned.
+const DAY_REPORT_PAUSE := 5.0
+## Stage 2: how long "Starting Day N+1..." stays up before the next
+## day's shift actually begins — placeholder, not tuned; "doesn't need to
+## be polished, just functional" per the original brief, so both stages
+## are debug-label messages, not a real pause/blocking screen. Gameplay
+## keeps running underneath either one (players can still walk around);
+## only the economy (_restock_*) is paused, via the same shift_active
+## guard those already checked.
+const DAY_TRANSITION_PAUSE := 3.0
 
 ## --- Week 4/5B/6 shift-economy placeholders — every number below is a
 ## guess to make the system testable, not a tuned value. Flagging for
@@ -251,6 +257,15 @@ const PRODUCT_SPAWN_DELAY := 2.0
 ## back up to their pool caps. Shared by both since they're the same shape
 ## of system; no reason for them to run on different cadences right now.
 const RESTOCK_CHECK_INTERVAL := 3.0
+## Playtest request: no customer (shopper or disruptive) restocking for
+## this long after a shift starts, giving the player/team a head start to
+## get initial product stocked before anyone shows up to buy or disrupt
+## it. Applies to EVERY day, not just Day 1, since _customer_grace_timer
+## is reset in _start_shift(), which now runs at the start of every day
+## (see its own comment). Products are NOT held back the same way —
+## _restock_products() still runs immediately, since there'd be nothing
+## to stock during the grace period otherwise. Placeholder, not tuned.
+const CUSTOMER_GRACE_PERIOD := 9.0
 
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
@@ -295,6 +310,13 @@ var shift_active := false
 var shift_time_left := 0.0
 var _shelf_log_timer := 0.0
 var _restock_timer := 0.0
+## Counts down from CUSTOMER_GRACE_PERIOD at the start of every shift (see
+## _start_shift()); while positive, _process()'s restock check skips
+## _restock_customers() entirely (products are unaffected). Host-only
+## state — never replicated, since clients don't call _restock_customers()
+## themselves anyway (the spawner-authority check inside already no-ops
+## their call), so there's nothing for a client to react to here.
+var _customer_grace_timer := 0.0
 var _product_spawn_index := 0
 var _customer_spawn_index := 0
 ## Unique synthetic carry-id pool for customers — decremented (stays
@@ -574,52 +596,103 @@ func _spawn_player_node(data: Dictionary) -> Node:
 	players[id] = p
 	return p
 
+## Repositions every connected player to the break room (spread out the
+## same way _spawn_player() spreads out initial spawns) — called at the
+## start of every day's shift (_start_shift() below), not just the first.
+## PLAYTEST BUG FIX: before this existed, nothing ever moved a player
+## after their initial spawn — _start_shift() was reused for every day,
+## but it never touched player position, so Day 2+ just left everyone
+## wherever Day 1's shift happened to end. Player.gd's teleport_to() is an
+## RPC, not a direct .position set, because movement here is client-
+## authoritative (see Player.gd's own header) — Main.gd runs on the host,
+## which generally ISN'T a remote client's own player's authority, so it
+## has to ASK that peer's own copy of the node to move itself, the same
+## "any peer may ask, only the authority acts" shape used elsewhere in
+## this project (e.g. Carryable.gd's request_push).
+func _reset_players_to_break_room() -> void:
+	var index := 0
+	for id in players:
+		var angle := index * (TAU / float(Net.MAX_PEERS))
+		var pos := SPAWN_CENTER + Vector2.RIGHT.rotated(angle) * 220.0
+		players[id].rpc("teleport_to", pos)
+		index += 1
+
 ## Called once, PRODUCT_SPAWN_DELAY after hosting starts, so CLI-launched
 ## bot/client processes have had a moment to connect and count toward the
 ## party size the pool-cap formulas scale against. Guarded so a stray extra
 ## call (there shouldn't be one) can't double-start the shift. Does an
-## initial top-up immediately, then _process() below calls _restock_*()
-## periodically for the rest of the shift — Week 5B removed the one-time
-## fixed batch entirely: there's no finish line except the clock, so supply
-## (product) and demand (customers) both have to keep replenishing for as
-## long as the shift runs, not just spawn once and taper off.
+## initial product top-up immediately, then _process() below calls
+## _restock_products()/_restock_customers() periodically for the rest of
+## the shift — Week 5B removed the one-time fixed batch entirely: there's
+## no finish line except the clock, so supply has to keep replenishing for
+## as long as the shift runs, not just spawn once and taper off.
+## Customers are NOT restocked here — see CUSTOMER_GRACE_PERIOD below;
+## _process()'s periodic restock check is what actually starts spawning
+## them, once the grace period elapses.
 ##
-## WEEK 7: also the entry point for every day AFTER the first — _end_shift()
-## below calls this exact same function once the transition pause elapses,
-## rather than a separate "day 2+" code path. Nothing here resets or
-## despawns existing products/customers/shelf state between days; only
-## _restock_* topping up to the (likely now-larger, since more sections may
-## have just unlocked) population caps changes anything. The brief's
-## minimum bar for between-day continuity was day number + section-unlock
-## state, both of which already follow from current_day automatically —
-## I didn't add reset logic beyond that since nothing asked for it yet.
+## Also the entry point for every day AFTER the first — _begin_next_day()
+## below calls this exact same function once its pause elapses, rather
+## than a separate "day 2+" code path. Nothing here resets or despawns
+## existing PRODUCTS or shelf state between days (only _restock_products()
+## topping up to the — likely now-larger, since more sections may have
+## just unlocked — cap changes anything); it DOES reset player position
+## (_reset_players_to_break_room, playtest bug fix) and the customer
+## population (see CUSTOMER_GRACE_PERIOD's own comment on why existing
+## customers aren't force-cleared, just new spawning paused).
 func _start_shift() -> void:
 	if not multiplayer.is_server() or shift_active:
 		return
 	shift_active = true
 	_sold_at_day_start = _total_sold()
-	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, no fixed stock target" % [current_day, players.size(), shift_duration])
+	_customer_grace_timer = CUSTOMER_GRACE_PERIOD
+	_restock_timer = 0.0
+	_reset_players_to_break_room()
+	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, %.0fs customer grace period, no fixed stock target" % [current_day, players.size(), shift_duration, CUSTOMER_GRACE_PERIOD])
 	_restock_products()
-	_restock_customers()
 	shift_time_left = shift_duration
 
 ## Host-only: called the instant the clock hits zero (see _process()'s
-## shift-timer check). Ends the current day, shows the transition message
-## (replicated via _day_sync, so every peer sees the same text at the same
-## time) for DAY_TRANSITION_PAUSE seconds, then advances current_day and
-## starts the next day's shift via _start_shift() above — the exact same
-## function Day 1 used, not a separate path. Gameplay keeps running during
-## the pause (players can still walk around, a shopper mid-purchase can
-## still complete it — Cashier.gd/Shelf.gd don't check shift_active at
-## all); only the economy restock is paused, via the same shift_active
-## guard _process() already checks before calling _restock_*().
+## shift-timer check). This is STAGE 1 of the day transition — the
+## end-of-day report the brief asked for ("a real 'how'd you do' moment",
+## not just an immediate "next day" message): shows today's and the
+## week's sold count for DAY_REPORT_PAUSE seconds (replicated via
+## _day_sync, so every peer reads the same numbers at the same time),
+## THEN moves to _begin_next_day() (stage 2) below. Gameplay keeps running
+## during both stages (players can still walk around, a shopper mid-
+## purchase can still complete it — Cashier.gd/Shelf.gd don't check
+## shift_active at all); only the economy restock is paused, via the same
+## shift_active guard _process() already checks before calling
+## _restock_*().
 func _end_shift() -> void:
 	if not multiplayer.is_server() or not shift_active:
 		return
 	shift_active = false
-	var completed_day := current_day
+	var today_sold := _total_sold() - _sold_at_day_start
+	var week_sold := _total_sold()
+	day_transition_message = "Day %d complete!  Sold today: %d  |  Week total: %d" % [current_day, today_sold, week_sold]
+	print("[Main] %s" % day_transition_message)
+	get_tree().create_timer(DAY_REPORT_PAUSE).timeout.connect(_begin_next_day)
+
+## Host-only: STAGE 2 of the day transition, run once the end-of-day
+## report (_end_shift() above) has been up for DAY_REPORT_PAUSE seconds.
+## Advances current_day and — PLAYTEST BUG FIX — reconfigures gates/lock
+## visuals EXPLICITLY and IMMEDIATELY right here, rather than relying only
+## on _process()'s day-change poll to catch it on the next frame. That
+## poll should already do this correctly (it's still there, and is what
+## catches a client up via replication), but a playtest report found
+## newly-unlocked sections not actually opening on a day advance, and I
+## couldn't rule out some interaction with it I hadn't spotted without a
+## way to run the game here — so the host now does it directly and
+## unconditionally at the one moment "a new day started" unambiguously
+## means something, instead of trusting an async side effect alone.
+func _begin_next_day() -> void:
+	if not multiplayer.is_server():
+		return
 	current_day += 1
-	day_transition_message = "Day %d complete — starting Day %d" % [completed_day, current_day]
+	_configure_gates()
+	_apply_section_lock_visuals()
+	_last_configured_day = current_day
+	day_transition_message = "Starting Day %d..." % current_day
 	print("[Main] %s" % day_transition_message)
 	get_tree().create_timer(DAY_TRANSITION_PAUSE).timeout.connect(func():
 		day_transition_message = ""
@@ -630,7 +703,8 @@ func _end_shift() -> void:
 ## run — never reset, unlike _sold_at_day_start (see the score-continuity
 ## comment above _sold_at_day_start's declaration). Used both directly (as
 ## the week/session total) and as the basis for "today's sold"
-## (_total_sold() - _sold_at_day_start) in _process()'s debug HUD.
+## (_total_sold() - _sold_at_day_start) in _process()'s debug HUD and
+## _end_shift()'s report.
 func _total_sold() -> int:
 	var total := 0
 	for cashier_body in cashiers:
@@ -736,8 +810,23 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	var room_x: float = section["room_index"] * ROOM_WIDTH
 	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(120.0, 360.0))
 
-func _pick_unlocked_spawn_pos() -> Vector2:
-	return _spawn_pos_in_section(_pick_unlocked_section())
+## Playtest request: customers should spawn at a defined ENTRANCE to
+## whichever section they're assigned to, then walk inward using their
+## existing target-picking AI (Customer.gd's _find_stocked_item/
+## _pick_browse_target/_pick_disruptive_target — unchanged, this only
+## moves WHERE they start), rather than appearing already scattered
+## around the section's interior. Placed just past each section's LEFT
+## boundary — the doorway/gate a customer would actually walk in
+## through — comfortably clear of that section's own cashier: every
+## section's Cashier1 sits at local x=70 with a 60px-wide collision box
+## (half-width 30), so x=190 clears it by a wide margin, and the same
+## offset works for every section since they're all uniform ROOM_WIDTH
+## rooms. Small random jitter so several customers spawning together
+## don't stack exactly on top of each other, while still reading as "came
+## in the same door."
+func _customer_entrance_pos(section: Dictionary) -> Vector2:
+	var room_x: float = section["room_index"] * ROOM_WIDTH
+	return Vector2(room_x + 190.0 + randf_range(-15.0, 15.0), 270.0 + randf_range(-40.0, 40.0))
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS
 ## above), the same accent color as that section's shelf slot indicators —
@@ -764,12 +853,13 @@ func _spawn_product_node(data: Dictionary) -> Node:
 	p.get_node("Polygon2D").color = data["color"]
 	return p
 
-## Same safe spawn logic as products — customers are CharacterBody2Ds, not
+## Spawns at the assigned section's ENTRANCE (see _customer_entrance_pos),
+## not a random interior position — customers are CharacterBody2Ds, not
 ## RigidBody2Ds, so they wouldn't get flung by a collision-shape overlap
-## the way a product could, but starting them clear of the shelves/cashier
-## still avoids an instant, confusing shove on spawn.
+## the way a product could, but starting clear of the cashier still avoids
+## an instant, confusing shove on spawn.
 func _spawn_customer(role: String) -> void:
-	var pos := _pick_unlocked_spawn_pos()
+	var pos := _customer_entrance_pos(_pick_unlocked_section())
 	var carry_id := _next_customer_carry_id
 	_next_customer_carry_id -= 1
 	customer_spawner.spawn({"index": _customer_spawn_index, "pos": pos, "role": role, "carry_id": carry_id})
@@ -822,11 +912,18 @@ func _process(delta: float) -> void:
 	# the spawners themselves being authority-driven), but the timer is
 	# harmless to tick on every peer, so it's not worth an extra guard here.
 	if shift_active and multiplayer.is_server():
+		if _customer_grace_timer > 0.0:
+			_customer_grace_timer = max(0.0, _customer_grace_timer - delta)
 		_restock_timer -= delta
 		if _restock_timer <= 0.0:
 			_restock_timer = RESTOCK_CHECK_INTERVAL
 			_restock_products()
-			_restock_customers()
+			# Customers wait out CUSTOMER_GRACE_PERIOD (see _start_shift())
+			# before this ever fires — products above are never held back
+			# the same way, so there's something to stock during the grace
+			# window, not just an empty floor.
+			if _customer_grace_timer <= 0.0:
+				_restock_customers()
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist
 	# (so the day advancing past it mid-session doesn't need new scene

@@ -564,6 +564,30 @@ func _try_defend() -> void:
 		else:
 			customer.rpc_id(customer.get_multiplayer_authority(), "request_shove", global_position)
 
+## Week 7 — called by Main.gd at the start of each day
+## (_reset_players_to_break_room()) to move every player back to the break
+## room. "any_peer", not "authority": the HOST isn't necessarily THIS
+## player's own multiplayer authority (a client's own player node has that
+## client as its authority, not the host), so an "authority"-restricted
+## RPC would block the host from commanding anyone but its own player.
+## The is_multiplayer_authority() check inside is what keeps this safe
+## despite "any_peer" — broadcasting the call reaches every peer, but only
+## the ACTUAL OWNER of this specific player node ever passes that check
+## and actually moves; everyone else's invocation is a silent no-op, the
+## same "any peer may ask, only the authority ever acts" shape as
+## Carryable.gd's request_*() functions. reset_physics_interpolation() is
+## required here for the same reason _ready() already calls it once at
+## spawn: without it, physics interpolation would try to smoothly SLIDE
+## this node across the whole map from its old position to the break
+## room instead of snapping there instantly.
+@rpc("any_peer", "call_local", "reliable")
+func teleport_to(pos: Vector2) -> void:
+	if not is_multiplayer_authority():
+		return
+	position = pos
+	target_position = pos
+	reset_physics_interpolation()
+
 func _find_carried_object(my_id: int) -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		var c: Node = obj.get_node("Carryable")
