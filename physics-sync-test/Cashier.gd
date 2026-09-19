@@ -17,15 +17,17 @@ class_name Cashier
 ## QUEUE LINE (playtest request): rebuilt this session from "every shopper
 ## in PURCHASE_RANGE gets served independently" (fine with 1-2 shoppers,
 ## but had no concept of order — several could physically overlap right at
-## the checkout point) into an explicit ordered queue. A shopper commits to
-## a specific cashier once (Customer.gd's _shopper_input(),
-## request_join_queue()), and only the customer at the FRONT of _queue is
-## ever checked for a purchase — everyone else in line just walks toward
-## their own queue slot (queue_slot_position()), which shifts forward as
-## the line advances. Plain direct method calls, not RPCs, throughout: both
-## Cashier.gd and Customer.gd are host-authority-only for this logic (see
-## each one's own is_multiplayer_authority()/authority guard), so there's
-## never a cross-peer call to make here.
+## the checkout point) into an explicit queue. A shopper commits to a
+## specific cashier once (Customer.gd's _shopper_input(),
+## request_join_queue()); only whoever is CURRENTLY CLOSEST among everyone
+## queued (_queue_by_distance(), a later playtest fix — NOT stored
+## join-order, which turned out to let one delayed customer freeze the
+## whole line forever) is ever checked for a purchase, everyone else just
+## walks toward their own queue slot (queue_slot_position()), which shifts
+## as the effective order changes. Plain direct method calls, not RPCs,
+## throughout: both Cashier.gd and Customer.gd are host-authority-only for
+## this logic (see each one's own is_multiplayer_authority()/authority
+## guard), so there's never a cross-peer call to make here.
 
 const PURCHASE_RANGE := 40.0
 ## How long a shopper has to stand continuously at checkout, carrying the
@@ -58,10 +60,12 @@ var checkout: Marker2D
 ## Shelf.gd's own `slots` collection already relies on). Slot 0 is closest
 ## to the register, each further slot a step further back.
 var queue_slots: Array[Marker2D] = []
-## Ordered carry_ids, front (index 0) = whoever's actually being served
-## right now. Authority-only, not replicated — same "authority computes,
-## clients just see the customer walk toward wherever queue_slot_position()
-## currently says" split as everything else host-only in this project.
+## Everyone currently waiting at this cashier, carry_ids, membership only —
+## NOT serving order (see _queue_by_distance()'s own comment for why array
+## position stopped meaning "position in line" this session). Authority-
+## only, not replicated — same "authority computes, clients just see the
+## customer walk toward wherever queue_slot_position() currently says"
+## split as everything else host-only in this project.
 var _queue: Array[int] = []
 ## Replicated so every peer can show the running total without each of
 ## them re-deriving it (only the authority actually processes purchases)
@@ -70,10 +74,10 @@ var total_sold: int = 0
 ## Authority-only bookkeeping: carry_id -> seconds spent continuously in
 ## range at THIS cashier so far. Not replicated — only the authority needs
 ## it, the same "no sync needed" reasoning as Shelf.gd's _occupant array.
-## Only ever has an entry for _queue[0] now (the front-of-line customer is
-## the only one ever checked for a purchase) — entries for a customer who
-## leaves range or loses their front-of-line spot just go stale and sit
-## here harmlessly, negligible at this session's scale.
+## Only ever has an entry for whoever's currently closest (see
+## _queue_by_distance()) — the only one ever checked for a purchase — at a
+## time; entries for a customer who leaves range or stops being closest
+## just go stale and sit here harmlessly, negligible at this session's scale.
 var _waiting: Dictionary = {}
 
 func _ready() -> void:
@@ -120,16 +124,45 @@ func request_join_queue(carry_id: int) -> void:
 func leave_queue(carry_id: int) -> void:
 	_queue.erase(carry_id)
 
+## PLAYTEST ROOT-CAUSE FIX: the queue used to be strict join-order — whoever
+## called request_join_queue() first stayed "at the front" (_queue[0]) no
+## matter what, even if something delayed them physically (a longer detour,
+## a shove, a temporary collision snag against a neighboring station — see
+## Main.tscn's CentralCheckout layout comment for why that specific
+## collision risk existed). Since only _queue[0] was ever checked for a
+## purchase, ONE delayed customer froze the ENTIRE line forever, even with
+## other queued customers standing right at the register. Recomputing the
+## effective order by CURRENT distance every call — both here and in
+## queue_slot_position() below — instead of trusting stored join-order
+## fixes that at the root: whoever is actually closest is always "at the
+## front," both for serving purposes and for where everyone else visibly
+## stands in line, so a delayed customer just naturally falls back instead
+## of blocking anyone.
+func _queue_by_distance() -> Array:
+	var ordered := _queue.duplicate()
+	ordered.sort_custom(func(a, b):
+		var ca := _customer_by_carry_id(a)
+		var cb := _customer_by_carry_id(b)
+		if ca == null or cb == null:
+			return false
+		var da: float = ca.global_position.distance_to(checkout.global_position)
+		var db: float = cb.global_position.distance_to(checkout.global_position)
+		return da < db
+	)
+	return ordered
+
 ## Where carry_id should currently be standing: the checkout counter itself
-## if it's at the front of the line (index 0) or not found (not our
-## problem to resolve here — Customer.gd only ever calls this after
-## joining), otherwise the queue slot matching its position in line.
+## if it's currently closest among everyone queued here (see
+## _queue_by_distance() above) or not found (not our problem to resolve
+## here — Customer.gd only ever calls this after joining), otherwise the
+## queue slot matching its current position in that distance ordering.
 ## Overflow (more customers queued than physical slots) stacks everyone
 ## past the last slot there rather than inventing more positions — a rare
 ## edge case at this session's population caps, not worth extra layout
 ## logic for.
 func queue_slot_position(carry_id: int) -> Vector2:
-	var idx := _queue.find(carry_id)
+	var ordered := _queue_by_distance()
+	var idx := ordered.find(carry_id)
 	if idx <= 0:
 		return checkout.global_position
 	var slot_idx: int = idx - 1
@@ -147,22 +180,23 @@ func _physics_process(delta: float) -> void:
 	_queue = _queue.filter(func(cid): return _customer_by_carry_id(cid) != null)
 	if _queue.is_empty():
 		return
-	# Only the FRONT of the line is ever checked for a purchase — everyone
-	# else is just walking toward their own queue_slot_position(), driven
-	# entirely from Customer.gd's side, nothing to do for them here.
-	var front_id: int = _queue[0]
+	# Whoever is CURRENTLY closest is served, not whoever joined first —
+	# see _queue_by_distance()'s own comment for why. Removed by VALUE
+	# (erase), not pop_front(): the closest customer isn't guaranteed to
+	# still be at array index 0 any more.
+	var front_id: int = _queue_by_distance()[0]
 	var customer := _customer_by_carry_id(front_id)
 	if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
-		return # front of line hasn't reached the register yet
+		return # nobody in line has reached the register yet
 	var item := _carried_by(front_id)
 	if item == null:
-		_queue.pop_front()
+		_queue.erase(front_id)
 		return
 	var elapsed: float = _waiting.get(front_id, 0.0) + delta
 	if elapsed >= CHECKOUT_WAIT_SECONDS:
 		_waiting.erase(front_id)
 		_complete_purchase(item, front_id)
-		_queue.pop_front()
+		_queue.erase(front_id)
 	else:
 		_waiting[front_id] = elapsed
 
@@ -180,8 +214,8 @@ func _carried_by(carry_id: int) -> Node2D:
 	return null
 
 ## carry_id (added this session, for the queue rework) is who was just
-## served — the caller (_physics_process above) already pops _queue's
-## front entry right after this returns, so this only needs to tell the
+## served — the caller (_physics_process above) already removes it from
+## _queue right after this returns, so this only needs to tell the
 ## CUSTOMER a purchase completed, via record_purchase() — multi-item
 ## shopping trips (playtest request) need that so a shopper knows to look
 ## for its next item instead of assuming its trip is over.

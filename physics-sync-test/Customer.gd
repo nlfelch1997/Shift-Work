@@ -217,7 +217,19 @@ func _physics_process(delta: float) -> void:
 		$Polygon2D.rotation = facing_angle
 	velocity = dir * SPEED
 	move_and_slide()
-	_push_rigid_bodies(delta)
+	# PLAYTEST BUG FIX: this used to run for BOTH roles unconditionally —
+	# pre-existing since Week 6, not something this session introduced, but
+	# rarely triggered before since a shopper's old per-section cashier was
+	# right next to whatever it was shopping for. Now that every shopping
+	# trip is a long walk across the whole store, shoppers brush past far
+	# more shelves along the way, and this let them knock placed items over
+	# exactly like a disruptive customer would — "good pressure" and "bad
+	# pressure" blurring together, which the brief has asked to keep
+	# distinct since Week 6 (see the file header). Disruptive-only now: a
+	# shopper just walks past a shelf without disturbing it, matching "should
+	# navigate around placed items/players normally."
+	if role == "disruptive":
+		_push_rigid_bodies(delta)
 	target_position = position
 
 func _process(delta: float) -> void:
