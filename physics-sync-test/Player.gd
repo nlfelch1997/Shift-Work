@@ -35,15 +35,16 @@ const INTERACT_COOLDOWN := 3.0
 ## one like pickup.
 const DEFEND_RANGE := 70.0
 const DEFEND_COOLDOWN := 0.8
-## Week 6 Part 1 — the store is now 5 rooms wide (960x540 each), wider than
+## Week 6 Part 1 — the store is now 6 rooms wide (960x540 each), wider than
 ## the fixed 960x540 window, so this project needed its first-ever
 ## scrolling camera. Duplicated from Main.gd's WORLD_WIDTH/WORLD_HEIGHT
 ## rather than preloaded from there — Main.gd already preloads Player.tscn
 ## (to spawn players), so preloading Main.gd back from here would be a
 ## CYCLIC preload, a real GDScript failure mode, not just messier style.
 ## Must be kept in sync by hand with Main.gd's own ROOM_WIDTH x
-## ROOM_HEIGHT x NUM_ROOMS math (960 x 540 x 5 = 4800 x 540 currently).
-const WORLD_WIDTH := 4800.0
+## ROOM_HEIGHT x NUM_ROOMS math (960 x 540 x 6 = 5760 x 540 as of this
+## session's new Entrance room — see Main.gd's ROOM_INDEX MAP comment).
+const WORLD_WIDTH := 5760.0
 const WORLD_HEIGHT := 540.0
 const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Carryable.gd's PICKUP_RANGE is the real check
 const BOT_CARRY_DURATION := 2.5

@@ -42,23 +42,35 @@ extends Node2D
 ## agnostic), just backwards art, left for real slot art later rather than
 ## a dozen per-node rotation overrides to un-rotate text in a greybox.
 ##
-## PART 1 — full store layout (Week 6): Main.tscn is 5 uniform ROOM_WIDTH x
+## PART 1 — full store layout (Week 6): Main.tscn is 6 uniform ROOM_WIDTH x
 ## ROOM_HEIGHT rooms in a single left-to-right row sharing one continuous
-## world — room 0 is the break room (always open, no gate), rooms 1-4 are
-## Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind its own Gate (see
-## Gate.gd) except the break-room<->Dry-Goods doorway, which has no gate at
-## all since Dry Goods is available from Day 1. Reused Shelf.tscn/
-## Product.tscn verbatim per the brief's "light re-theming, not unique
-## content per zone" — each section's shelves are the identical Shelf1-4
-## layout Dry Goods already used, just modulate-tinted, and every room
-## additionally gets a flat background-color Polygon2D plus a large text
-## label (see Main.tscn's SectionLabels) for at-a-glance section
+## world. Rooms 2-5 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind
+## its own Gate (see Gate.gd) except the break-room<->Dry-Goods doorway,
+## which has no gate at all since Dry Goods is available from Day 1. Reused
+## Shelf.tscn/Product.tscn verbatim per the brief's "light re-theming, not
+## unique content per zone" — each section's shelves are the identical
+## Shelf1-4 layout Dry Goods already used, just modulate-tinted, and every
+## room additionally gets a flat background-color Polygon2D plus a large
+## text label (see Main.tscn's SectionLabels) for at-a-glance section
 ## identification. The store being wider than one screen is why
 ## Player.tscn now carries a Camera2D (see Player.gd) — this project had
-## no scrolling/camera concept before Part 1 needed one. Cashier.tscn is
-## NO LONGER per-section as of this session's checkout-consolidation
-## request — see Main.tscn's CentralCheckout (in the break room) and
-## _configure_cashiers() below.
+## no scrolling/camera concept before Part 1 needed one.
+##
+## ROOM_INDEX MAP, UPDATED this session (playtest bug fix — see the long
+## comment on _despawn_all_customers()/is_break_room_at_x() below for why
+## this reshuffle exists): room 0 is now a new ENTRANCE zone (sidewalk/
+## exterior feel — see RoomBackgrounds/EntranceBg's distinct concrete-gray
+## color), where every customer spawns and where the central checkout now
+## lives (CentralCheckout in Main.tscn — moved out of the break room, which
+## turned out to be actively harmful, not just wrong-looking; see below).
+## Room 1 is the break room (always open, no gate, players clock in/reset
+## here every day — see _reset_players_to_break_room()) — it has NEVER had
+## shelves or a cashier, and now explicitly has NO customer-AI reason to be
+## targeted either. Rooms 2-5 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery
+## (unchanged relative order, each just shifted one room-width right to make
+## space for the new Entrance room at 0). ENTRANCE_ROOM_INDEX/
+## BREAK_ROOM_ROOM_INDEX below are the two non-SECTIONS room indices code
+## needs to reason about explicitly.
 ##
 ## REDESIGNED after playtest feedback: Gate.gd originally sat in a narrow
 ## ~120px doorway cut into two permanent wall segments per boundary, and
@@ -78,30 +90,39 @@ extends Node2D
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
-## Room 0 (the break room) center — unchanged from before Part 1, since
-## room 0 happens to occupy the exact same world coordinates the old
-## single-room store used to. Players spawn here, not in Dry Goods: you
-## clock in at the break room and walk the always-open doorway into Dry
-## Goods to start your shift.
-const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
+## Break room center — room_index 1 as of this session's Entrance-zone
+## reshuffle (see the ROOM_INDEX MAP comment above), so this is
+## BREAK_ROOM_ROOM_INDEX * ROOM_WIDTH + (half ROOM_WIDTH) = 960+480 = 1440,
+## not a re-guessed number. Players spawn here, not in Dry Goods: you clock
+## in at the break room and walk the always-open doorway into Dry Goods to
+## start your shift.
+const SPAWN_CENTER := Vector2(1440.0, 270.0) # players spread out around this point, not a specific object
 
 const ROOM_WIDTH := 960.0
 const ROOM_HEIGHT := 540.0
-const NUM_ROOMS := 5 # break room + 4 retail sections, single left-to-right row (see Main.tscn)
+const NUM_ROOMS := 6 # entrance + break room + 4 retail sections, single left-to-right row (see Main.tscn)
 const WORLD_WIDTH := ROOM_WIDTH * NUM_ROOMS
 const WORLD_HEIGHT := ROOM_HEIGHT
-## room_index matches each section's position in Main.tscn's row (0 = break
-## room, not listed here since it has no gate and no shelves). required_day
+## The two non-retail room indices — see the ROOM_INDEX MAP comment above
+## this file's header. Neither appears in SECTIONS (no gate, no shelves),
+## but both are things other code needs to reason about explicitly:
+## ENTRANCE_ROOM_INDEX is where customers spawn and where the central
+## checkout lives (_store_entrance_pos()/CentralCheckout); BREAK_ROOM_ROOM_
+## INDEX is used by is_break_room_at_x() below to keep customer AI (and
+## stray physics objects — see _rescue_stranded_products()) out of it.
+const ENTRANCE_ROOM_INDEX := 0
+const BREAK_ROOM_ROOM_INDEX := 1
+## room_index matches each section's position in Main.tscn's row. required_day
 ## mirrors the brief's Day 1-2 / 3-4 / 5-6 / 7 schedule exactly, and is also
 ## what _configure_gates() below sets on each matching Gate instance by
 ## node name (not a .tscn property override — see that function's own
 ## comment on why), so this table and the actual physical doors can't
 ## quietly drift apart from each other.
 const SECTIONS := [
-	{"name": "Dry Goods", "node_name": "DryGoods", "room_index": 1, "required_day": 1},
-	{"name": "Meat/Deli", "node_name": "MeatDeli", "room_index": 2, "required_day": 3},
-	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "room_index": 3, "required_day": 5},
-	{"name": "Bakery", "node_name": "Bakery", "room_index": 4, "required_day": 7},
+	{"name": "Dry Goods", "node_name": "DryGoods", "room_index": 2, "required_day": 1},
+	{"name": "Meat/Deli", "node_name": "MeatDeli", "room_index": 3, "required_day": 3},
+	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "room_index": 4, "required_day": 5},
+	{"name": "Bakery", "node_name": "Bakery", "room_index": 5, "required_day": 7},
 ]
 ## Per-section accent color, shared by that section's spawned products
 ## (_spawn_product_node below) and its shelf slot indicators
@@ -260,6 +281,32 @@ const PRODUCT_PER_EXTRA_PLAYER := 3
 ## final balance pass.
 const CUSTOMER_CAP_BY_TIER := [5, 9, 13, 17]
 const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
+## FLAGGED SCALING NUMBERS, same tier shape as the two arrays above —
+## playtest request: keep single-item trips for the early days (Day 1-2,
+## tier 0, unchanged at 1 item — this is the existing, already-confirmed
+## baseline, not a new behavior), then scale UP how many items a shopper
+## buys per visit on later days as more sections come online. A shopper
+## doesn't carry multiple items AT ONCE (Carryable.gd's CARRY_OFFSET is a
+## single fixed attach point — simultaneous multi-item carry would need
+## real rework there); instead it's SEQUENTIAL, buying items one at a time
+## and returning to the item-search loop it already runs after every
+## purchase (Customer.gd's _shopper_input() already resets _committed_item
+## to null once the carried item is gone — that loop already existed, it
+## just used to run until MAX_LIFETIME_SHOPPER cut it off, closer to "as
+## many as happen to fit" than a deliberate count) until it's completed
+## items_target purchases, then leaves satisfied (see Customer.gd's
+## record_purchase()/_shopper_input()).
+##
+## Kept deliberately modest, not matching the CUSTOMER_CAP_BY_TIER ramp:
+## every additional item is another full round-trip to the now-centralized
+## checkout (see MAX_CARRY_LIFETIME's own comment on how long that walk can
+## be for a far section), so a high target on a late, already-longer
+## SECTION_TIME_BONUS-extended shift risks shoppers rarely finishing their
+## whole trip before the clock runs out. Starts scaling at Day 3 (tier 1 —
+## the same threshold every other tiered system here already uses, not a
+## new one invented for this), not Day 1, matching "keep single-item trips
+## for the early days" literally.
+const ITEMS_TARGET_BY_TIER := [1, 2, 2, 3]
 const CUSTOMER_PER_EXTRA_PLAYER := 2
 ## Week 6: restored to 0.35 now that the spacebar defend/shove action
 ## (Player.gd's _try_defend(), Customer.gd's request_shove()) gives players
@@ -825,14 +872,49 @@ func _total_sold() -> int:
 ## for the rest of the shift). Counts EVERY carryable object that currently
 ## exists anywhere — on the floor, placed on a shelf, or mid-carry by
 ## either a player or a customer — not just free-floating ones, since
-## those all still count as "not yet sold" supply.
+## those all still count as "not yet sold" supply. PLAYTEST ROOT-CAUSE FIX:
+## EXCEPT anything currently sitting in the break room — before this,
+## a stranded item there (see is_break_room_at_x()'s comment for how it
+## gets there) silently counted as "still in play" forever, quietly eating
+## into the cap and suppressing real, reachable spawns without ever showing
+## up anywhere a player would think to look. _rescue_stranded_products()
+## below is the other half of this fix — it actively returns a stranded
+## item to play rather than just no longer miscounting it.
 func _restock_products() -> void:
 	var cap: int = _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
-	var current := get_tree().get_nodes_in_group("carryable").size()
+	var current := 0
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if not is_break_room_at_x(obj.global_position.x):
+			current += 1
 	while current < cap:
 		_spawn_product(_product_spawn_index)
 		_product_spawn_index += 1
 		current += 1
+
+## PLAYTEST ROOT-CAUSE FIX, companion to _restock_products()'s cap-count
+## exclusion above: actively returns any FREE (uncarried) product currently
+## sitting in the break room back into play, rather than leaving it there
+## forever. A product ends up there one of two ways — a shopper's
+## _leave()/force_leave() dropping it mid-transit (now rare, see
+## MAX_CARRY_LIFETIME's comment, but not literally impossible), or ordinary
+## physics chaos (a push, a throw, a disruptive shove) knocking a free item
+## across the ungated break-room boundary — and per this session's explicit
+## request, the fix for that spillage is NOT a wall (Week 6 already removed
+## doors after they caused NPCs to jam single-file; a break-room door risks
+## the same regression), so prevention can't be 100%. This is the mitigation:
+## sweep it back onto the floor instead of leaving it dead. Only touches FREE
+## items (carrier_id == 0) — one mid-transit through the break room while
+## actually being carried is legitimate and left alone. Same cadence as
+## _restock_products() (called right alongside it in _process()), host-only.
+func _rescue_stranded_products() -> void:
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if not is_break_room_at_x(obj.global_position.x):
+			continue
+		var c: Node = obj.get_node("Carryable")
+		if c.carrier_id != 0:
+			continue
+		obj.global_position = _spawn_pos_in_section(_pick_unlocked_section())
+		obj.linear_velocity = Vector2.ZERO
 
 ## Same shape as _restock_products(), for the combined shopper+disruptive
 ## population — tops back up to _customer_baseline() + PER_EXTRA_PLAYER
@@ -887,7 +969,26 @@ func is_unlocked_at_x(world_x: float) -> bool:
 	for section in SECTIONS:
 		if section["room_index"] == idx:
 			return current_day >= section["required_day"]
-	return false # room 0 (break room) has no shelves, so never matters here
+	return false # entrance/break room have no shelves, so never matters here
+
+## PLAYTEST ROOT-CAUSE FIX: the central checkout used to live IN the break
+## room, and nothing stopped customer AI from wandering into it either —
+## harmless-looking, but actually caused two real bugs (see the long
+## comment on _spawn_customer's caller and _rescue_stranded_products()
+## below): a shopper timing out mid-walk could drop its item there (no
+## shelf ever looks for it again), and idle browse/disruptive wandering
+## could land a customer there for no reason at all. The checkout is now in
+## the new Entrance zone instead (ENTRANCE_ROOM_INDEX), which fixes WHERE
+## the checkout is, but customer AI could still wander into the break room
+## by pure chance on its way past — this is the other half of the fix:
+## Customer.gd calls this (same "public, live scene-tree lookup, no cyclic
+## preload" shape as is_unlocked_at_x() above) to keep its random browse/
+## disruptive wander targets from ever landing inside the break room.
+## Legitimate TRANSIT through the break room (walking from the Entrance to
+## a section, or back to checkout) is unaffected and expected — this only
+## guards against something being explicitly TARGETED there.
+func is_break_room_at_x(world_x: float) -> bool:
+	return int(floor(world_x / ROOM_WIDTH)) == BREAK_ROOM_ROOM_INDEX
 
 ## 12 = one section's slot count (4 shelves x 3 slots) — see the big
 ## comment block above PRODUCT_PER_EXTRA_PLAYER for why this scales with
@@ -900,6 +1001,17 @@ func _product_baseline() -> int:
 func _customer_baseline() -> int:
 	var tier := clampi(_unlocked_sections().size() - 1, 0, CUSTOMER_CAP_BY_TIER.size() - 1)
 	return CUSTOMER_CAP_BY_TIER[tier]
+
+## See ITEMS_TARGET_BY_TIER's own comment. Evaluated fresh per customer at
+## spawn time (_spawn_customer() below), not re-evaluated later — a shopper
+## keeps whatever target it was given even if the tier changes mid-shift
+## (which can't actually happen today anyway, since _despawn_all_customers()
+## already clears every customer at the one moment the tier could change,
+## a day boundary — but resolving it once at spawn is the honest, no-surprise
+## behavior regardless).
+func _items_target_for_current_tier() -> int:
+	var tier := clampi(_unlocked_sections().size() - 1, 0, ITEMS_TARGET_BY_TIER.size() - 1)
+	return ITEMS_TARGET_BY_TIER[tier]
 
 ## See CASHIER_COUNT_BY_TIER's own comment. Called from _configure_cashiers()
 ## below, which is what actually enables/disables that many of the central
@@ -943,23 +1055,30 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	var room_x: float = section["room_index"] * ROOM_WIDTH
 	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(120.0, 360.0))
 
-## Playtest request: customers should spawn at a defined ENTRANCE to
-## whichever section they're assigned to, then walk inward using their
-## existing target-picking AI (Customer.gd's _find_stocked_item/
-## _pick_browse_target/_pick_disruptive_target — unchanged, this only
-## moves WHERE they start), rather than appearing already scattered
-## around the section's interior. Placed just past each section's LEFT
-## boundary — the doorway/gate a customer would actually walk in
-## through, x=190 clear of the shelves/walls either way (the offset that
-## used to also clear each section's own cashier still works fine now that
-## cashiers are consolidated into one CentralCheckout — a shopper who picks
-## something up here now walks there instead, see _find_nearest_cashier() in
-## Customer.gd). Small random jitter so several customers spawning together
-## don't stack exactly on top of each other, while still reading as "came
-## in the same door."
-func _customer_entrance_pos(section: Dictionary) -> Vector2:
-	var room_x: float = section["room_index"] * ROOM_WIDTH
-	return Vector2(room_x + 190.0 + randf_range(-15.0, 15.0), 270.0 + randf_range(-40.0, 40.0))
+## UPGRADED this session, replacing the old per-section _customer_entrance_pos():
+## playtest request for a real store entrance — a sidewalk/exterior zone
+## OUTSIDE the store, distinct from any section, that every customer spawns
+## at and physically walks in from, rather than popping into existence at
+## whichever section they're headed to. All customers now spawn HERE
+## regardless of role or eventual target, then use their existing
+## target-picking AI (Customer.gd's _find_stocked_item/_pick_browse_target/
+## _pick_disruptive_target/_find_nearest_cashier — none of that changed,
+## this only moves WHERE they start) to walk toward wherever they're
+## actually headed, the same "just point them at a target position and let
+## the existing straight-line steering handle it" approach already used for
+## every other long walk in this project (e.g. a shopper crossing the whole
+## store to reach a cashier). Placed near the OUTER edge of the Entrance
+## zone (ENTRANCE_ROOM_INDEX), clear of both the store-side doorway and the
+## central checkout stations (which sit further in, at local x=150-710,
+## y=430 — see CentralCheckout in Main.tscn; kept clear of the far edge so
+## even the rightmost station's queue line, which extends further right,
+## can't spill past x=960 into the break room), so a customer visibly walks
+## the length of the sidewalk before ever reaching the checkout row or the
+## break-room doorway beyond it. Small random jitter so several customers
+## spawning together don't stack exactly on top of each other.
+func _store_entrance_pos() -> Vector2:
+	var room_x: float = ENTRANCE_ROOM_INDEX * ROOM_WIDTH
+	return Vector2(room_x + 80.0 + randf_range(-15.0, 15.0), 270.0 + randf_range(-40.0, 40.0))
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS
 ## above), the same accent color as that section's shelf slot indicators —
@@ -986,16 +1105,22 @@ func _spawn_product_node(data: Dictionary) -> Node:
 	p.get_node("Polygon2D").color = data["color"]
 	return p
 
-## Spawns at the assigned section's ENTRANCE (see _customer_entrance_pos),
-## not a random interior position — customers are CharacterBody2Ds, not
+## Spawns at the shared store ENTRANCE (see _store_entrance_pos), not a
+## random interior position — customers are CharacterBody2Ds, not
 ## RigidBody2Ds, so they wouldn't get flung by a collision-shape overlap
 ## the way a product could, but starting clear of the shelves/walls still
 ## avoids an instant, confusing shove on spawn.
 func _spawn_customer(role: String) -> void:
-	var pos := _customer_entrance_pos(_pick_unlocked_section())
+	var pos := _store_entrance_pos()
 	var carry_id := _next_customer_carry_id
 	_next_customer_carry_id -= 1
-	customer_spawner.spawn({"index": _customer_spawn_index, "pos": pos, "role": role, "carry_id": carry_id})
+	customer_spawner.spawn({
+		"index": _customer_spawn_index,
+		"pos": pos,
+		"role": role,
+		"carry_id": carry_id,
+		"items_target": _items_target_for_current_tier(),
+	})
 	_customer_spawn_index += 1
 
 func _spawn_customer_node(data: Dictionary) -> Node:
@@ -1004,6 +1129,7 @@ func _spawn_customer_node(data: Dictionary) -> Node:
 	c.position = data["pos"]
 	c.role = data["role"]
 	c.carry_id = data["carry_id"]
+	c.items_target = data["items_target"]
 	return c
 
 func _process(delta: float) -> void:
@@ -1067,6 +1193,7 @@ func _process(delta: float) -> void:
 		if _restock_timer <= 0.0:
 			_restock_timer = RESTOCK_CHECK_INTERVAL
 			_restock_products()
+			_rescue_stranded_products()
 			# Customers wait out CUSTOMER_GRACE_PERIOD (see _start_shift())
 			# before this ever fires — products above are never held back
 			# the same way, so there's something to stock during the grace

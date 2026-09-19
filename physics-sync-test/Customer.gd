@@ -58,6 +58,28 @@ const BROWSE_RETARGET_INTERVAL := 2.5
 const BROWSE_RADIUS := 200.0 # how far a browse destination can land from the shopper's current spot
 const MAX_LIFETIME_SHOPPER := 30.0 # safety valve: if nothing's ever stocked, don't camp forever — leave and let the population cap spawn a replacement
 const MAX_LIFETIME_DISRUPTIVE := 45.0
+## PLAYTEST ROOT-CAUSE FIX: MAX_LIFETIME_SHOPPER (30s, above) was tuned back
+## when checkout was always in the shopper's own section, a few hundred px
+## away — it was never meant to also cover the walk to a now-centralized
+## checkout, which can be 4000+ px one-way from the farthest section
+## (Bakery) at this file's SPEED (90px/s), i.e. 45+ seconds just to get
+## there, before even factoring in the walk IN from the entrance or any
+## browsing beforehand. A shopper hitting the OLD single lifetime cap
+## mid-walk while still holding an item is exactly what read as "customers
+## disappear while carrying an item" in playtest — they weren't disappearing,
+## they were timing out. Fix: once a shopper is actually carrying something
+## (i.e. has committed to a purchase, not just idly searching), its lifetime
+## budget resets and switches to this much larger cap instead of continuing
+## to count against MAX_LIFETIME_SHOPPER — see _physics_process()'s lifetime
+## check and _carry_timer below. Sized generously above the worst-case
+## Bakery-to-Entrance round trip (~55-60s of walking alone) rather than
+## tightly, since a cutoff that's merely "usually enough" would just
+## reintroduce the same bug on an unlucky detour. FLAGGED, not a confirmed
+## tuned value — if a centralized checkout this large turns out to make
+## far-section purchases rare/slow even with this budget, the fix might
+## eventually be a different one (e.g. a second, closer checkout), not a
+## bigger number here.
+const MAX_CARRY_LIFETIME := 75.0
 ## Week 6 — the defend/shove counter-play (see Player.gd's _try_defend()).
 ## Knocks ANY nearby customer away, not just disruptive ones: this component
 ## stays as ignorant of "which role is being shoved" as it already is of
@@ -86,6 +108,12 @@ const CHECKOUT_STOP_RANGE := CashierScript.PURCHASE_RANGE - 15.0
 
 @export var role := "shopper" # "shopper" or "disruptive"
 @export var carry_id := 0 # unique negative int, assigned by Main.gd — see Carryable.gd's _find_carrier()
+## Multi-item shopping trips (playtest request), shopper-only — set by
+## Main.gd at spawn from ITEMS_TARGET_BY_TIER (see that constant's own
+## comment for the actual day-tiered numbers and reasoning). How many
+## successful purchases this shopper aims to complete before leaving
+## voluntarily, tracked by _items_bought below and record_purchase().
+@export var items_target := 1
 
 var target_position: Vector2
 var facing_angle := 0.0
@@ -100,6 +128,18 @@ var _committed_item: Node2D = null
 var _committed_cashier: Node = null
 var _browse_timer := 0.0
 var _browse_pos := Vector2.ZERO
+## How many purchases THIS shopper has completed so far this trip —
+## incremented by record_purchase() (called by Cashier.gd's
+## _complete_purchase() once it knows which customer it just served, via
+## the queue system — see Cashier.gd's own comments). Compared against
+## items_target in _shopper_input() to decide when to leave satisfied
+## instead of searching for yet another item.
+var _items_bought := 0
+## Counts UP from 0 only while actually carrying an item toward checkout,
+## reset to 0 whenever not carrying — see MAX_CARRY_LIFETIME's comment for
+## why this needs to be separate from _lifetime (which keeps counting the
+## whole time, including idle browsing, and is tuned for that instead).
+var _carry_timer := 0.0
 
 # --- disruptive state ---
 var _retarget_timer := 0.0
@@ -144,10 +184,24 @@ func _physics_process(delta: float) -> void:
 		return # normal shopper/disruptive AI suppressed for the whole stun
 
 	_lifetime += delta
-	var max_lifetime := MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
-	if _lifetime > max_lifetime:
-		_leave()
-		return
+	# PLAYTEST ROOT-CAUSE FIX — see MAX_CARRY_LIFETIME's own comment: a
+	# shopper actively carrying an item toward checkout is judged against
+	# its OWN, much larger budget (_carry_timer/MAX_CARRY_LIFETIME) instead
+	# of the browsing-tuned _lifetime/MAX_LIFETIME_SHOPPER — the two are
+	# mutually exclusive per tick, never summed, so switching from
+	# browsing to carrying doesn't inherit however much of the OLD budget
+	# was already spent searching.
+	if role == "shopper" and _find_carried_by_me() != null:
+		_carry_timer += delta
+		if _carry_timer > MAX_CARRY_LIFETIME:
+			_leave()
+			return
+	else:
+		_carry_timer = 0.0
+		var max_lifetime := MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
+		if _lifetime > max_lifetime:
+			_leave()
+			return
 
 	_interact_cooldown -= delta
 	var dir := Vector2.ZERO
@@ -173,13 +227,29 @@ func _process(delta: float) -> void:
 	position = position.lerp(target_position, t)
 	$Polygon2D.rotation = facing_angle
 
+## Called by Cashier.gd's _complete_purchase() once it's finished serving
+## THIS customer (identified by carry_id via its queue — see Cashier.gd's
+## own comments on the queue rework). Multi-item shopping trips (playtest
+## request): a shopper keeps buying — _shopper_input() below re-enters the
+## item-search loop once _committed_item/carried both go null again, same
+## as it always did — until _items_bought reaches items_target, then
+## leaves satisfied instead of looking for another item.
+func record_purchase() -> void:
+	_items_bought += 1
+
 ## If still carrying something (e.g. it timed out before ever reaching a
 ## cashier), drop it first so it doesn't vanish along with a held item —
 ## same reasoning as Main.gd's force_drop_if_carrier on disconnect. Shared by
 ## the lifetime timeout above and Main.gd's force_leave() below (day-start
-## population clear), not just the timeout case any more.
+## population clear), not just the timeout case any more. Also releases
+## this customer's spot in its committed cashier's queue, if it had one —
+## without this, a shopper that times out (or gets force-despawned at a day
+## boundary) mid-queue would leave a permanently unfillable gap, since
+## nothing else would ever call leave_queue() for it.
 func _leave() -> void:
 	print("[%s] leaving (role=%s)" % [name, role])
+	if _committed_cashier and is_instance_valid(_committed_cashier):
+		_committed_cashier.get_node("Cashier").leave_queue(carry_id)
 	var carried := _find_carried_by_me()
 	if carried:
 		var c: Node = carried.get_node("Carryable")
@@ -243,7 +313,28 @@ func _shopper_input(delta: float) -> Vector2:
 	if carried == null:
 		if _committed_item and (not is_instance_valid(_committed_item) or _item_taken_by_someone_else(_committed_item)):
 			_committed_item = null
+		# FOUND WHILE WIRING multi-item trips: the only way `carried` goes
+		# from non-null back to null is a completed purchase (a shove/stun
+		# doesn't drop the item — see request_shove()'s own comment; nothing
+		# else un-carries it) or this customer's own _leave(), which frees
+		# the whole node anyway. So reaching here with a still-set
+		# _committed_cashier ALWAYS means "I just finished with that
+		# cashier" — clearing it forces the NEXT item (if items_target > 1)
+		# to call request_join_queue() again for its own trip, instead of
+		# skipping straight to walking to the bare checkout position with
+		# no queue entry at all (queue_slot_position() falls back to the
+		# checkout marker for an unrecognized carry_id) and then just
+		# standing there forever, since Cashier.gd only ever processes
+		# whoever is actually at the front of _queue.
+		_committed_cashier = null
 		if _committed_item == null:
+			# Multi-item shopping trips (playtest request): a satisfied
+			# shopper (already bought items_target items this trip) leaves
+			# on its own instead of looking for one more — see
+			# record_purchase()'s own comment for the full loop shape.
+			if _items_bought >= items_target:
+				_leave()
+				return Vector2.ZERO
 			_committed_item = _find_stocked_item()
 			if _committed_item == null:
 				return _browse_input(delta) # nothing stocked to buy right now — browse instead of standing frozen
@@ -251,18 +342,25 @@ func _shopper_input(delta: float) -> Vector2:
 		if to_item.length() < PICKUP_RANGE:
 			return Vector2.ZERO
 		return to_item.normalized()
-	# Carrying: head for the nearest cashier and just wait near the
-	# checkout point — Cashier.gd's own watch completes the purchase, this
-	# script doesn't need to "announce" anything (see the file header).
+	# Carrying: head for a spot in the nearest cashier's queue (NPC
+	# cashier + queue line, playtest request) and just wait there —
+	# Cashier.gd's own watch completes the purchase once we're at the
+	# front, this script doesn't need to "announce" anything (see the file
+	# header). request_join_queue() is a plain direct call, not an RPC —
+	# Cashier.gd is host-authority and Customer.gd only ever runs this
+	# branch on the host too (see the is_multiplayer_authority() guard in
+	# _physics_process), so both sides are always the same process.
 	if _committed_cashier == null or not is_instance_valid(_committed_cashier):
 		_committed_cashier = _find_nearest_cashier()
 		if _committed_cashier == null:
 			return Vector2.ZERO
-	var checkout: Marker2D = _committed_cashier.get_node("Checkout")
-	var to_checkout := checkout.global_position - global_position
-	if to_checkout.length() < CHECKOUT_STOP_RANGE:
+		_committed_cashier.get_node("Cashier").request_join_queue(carry_id)
+	var cashier: Node = _committed_cashier.get_node("Cashier")
+	var target_pos: Vector2 = cashier.queue_slot_position(carry_id)
+	var to_target := target_pos - global_position
+	if to_target.length() < CHECKOUT_STOP_RANGE:
 		return Vector2.ZERO
-	return to_checkout.normalized()
+	return to_target.normalized()
 
 func _shopper_maybe_interact() -> void:
 	if _interact_cooldown > 0.0:
@@ -328,8 +426,29 @@ func _pick_browse_target() -> Vector2:
 		if slot_pos != null:
 			candidates.append(slot_pos)
 	if candidates.is_empty() or randf() < 0.3:
-		return global_position + Vector2(randf_range(-BROWSE_RADIUS, BROWSE_RADIUS), randf_range(-BROWSE_RADIUS, BROWSE_RADIUS))
+		var wander := global_position + Vector2(randf_range(-BROWSE_RADIUS, BROWSE_RADIUS), randf_range(-BROWSE_RADIUS, BROWSE_RADIUS))
+		return _keep_outside_break_room(wander)
 	return candidates[randi() % candidates.size()]
+
+## PLAYTEST ROOT-CAUSE FIX: shelf/cashier candidates above can never land in
+## the break room (neither exists there), but the plain random-offset
+## fallback had no such guarantee — a shopper/disruptive customer standing
+## near the break room's boundary could roll a wander target that happened
+## to fall inside it, for no reason at all (see Main.gd's
+## is_break_room_at_x() for the fuller story on why that's actively
+## harmful, not just odd-looking). Nudges a candidate that lands inside the
+## break room out to whichever edge is closer instead of picking a whole
+## new random point — keeps the wander feeling like a small correction, not
+## a teleport.
+func _keep_outside_break_room(pos: Vector2) -> Vector2:
+	var main = get_tree().current_scene
+	if not main.is_break_room_at_x(pos.x):
+		return pos
+	var room_x_start: float = main.BREAK_ROOM_ROOM_INDEX * main.ROOM_WIDTH
+	var room_x_end: float = room_x_start + main.ROOM_WIDTH
+	var mid := (room_x_start + room_x_end) * 0.5
+	pos.x = room_x_start - 20.0 if pos.x < mid else room_x_end + 20.0
+	return pos
 
 ## Week 6 Part 1 follow-up (playtest feedback): every target search below
 ## (this one, _find_stocked_item, _find_nearest_cashier,
@@ -423,5 +542,6 @@ func _pick_disruptive_target() -> Vector2:
 	for p in get_tree().get_nodes_in_group("player"):
 		candidates.append(p.global_position)
 	if candidates.is_empty() or randf() < 0.3:
-		return global_position + Vector2(randf_range(-150.0, 150.0), randf_range(-150.0, 150.0))
+		var wander := global_position + Vector2(randf_range(-150.0, 150.0), randf_range(-150.0, 150.0))
+		return _keep_outside_break_room(wander)
 	return candidates[randi() % candidates.size()]

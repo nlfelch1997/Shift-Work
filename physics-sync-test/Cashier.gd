@@ -13,6 +13,19 @@ class_name Cashier
 ## this (originally written for the disconnect-safety sweep); that's why
 ## _complete_purchase can just queue_free() the item directly instead of
 ## needing a dedicated purchase RPC of its own.
+##
+## QUEUE LINE (playtest request): rebuilt this session from "every shopper
+## in PURCHASE_RANGE gets served independently" (fine with 1-2 shoppers,
+## but had no concept of order — several could physically overlap right at
+## the checkout point) into an explicit ordered queue. A shopper commits to
+## a specific cashier once (Customer.gd's _shopper_input(),
+## request_join_queue()), and only the customer at the FRONT of _queue is
+## ever checked for a purchase — everyone else in line just walks toward
+## their own queue slot (queue_slot_position()), which shifts forward as
+## the line advances. Plain direct method calls, not RPCs, throughout: both
+## Cashier.gd and Customer.gd are host-authority-only for this logic (see
+## each one's own is_multiplayer_authority()/authority guard), so there's
+## never a cross-peer call to make here.
 
 const PURCHASE_RANGE := 40.0
 ## How long a shopper has to stand continuously at checkout, carrying the
@@ -39,6 +52,17 @@ var active := true
 
 var body: StaticBody2D
 var checkout: Marker2D
+## Populated in _ready() from every Marker2D child named "Queue*"
+## (Cashier.tscn declares Queue1/Queue2/Queue3, in that order — sibling
+## declaration order is what get_children() returns, same assumption
+## Shelf.gd's own `slots` collection already relies on). Slot 0 is closest
+## to the register, each further slot a step further back.
+var queue_slots: Array[Marker2D] = []
+## Ordered carry_ids, front (index 0) = whoever's actually being served
+## right now. Authority-only, not replicated — same "authority computes,
+## clients just see the customer walk toward wherever queue_slot_position()
+## currently says" split as everything else host-only in this project.
+var _queue: Array[int] = []
 ## Replicated so every peer can show the running total without each of
 ## them re-deriving it (only the authority actually processes purchases)
 ## — same authority-computes/everyone-displays split as Shelf's `filled`.
@@ -46,15 +70,19 @@ var total_sold: int = 0
 ## Authority-only bookkeeping: carry_id -> seconds spent continuously in
 ## range at THIS cashier so far. Not replicated — only the authority needs
 ## it, the same "no sync needed" reasoning as Shelf.gd's _occupant array.
-## Entries for a customer who leaves range (or despawns) just go stale and
-## sit here harmlessly rather than being actively cleaned up — negligible
-## at this session's scale, not worth extra bookkeeping to avoid.
+## Only ever has an entry for _queue[0] now (the front-of-line customer is
+## the only one ever checked for a purchase) — entries for a customer who
+## leaves range or loses their front-of-line spot just go stale and sit
+## here harmlessly, negligible at this session's scale.
 var _waiting: Dictionary = {}
 
 func _ready() -> void:
 	body = get_parent()
 	body.add_to_group("cashier")
 	checkout = body.get_node("Checkout")
+	for child in body.get_children():
+		if child is Marker2D and child.name.begins_with("Queue"):
+			queue_slots.append(child)
 	set_multiplayer_authority(1)
 
 	var sync := MultiplayerSynchronizer.new()
@@ -68,30 +96,81 @@ func _ready() -> void:
 	add_child(sync)
 
 ## Called by Main.gd's _configure_cashiers() — see `active`'s own comment.
+## Hiding the whole body cascades to its children (Polygon2D, the NPC
+## visual — see Cashier.tscn), so an inactive station's cashier NPC and
+## queue markers all disappear together with no extra code needed here.
 func set_active(v: bool) -> void:
 	active = v
 	body.visible = v
 
+## Called by Customer.gd's _shopper_input() once, the moment a shopper
+## commits to this cashier. Idempotent (a customer already in line calling
+## again is a no-op) — cheap safety net, not something expected to happen
+## in the normal flow.
+func request_join_queue(carry_id: int) -> void:
+	if carry_id in _queue:
+		return
+	_queue.append(carry_id)
+
+## Called by Customer.gd's _leave() on whatever cashier it was queued at,
+## covering every exit path (successful purchase — see _complete_purchase()
+## below, which calls this too — lifetime timeout, and the day-boundary
+## force-despawn) so a customer that's gone never leaves a permanently
+## stuck gap in the line.
+func leave_queue(carry_id: int) -> void:
+	_queue.erase(carry_id)
+
+## Where carry_id should currently be standing: the checkout counter itself
+## if it's at the front of the line (index 0) or not found (not our
+## problem to resolve here — Customer.gd only ever calls this after
+## joining), otherwise the queue slot matching its position in line.
+## Overflow (more customers queued than physical slots) stacks everyone
+## past the last slot there rather than inventing more positions — a rare
+## edge case at this session's population caps, not worth extra layout
+## logic for.
+func queue_slot_position(carry_id: int) -> Vector2:
+	var idx := _queue.find(carry_id)
+	if idx <= 0:
+		return checkout.global_position
+	var slot_idx: int = idx - 1
+	if slot_idx < queue_slots.size():
+		return queue_slots[slot_idx].global_position
+	return queue_slots[queue_slots.size() - 1].global_position
+
 func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority() or not active:
 		return
-	for customer in get_tree().get_nodes_in_group("customer"):
-		if customer.role != "shopper":
-			continue
-		var carry_id: int = customer.carry_id
-		if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
-			_waiting.erase(carry_id) # stepped out of range — the wait doesn't carry over if they wander back later
-			continue
-		var item := _carried_by(carry_id)
-		if item == null:
-			_waiting.erase(carry_id)
-			continue
-		var elapsed: float = _waiting.get(carry_id, 0.0) + delta
-		if elapsed >= CHECKOUT_WAIT_SECONDS:
-			_waiting.erase(carry_id)
-			_complete_purchase(item)
-		else:
-			_waiting[carry_id] = elapsed
+	# Defensive cleanup: a customer that stopped existing without calling
+	# leave_queue() for some reason (there shouldn't be one, but this is a
+	# cheap guarantee against a permanently jammed line) is dropped here
+	# rather than trusted to have cleaned up after itself.
+	_queue = _queue.filter(func(cid): return _customer_by_carry_id(cid) != null)
+	if _queue.is_empty():
+		return
+	# Only the FRONT of the line is ever checked for a purchase — everyone
+	# else is just walking toward their own queue_slot_position(), driven
+	# entirely from Customer.gd's side, nothing to do for them here.
+	var front_id: int = _queue[0]
+	var customer := _customer_by_carry_id(front_id)
+	if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
+		return # front of line hasn't reached the register yet
+	var item := _carried_by(front_id)
+	if item == null:
+		_queue.pop_front()
+		return
+	var elapsed: float = _waiting.get(front_id, 0.0) + delta
+	if elapsed >= CHECKOUT_WAIT_SECONDS:
+		_waiting.erase(front_id)
+		_complete_purchase(item, front_id)
+		_queue.pop_front()
+	else:
+		_waiting[front_id] = elapsed
+
+func _customer_by_carry_id(carry_id: int) -> Node:
+	for c in get_tree().get_nodes_in_group("customer"):
+		if c.get("carry_id") == carry_id:
+			return c
+	return null
 
 func _carried_by(carry_id: int) -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
@@ -100,7 +179,16 @@ func _carried_by(carry_id: int) -> Node2D:
 			return obj
 	return null
 
-func _complete_purchase(item: Node2D) -> void:
+## carry_id (added this session, for the queue rework) is who was just
+## served — the caller (_physics_process above) already pops _queue's
+## front entry right after this returns, so this only needs to tell the
+## CUSTOMER a purchase completed, via record_purchase() — multi-item
+## shopping trips (playtest request) need that so a shopper knows to look
+## for its next item instead of assuming its trip is over.
+func _complete_purchase(item: Node2D, carry_id: int) -> void:
 	total_sold += 1
 	print("[%s] purchase complete: %s (total_sold=%d)" % [body.name, item.name, total_sold])
 	item.queue_free()
+	var customer := _customer_by_carry_id(carry_id)
+	if customer:
+		customer.record_purchase()
