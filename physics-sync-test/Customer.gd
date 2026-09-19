@@ -105,6 +105,19 @@ const CashierScript := preload("res://Cashier.gd")
 ## margin) instead of a second hardcoded number means the two can't drift
 ## out of sync like that again.
 const CHECKOUT_STOP_RANGE := CashierScript.PURCHASE_RANGE - 15.0
+## GENERIC STUCK-DETECTION (playtest request): rather than patching each
+## specific obstacle that can block a customer's straight "walk directly at
+## the target" path (a cashier counter, a shelf just stocked from, another
+## customer, a player, whatever gets added later — this project has no
+## navigation mesh/pathfinding to route around any of them), this applies
+## uniformly to EVERY customer (shopper or disruptive) and EVERY target
+## (an item, the checkout queue, a browse point, a disruptive retarget) by
+## watching actual position over time instead of trusting the intended
+## direction. See _apply_stuck_avoidance() below for the mechanism.
+const STALL_CHECK_INTERVAL := 0.5 # how often to sample position for progress
+const STALL_DISTANCE_THRESHOLD := 6.0 # must move at least this far per check to count as "making progress"
+const STALL_CHECKS_TO_TRIGGER := 3 # consecutive no-progress checks before reacting (~1.5s)
+const DETOUR_DURATION := 1.0 # how long to hold a sideways detour before aiming at the target directly again
 
 @export var role := "shopper" # "shopper" or "disruptive"
 @export var carry_id := 0 # unique negative int, assigned by Main.gd — see Carryable.gd's _find_carrier()
@@ -145,11 +158,19 @@ var _carry_timer := 0.0
 var _retarget_timer := 0.0
 var _retarget_pos := Vector2.ZERO
 
+# --- generic stuck-detection state (see STALL_* consts above) ---
+var _stall_check_timer := 0.0
+var _stall_check_pos := Vector2.ZERO
+var _stall_count := 0
+var _detour_dir := Vector2.ZERO # ZERO = not currently detouring
+var _detour_timer := 0.0
+
 func _ready() -> void:
 	add_to_group("customer")
 	reset_physics_interpolation()
 	set_physics_process(true)
 	target_position = position
+	_stall_check_pos = position # seed with spawn position, not ZERO — a ZERO default would register a false "moved a huge distance" on the very first check
 	print("[%s] spawned role=%s carry_id=%d pos=%s" % [name, role, carry_id, position])
 	# Shopper = calm blue-green ("good pressure"), disruptive = red ("bad
 	# pressure") — visually distinct at a glance, same reasoning as
@@ -210,6 +231,7 @@ func _physics_process(delta: float) -> void:
 		_shopper_maybe_interact()
 	else:
 		dir = _disruptive_input(delta)
+	dir = _apply_stuck_avoidance(dir, delta)
 
 	if dir.length() > 0.1:
 		_last_move_dir = dir.normalized()
@@ -231,6 +253,49 @@ func _physics_process(delta: float) -> void:
 	if role == "disruptive":
 		_push_rigid_bodies(delta)
 	target_position = position
+
+## GENERIC STUCK-DETECTION (playtest request — see the STALL_* consts'
+## own comment for the full reasoning). Wraps whatever direction
+## _shopper_input()/_browse_input()/_disruptive_input() computed — this
+## doesn't know or care WHAT the target was, only whether actually trying
+## to move toward it is producing real movement. Every STALL_CHECK_INTERVAL
+## seconds, compares current position to where it was at the last check:
+## if it moved less than STALL_DISTANCE_THRESHOLD while actively trying to
+## (dir non-zero — a customer intentionally standing still, e.g. waiting at
+## the front of a queue, is NOT "stuck" and must not trigger this), that
+## counts as a stall; STALL_CHECKS_TO_TRIGGER consecutive stalls (~1.5s)
+## means something is physically in the way move_and_slide() is sliding
+## along rather than getting past. The reaction is a temporary sideways
+## detour — perpendicular to the intended direction, random left or right —
+## blended into the steering for DETOUR_DURATION seconds. This project has
+## no navigation mesh to actually repath with (every target-seeking
+## function here is "walk in a straight line at the target," full stop),
+## so "nudge sideways for a bit, then try the direct line again" is the
+## generic fix that works without one — usually enough to clear whatever
+## edge it was snagged on, and if not, the stall counter just starts
+## climbing again and triggers another detour.
+func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
+	if _detour_timer > 0.0:
+		_detour_timer -= delta
+		if _detour_timer <= 0.0:
+			_detour_dir = Vector2.ZERO
+	_stall_check_timer -= delta
+	if _stall_check_timer <= 0.0:
+		_stall_check_timer = STALL_CHECK_INTERVAL
+		var moved := global_position.distance_to(_stall_check_pos)
+		_stall_check_pos = global_position
+		if dir.length() > 0.1 and moved < STALL_DISTANCE_THRESHOLD:
+			_stall_count += 1
+			if _stall_count >= STALL_CHECKS_TO_TRIGGER and _detour_dir == Vector2.ZERO:
+				var perp := dir.orthogonal()
+				_detour_dir = perp if randf() < 0.5 else -perp
+				_detour_timer = DETOUR_DURATION
+				_stall_count = 0
+		else:
+			_stall_count = 0
+	if _detour_dir != Vector2.ZERO and dir.length() > 0.1:
+		return (dir + _detour_dir).normalized()
+	return dir
 
 func _process(delta: float) -> void:
 	if not Net.is_active() or is_multiplayer_authority():

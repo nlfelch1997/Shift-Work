@@ -42,12 +42,12 @@ extends Node2D
 ## agnostic), just backwards art, left for real slot art later rather than
 ## a dozen per-node rotation overrides to un-rotate text in a greybox.
 ##
-## PART 1 — full store layout (Week 6): Main.tscn is 6 uniform ROOM_WIDTH x
+## PART 1 — full store layout (Week 6): Main.tscn is 7 uniform ROOM_WIDTH x
 ## ROOM_HEIGHT rooms in a single left-to-right row sharing one continuous
-## world. Rooms 2-5 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind
-## its own Gate (see Gate.gd) except the Dry-Goods boundary itself — neither
-## it nor the break-room/Entrance boundary before it has a gate at all,
-## since Dry Goods is available from Day 1. Reused
+## world. Rooms 3-6 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind
+## its own Gate (see Gate.gd) except the Dry-Goods boundary itself — no
+## boundary before it (break room/Sidewalk, Sidewalk/Checkout, Checkout/Dry
+## Goods) has a gate at all, since Dry Goods is available from Day 1. Reused
 ## Shelf.tscn/Product.tscn verbatim per the brief's "light re-theming, not
 ## unique content per zone" — each section's shelves are the identical
 ## Shelf1-4 layout Dry Goods already used, just modulate-tinted, and every
@@ -57,36 +57,38 @@ extends Node2D
 ## Player.tscn now carries a Camera2D (see Player.gd) — this project had
 ## no scrolling/camera concept before Part 1 needed one.
 ##
-## ROOM_INDEX MAP, twice-updated by playtest fixes (see the long comment on
-## _despawn_all_customers()/is_break_room_at_x() below for the first one):
-## room 0 is the break room (always open, no Gate, players clock in/reset
-## here every day — see _reset_players_to_break_room()) — it has NEVER had
-## shelves or a cashier, and has NO customer-AI reason to be targeted
-## either (is_break_room_at_x(), used by Customer.gd's wander fallback).
-## Room 1 — PLAYTEST BUG FIX, moved here this session — is the ENTRANCE
-## zone (sidewalk/exterior feel — see RoomBackgrounds/EntranceBg's distinct
-## concrete-gray color), where every customer spawns and where the central
-## checkout lives (CentralCheckout in Main.tscn). Rooms 2-5 are Dry Goods/
-## Meat-Deli/Dairy-Frozen/Bakery.
+## ROOM_INDEX MAP, three-times-updated by playtest fixes (see the long
+## comment on _despawn_all_customers()/is_break_room_at_x() below for the
+## first one): room 0 is the break room (always open, no Gate, players
+## clock in/reset here every day — see _reset_players_to_break_room()) —
+## it has NEVER had shelves or a cashier, and has NO customer-AI reason to
+## be targeted either (is_break_room_at_x(), used by Customer.gd's wander
+## fallback). Room 1 is the SIDEWALK — PLAYTEST BUG FIX, split out this
+## session from what used to be a single dual-purpose "Entrance" room (see
+## below for why) — a genuinely separate outdoor zone (distinct
+## concrete-gray RoomBackgrounds/SidewalkBg) where every customer spawns
+## and physically walks in from. Room 2 is the CHECKOUT vestibule (a
+## different, warmer indoor tone — RoomBackgrounds/EntranceBg), where the
+## central checkout lives (CentralCheckout in Main.tscn) — customers walk
+## Sidewalk -> Checkout -> whichever section they're headed to. Rooms 3-6
+## are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery.
 ##
-## The break room and Entrance used to sit the other way around (Entrance
-## at 0, break room at 1, directly between the Entrance and every section)
-## — that meant every single shopping trip walked THROUGH the break room
-## TWICE (in, then back out to checkout), exactly the "mandatory hallway"
-## is_break_room_at_x()'s exclusion was supposed to prevent, undermining
-## that fix outright rather than just looking wrong. Swapping which of the
-## two sits at the very end (room 0) fixes that: nothing customer-related
-## is ever west of the Entrance, so a customer literally never has
-## anywhere to be that requires crossing room 0 at all — not just "excluded
-## from targeting it," structurally off their path. This project's layout
-## is a strict single left-to-right row with no branching support, so "the
-## dead end behind everything else" is the closest fit to "a separate
-## branch" without inventing new geometry. Also keeps player convenience
-## intact, unlike the alternative of parking the break room past Bakery
-## instead: SPAWN_CENTER is one short room-width from the Entrance either
-## way, not a multi-room hike every single day.
-## ENTRANCE_ROOM_INDEX/BREAK_ROOM_ROOM_INDEX below are the two non-SECTIONS
-## room indices code needs to reason about explicitly.
+## Room 1 used to be a SINGLE room serving both the spawn/sidewalk role and
+## the checkout role at once — cosmetically tinted to read as "outdoor,"
+## but not an actually distinct zone, and a playtest report called that
+## out directly: customers weren't visibly "spawning outside and walking
+## in," they were just already present in the same room as the registers.
+## Splitting it into two real rooms fixes that honestly instead of leaning
+## further on paint. (Separately, and before that: the break room and
+## Entrance/Checkout used to sit the other way around, Entrance at 0 and
+## break room at 1 directly between the Entrance and every section, which
+## forced every shopping trip through the break room twice — fixed by
+## swapping which sits at the dead end; see BREAK_ROOM_ROOM_INDEX's own
+## comment. That fix is unaffected by this one — the break room is still
+## room 0, still behind everything else.)
+## SIDEWALK_ROOM_INDEX/ENTRANCE_ROOM_INDEX/BREAK_ROOM_ROOM_INDEX below are
+## the three non-SECTIONS room indices code needs to reason about
+## explicitly.
 ##
 ## REDESIGNED after playtest feedback: Gate.gd originally sat in a narrow
 ## ~120px doorway cut into two permanent wall segments per boundary, and
@@ -106,33 +108,30 @@ extends Node2D
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
-## Break room center — room_index 0 as of this session's reorder (see the
-## ROOM_INDEX MAP comment above), so this is BREAK_ROOM_ROOM_INDEX *
-## ROOM_WIDTH + (half ROOM_WIDTH) = 0+480 = 480 — happens to be the exact
-## same world position the break room has occupied since before the
-## Entrance zone existed at all, since it's back to being the leftmost
-## room again, just with the Entrance now sandwiched between it and Dry
-## Goods instead of the other way around. Players spawn here, not in Dry
-## Goods: you clock in at the break room and walk out through the Entrance
-## to start your shift — a short walk again (Entrance is the very next
-## room over), not the multi-room hike putting the break room at the FAR
-## end would have cost every player, every day.
+## Break room center — room_index 0 (see the ROOM_INDEX MAP comment above),
+## so this is BREAK_ROOM_ROOM_INDEX * ROOM_WIDTH + (half ROOM_WIDTH) =
+## 0+480 = 480. Players spawn here, not in Dry Goods: you clock in at the
+## break room and walk out through the Sidewalk and Checkout to start your
+## shift — a short walk (Sidewalk is the very next room over), not a
+## multi-room hike.
 const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
 
 const ROOM_WIDTH := 960.0
 const ROOM_HEIGHT := 540.0
-const NUM_ROOMS := 6 # entrance + break room + 4 retail sections, single left-to-right row (see Main.tscn)
+const NUM_ROOMS := 7 # break room + sidewalk + checkout + 4 retail sections, single left-to-right row (see Main.tscn)
 const WORLD_WIDTH := ROOM_WIDTH * NUM_ROOMS
 const WORLD_HEIGHT := ROOM_HEIGHT
-## The two non-retail room indices — see the ROOM_INDEX MAP comment above
-## this file's header. Neither appears in SECTIONS (no gate, no shelves),
-## but both are things other code needs to reason about explicitly:
-## ENTRANCE_ROOM_INDEX is where customers spawn and where the central
-## checkout lives (_store_entrance_pos()/CentralCheckout); BREAK_ROOM_ROOM_
-## INDEX is used by is_break_room_at_x() below to keep customer AI (and
-## stray physics objects — see _rescue_stranded_products()) out of it.
-const ENTRANCE_ROOM_INDEX := 1
+## The three non-retail room indices — see the ROOM_INDEX MAP comment above
+## this file's header. None appear in SECTIONS (no gate, no shelves), but
+## all three are things other code needs to reason about explicitly:
+## SIDEWALK_ROOM_INDEX is where customers spawn (_store_entrance_pos());
+## ENTRANCE_ROOM_INDEX is where the central checkout lives (CentralCheckout
+## in Main.tscn); BREAK_ROOM_ROOM_INDEX is used by is_break_room_at_x()
+## below to keep customer AI (and stray physics objects — see
+## _rescue_stranded_products()) out of it.
 const BREAK_ROOM_ROOM_INDEX := 0
+const SIDEWALK_ROOM_INDEX := 1
+const ENTRANCE_ROOM_INDEX := 2
 ## room_index matches each section's position in Main.tscn's row. required_day
 ## mirrors the brief's Day 1-2 / 3-4 / 5-6 / 7 schedule exactly, and is also
 ## what _configure_gates() below sets on each matching Gate instance by
@@ -140,10 +139,10 @@ const BREAK_ROOM_ROOM_INDEX := 0
 ## comment on why), so this table and the actual physical doors can't
 ## quietly drift apart from each other.
 const SECTIONS := [
-	{"name": "Dry Goods", "node_name": "DryGoods", "room_index": 2, "required_day": 1},
-	{"name": "Meat/Deli", "node_name": "MeatDeli", "room_index": 3, "required_day": 3},
-	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "room_index": 4, "required_day": 5},
-	{"name": "Bakery", "node_name": "Bakery", "room_index": 5, "required_day": 7},
+	{"name": "Dry Goods", "node_name": "DryGoods", "room_index": 3, "required_day": 1},
+	{"name": "Meat/Deli", "node_name": "MeatDeli", "room_index": 4, "required_day": 3},
+	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "room_index": 5, "required_day": 5},
+	{"name": "Bakery", "node_name": "Bakery", "room_index": 6, "required_day": 7},
 ]
 ## Per-section accent color, shared by that section's spawned products
 ## (_spawn_product_node below) and its shelf slot indicators
@@ -1080,34 +1079,30 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	var room_x: float = section["room_index"] * ROOM_WIDTH
 	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(120.0, 360.0))
 
-## UPGRADED this session, replacing the old per-section _customer_entrance_pos():
-## playtest request for a real store entrance — a sidewalk/exterior zone
-## OUTSIDE the store, distinct from any section, that every customer spawns
-## at and physically walks in from, rather than popping into existence at
-## whichever section they're headed to. All customers now spawn HERE
-## regardless of role or eventual target, then use their existing
-## target-picking AI (Customer.gd's _find_stocked_item/_pick_browse_target/
-## _pick_disruptive_target/_find_nearest_cashier — none of that changed,
-## this only moves WHERE they start) to walk toward wherever they're
-## actually headed, the same "just point them at a target position and let
-## the existing straight-line steering handle it" approach already used for
-## every other long walk in this project (e.g. a shopper crossing the whole
-## store to reach a cashier). Placed near the edge of the Entrance zone
-## (ENTRANCE_ROOM_INDEX) closest to the break room, clear of both that
-## boundary and the central checkout stations (which sit further in, at
-## local x=150-650
-## across two staggered rows, y=370/480 — see CentralCheckout in Main.tscn;
-## PLAYTEST BUG FIX: a single tightly-packed row let one station's queue
-## line extend into a NEIGHBORING station's own solid collision box, which
-## could physically snag a customer trying to reach a station that wasn't
-## the very first one in their approach path — staggering across two rows
-## with wide x-spacing means no station's queue markers reach into
-## another's footprint), so a customer visibly walks the length of the
-## sidewalk before ever reaching the checkout row. Small random jitter so
-## several customers spawning together don't stack exactly on top of each
-## other.
+## UPGRADED TWICE this session, replacing the old per-section
+## _customer_entrance_pos(): playtest request for a real store entrance —
+## a genuinely separate outdoor Sidewalk zone (SIDEWALK_ROOM_INDEX, its own
+## room, distinct from the Checkout room the central registers live in —
+## see the ROOM_INDEX MAP comment above this file's header for why they
+## used to be one dual-purpose room and aren't any more), that every
+## customer spawns at and physically walks in from, rather than popping
+## into existence at whichever section they're headed to. All customers
+## spawn HERE regardless of role or eventual target, then use their
+## existing target-picking AI (Customer.gd's _find_stocked_item/
+## _pick_browse_target/_pick_disruptive_target/_find_nearest_cashier — none
+## of that changed, this only moves WHERE they start) to walk toward
+## wherever they're actually headed — Sidewalk, then Checkout (where the
+## central registers sit — see CentralCheckout in Main.tscn — two
+## staggered rows with wide spacing so no station's queue markers reach
+## into a neighbor's collision box), then whichever section, the same
+## "just point them at a target position and let the existing straight-
+## line steering handle it" approach already used for every other long
+## walk in this project. Placed near the edge of the Sidewalk closest to
+## the break room, so a customer visibly walks the Sidewalk's full length
+## before ever reaching the Checkout room. Small random jitter so several
+## customers spawning together don't stack exactly on top of each other.
 func _store_entrance_pos() -> Vector2:
-	var room_x: float = ENTRANCE_ROOM_INDEX * ROOM_WIDTH
+	var room_x: float = SIDEWALK_ROOM_INDEX * ROOM_WIDTH
 	return Vector2(room_x + 80.0 + randf_range(-15.0, 15.0), 270.0 + randf_range(-40.0, 40.0))
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS
