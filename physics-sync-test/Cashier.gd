@@ -124,6 +124,14 @@ func request_join_queue(carry_id: int) -> void:
 func leave_queue(carry_id: int) -> void:
 	_queue.erase(carry_id)
 
+## Public read of how many customers are currently queued here (membership
+## only — see `_queue`'s own comment on why array position isn't serving
+## order). Used by Customer.gd's cashier-picking to spread shoppers across
+## every active register instead of piling onto whichever is geometrically
+## nearest — see that function's own comment for the playtest bug this fixes.
+func queue_length() -> int:
+	return _queue.size()
+
 ## PLAYTEST ROOT-CAUSE FIX: the queue used to be strict join-order — whoever
 ## called request_join_queue() first stayed "at the front" (_queue[0]) no
 ## matter what, even if something delayed them physically (a longer detour,
@@ -172,6 +180,13 @@ func queue_slot_position(carry_id: int) -> Vector2:
 
 func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority() or not active:
+		return
+	# PLAYTEST BUG FIX ("world keeps simulating during the end-of-day
+	# report"): without this, a shopper already standing in PURCHASE_RANGE
+	# when the day ended kept accumulating CHECKOUT_WAIT_SECONDS and could
+	# complete a purchase while the report screen was up — see Customer.gd's
+	# matching freeze for the fuller reasoning.
+	if get_tree().current_scene.is_day_report_active():
 		return
 	# Defensive cleanup: a customer that stopped existing without calling
 	# leave_queue() for some reason (there shouldn't be one, but this is a

@@ -66,8 +66,8 @@ polygon = PackedVector2Array(-460, -250, 460, -250, 460, 250, -460, 250)
 color = Color(0.78, 0.85, 0.78, 1)
 
 [node name="SidewalkBg" type="Polygon2D" parent="RoomBackgrounds"]
-position = Vector2(1440, 270)
-polygon = PackedVector2Array(-460, -250, 460, -250, 460, 250, -460, 250)
+position = Vector2(1770, 270)
+polygon = PackedVector2Array(-120, -150, 120, -150, 120, 150, -120, 150)
 color = Color(0.62, 0.62, 0.65, 1)
 
 [node name="EntranceBg" type="Polygon2D" parent="RoomBackgrounds"]
@@ -229,7 +229,7 @@ horizontal_alignment = 1
 text = "BREAK ROOM"
 
 [node name="Sidewalk" type="Node2D" parent="SectionLabels"]
-position = Vector2(1440, 50)
+position = Vector2(1770, 50)
 
 [node name="Label" type="Label" parent="SectionLabels/Sidewalk"]
 offset_left = -150.0

@@ -319,8 +319,9 @@ const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
 ##
 ## Kept deliberately modest, not matching the CUSTOMER_CAP_BY_TIER ramp:
 ## every additional item is another full round-trip to the now-centralized
-## checkout (see MAX_CARRY_LIFETIME's own comment on how long that walk can
-## be for a far section), so a high target on a late, already-longer
+## checkout (see Customer.gd's LIFETIME_DISTANCE_MULTIPLIER for how a
+## shopper's timeout budget scales with that walk for a far section), so a
+## high target on a late, already-longer
 ## SECTION_TIME_BONUS-extended shift risks shoppers rarely finishing their
 ## whole trip before the clock runs out. Starts scaling at Day 3 (tier 1 —
 ## the same threshold every other tiered system here already uses, not a
@@ -784,6 +785,7 @@ func _start_shift() -> void:
 	# on Day 2+ even though each was individually working correctly for any
 	# customer actually newly spawned.
 	_despawn_all_customers()
+	_reset_shelves_and_products_for_new_day()
 	var grace := _current_customer_grace_period()
 	var duration := _current_shift_duration()
 	_customer_grace_timer = grace
@@ -808,6 +810,35 @@ func _start_shift() -> void:
 func _despawn_all_customers() -> void:
 	for customer in get_tree().get_nodes_in_group("customer"):
 		customer.force_leave()
+
+## Public read of _day_report_active — Customer.gd/Player.gd/Cashier.gd/
+## Shelf.gd all call this (via get_tree().current_scene, same "live scene-
+## tree lookup, no cyclic preload" shape those scripts already use for
+## is_unlocked_at_x()/is_break_room_at_x()) to freeze themselves for the
+## duration of the end-of-day report — PLAYTEST BUG FIX: the report used to
+## leave the whole simulation running underneath it, which is how a
+## customer left an item stranded at checkout when a day ended under it.
+func is_day_report_active() -> bool:
+	return _day_report_active
+
+## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
+## nothing previously reset shelf-fill state or the physical product pool
+## between days — whatever got stocked by the end of Day 1 just carried
+## straight into Day 2 untouched, and since the product cap
+## (_product_baseline()) doesn't grow until MORE sections unlock (Day 3+),
+## Day 2 specifically had no new demand to create either, on top of that.
+## Mirrors _despawn_all_customers()'s shape: force-clear the relevant state
+## at the start of EVERY shift (not just conceptually "Day 1"), so each day
+## starts from a genuine restocking need instead of inheriting wherever the
+## previous day happened to leave off. Shelves are reset FIRST, clearing
+## their own _occupant/filled bookkeeping, before the products themselves
+## are freed — Shelf.gd's own per-tick check would otherwise try to inspect
+## an already-freed object on the very next physics tick.
+func _reset_shelves_and_products_for_new_day() -> void:
+	for shelf_body in shelves:
+		shelf_body.get_node("Shelf").reset()
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		obj.queue_free()
 
 ## Host-only: called the instant the clock hits zero (see _process()'s
 ## shift-timer check). Raises the full-screen end-of-day report (ReportLayer,
@@ -916,7 +947,7 @@ func _restock_products() -> void:
 ## sitting in the break room back into play, rather than leaving it there
 ## forever. A product ends up there one of two ways — a shopper's
 ## _leave()/force_leave() dropping it mid-transit (now rare, see
-## MAX_CARRY_LIFETIME's comment, but not literally impossible), or ordinary
+## Customer.gd's dynamic lifetime budget, but not literally impossible), or ordinary
 ## physics chaos (a push, a throw, a disruptive shove) knocking a free item
 ## across the ungated break-room boundary — and per this session's explicit
 ## request, the fix for that spillage is NOT a wall (Week 6 already removed
@@ -1101,9 +1132,30 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 ## the break room, so a customer visibly walks the Sidewalk's full length
 ## before ever reaching the Checkout room. Small random jitter so several
 ## customers spawning together don't stack exactly on top of each other.
+## PLAYTEST FIX ("Sidewalk is oversized"): the strip is no longer sized/
+## positioned off SIDEWALK_ROOM_INDEX * ROOM_WIDTH (that math still reserves
+## a full room-sized slot for it, but nothing requires the actual walkable
+## zone to fill that whole slot — Sidewalk isn't a SECTIONS entry and has no
+## shelves, so nothing else's gating logic cares how much of the slot it
+## visually occupies). SIDEWALK_STRIP_CENTER/HALF_SIZE below now describe a
+## small rectangle sitting right against the Checkout room's left edge
+## instead — both because a small outdoor entry strip reads better than a
+## full room-sized square (playtest feedback), and because spawning
+## customers this close to Checkout meaningfully shortens the walk every
+## customer has to survive before the dynamic lifetime budget
+## (_extend_lifetime_budget() in Customer.gd) even starts covering it. Must
+## stay in sync BY HAND with Main.tscn's SidewalkBg position/polygon (no
+## inline .tscn comment to cross-reference them with — see this file's
+## header note on why).
+const SIDEWALK_STRIP_CENTER := Vector2(1770.0, 270.0)
+const SIDEWALK_STRIP_HALF_SIZE := Vector2(120.0, 150.0)
+
 func _store_entrance_pos() -> Vector2:
-	var room_x: float = SIDEWALK_ROOM_INDEX * ROOM_WIDTH
-	return Vector2(room_x + 80.0 + randf_range(-15.0, 15.0), 270.0 + randf_range(-40.0, 40.0))
+	var margin := 20.0
+	return SIDEWALK_STRIP_CENTER + Vector2(
+		randf_range(-SIDEWALK_STRIP_HALF_SIZE.x + margin, SIDEWALK_STRIP_HALF_SIZE.x - margin),
+		randf_range(-SIDEWALK_STRIP_HALF_SIZE.y + margin, SIDEWALK_STRIP_HALF_SIZE.y - margin)
+	)
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS
 ## above), the same accent color as that section's shelf slot indicators —

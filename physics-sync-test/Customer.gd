@@ -56,30 +56,29 @@ const RETARGET_INTERVAL := 1.5 # disruptive: how often to pick a new thing to bu
 ## disruptive's retargeting.
 const BROWSE_RETARGET_INTERVAL := 2.5
 const BROWSE_RADIUS := 200.0 # how far a browse destination can land from the shopper's current spot
-const MAX_LIFETIME_SHOPPER := 30.0 # safety valve: if nothing's ever stocked, don't camp forever — leave and let the population cap spawn a replacement
-const MAX_LIFETIME_DISRUPTIVE := 45.0
-## PLAYTEST ROOT-CAUSE FIX: MAX_LIFETIME_SHOPPER (30s, above) was tuned back
-## when checkout was always in the shopper's own section, a few hundred px
-## away — it was never meant to also cover the walk to a now-centralized
-## checkout, which can be 4000+ px one-way from the farthest section
-## (Bakery) at this file's SPEED (90px/s), i.e. 45+ seconds just to get
-## there, before even factoring in the walk IN from the entrance or any
-## browsing beforehand. A shopper hitting the OLD single lifetime cap
-## mid-walk while still holding an item is exactly what read as "customers
-## disappear while carrying an item" in playtest — they weren't disappearing,
-## they were timing out. Fix: once a shopper is actually carrying something
-## (i.e. has committed to a purchase, not just idly searching), its lifetime
-## budget resets and switches to this much larger cap instead of continuing
-## to count against MAX_LIFETIME_SHOPPER — see _physics_process()'s lifetime
-## check and _carry_timer below. Sized generously above the worst-case
-## Bakery-to-Entrance round trip (~55-60s of walking alone) rather than
-## tightly, since a cutoff that's merely "usually enough" would just
-## reintroduce the same bug on an unlucky detour. FLAGGED, not a confirmed
-## tuned value — if a centralized checkout this large turns out to make
-## far-section purchases rare/slow even with this budget, the fix might
-## eventually be a different one (e.g. a second, closer checkout), not a
-## bigger number here.
-const MAX_CARRY_LIFETIME := 75.0
+const MAX_LIFETIME_SHOPPER := 30.0 # initial budget before any real target (a stocked item, then its checkout) is ever picked — see _lifetime_budget below for how this grows once one is
+const MAX_LIFETIME_DISRUPTIVE := 45.0 # disruptive never commits to one distant target (its retargets are all local, BROWSE/RETARGET_RADIUS-scale), so this stays a flat cap
+## DYNAMIC LIFETIME BUDGET — PATTERN-LEVEL PLAYTEST ROOT-CAUSE FIX. This is
+## the THIRD round of "customers are timing out" reported after a map-length
+## change (centralized checkout, then the entrance/checkout split, now the
+## Sidewalk room), and each previous round was "fixed" by bumping a flat
+## constant (MAX_LIFETIME_SHOPPER used to also gate the whole walk to a
+## committed item; MAX_CARRY_LIFETIME, formerly here, gated the carry-to-
+## checkout walk) to comfortably cover whatever the map's total length
+## happened to be AT THE TIME — which quietly breaks again the next time a
+## room is added, exactly as it just did. Fixed at the root instead:
+## _lifetime_budget (declared below, replacing the old separate
+## _carry_timer/MAX_CARRY_LIFETIME pair with ONE clock — _lifetime — compared
+## against ONE budget) starts at the flat MAX_LIFETIME_SHOPPER/DISRUPTIVE
+## value above, then _extend_lifetime_budget() grows it, using the ACTUAL
+## straight-line distance from this customer's own spawn point to whatever
+## it just committed to (a stocked item, later that item's checkout),
+## every time _shopper_input() picks one. A shopper walking to a section
+## that just unlocked this session automatically gets a budget sized for
+## THAT walk, whatever the map looks like by then — nothing here to
+## re-tune the next time a room gets added.
+const LIFETIME_DISTANCE_MULTIPLIER := 2.0 # travel time is distance/SPEED; multiplied up to cover browsing detours, the generic stuck-detection's sideways nudges, and time spent standing in a queue — not just a bare straight-line walk
+const LIFETIME_BASE_BUFFER := 15.0 # flat floor added on top of travel time, so an already-close target still gets a reasonable window for pickup fumbling / queue wait / CHECKOUT_WAIT_SECONDS dwell
 ## Week 6 — the defend/shove counter-play (see Player.gd's _try_defend()).
 ## Knocks ANY nearby customer away, not just disruptive ones: this component
 ## stays as ignorant of "which role is being shoved" as it already is of
@@ -148,11 +147,17 @@ var _browse_pos := Vector2.ZERO
 ## items_target in _shopper_input() to decide when to leave satisfied
 ## instead of searching for yet another item.
 var _items_bought := 0
-## Counts UP from 0 only while actually carrying an item toward checkout,
-## reset to 0 whenever not carrying — see MAX_CARRY_LIFETIME's comment for
-## why this needs to be separate from _lifetime (which keeps counting the
-## whole time, including idle browsing, and is tuned for that instead).
-var _carry_timer := 0.0
+## Recorded once in _ready(), never updated again. _extend_lifetime_budget()
+## measures distance FROM here (not from wherever the customer currently
+## happens to be) so the budget reflects the actual worst-case walk for
+## this trip regardless of how much browsing/detouring already happened
+## before the target was picked.
+var _spawn_position := Vector2.ZERO
+## The total _lifetime this customer is allowed before _leave() fires —
+## starts at MAX_LIFETIME_SHOPPER/DISRUPTIVE and only ever grows, via
+## _extend_lifetime_budget(), each time a new, potentially-distant target
+## is committed to. See that constant's own header comment.
+var _lifetime_budget := 0.0
 
 # --- disruptive state ---
 var _retarget_timer := 0.0
@@ -170,6 +175,8 @@ func _ready() -> void:
 	reset_physics_interpolation()
 	set_physics_process(true)
 	target_position = position
+	_spawn_position = position
+	_lifetime_budget = MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
 	_stall_check_pos = position # seed with spawn position, not ZERO — a ZERO default would register a false "moved a huge distance" on the very first check
 	print("[%s] spawned role=%s carry_id=%d pos=%s" % [name, role, carry_id, position])
 	# Shopper = calm blue-green ("good pressure"), disruptive = red ("bad
@@ -194,6 +201,19 @@ func _physics_process(delta: float) -> void:
 		return
 	if not is_multiplayer_authority():
 		return # smoothing happens in _process, see below
+	# PLAYTEST BUG FIX ("world keeps simulating during the end-of-day
+	# report"): the report used to leave every customer's AI running full
+	# speed underneath it — a shopper mid-walk when the day ended could keep
+	# walking, pick up, or even complete a purchase for however long the
+	# report happened to stay up, which is exactly how an item ended up
+	# stranded somewhere unreachable once the NEXT day's force-despawn
+	# dropped whatever that customer was carrying at that point. Freezing
+	# here (before ANY movement/AI/lifetime-timer work below) means a
+	# customer is exactly where the day left it for the whole time the
+	# report is up, and force-despawn on Continue always drops an item
+	# somewhere the customer was actually standing during active play.
+	if get_tree().current_scene.is_day_report_active():
+		return
 
 	if _stun_timer > 0.0:
 		_stun_timer -= delta
@@ -205,24 +225,13 @@ func _physics_process(delta: float) -> void:
 		return # normal shopper/disruptive AI suppressed for the whole stun
 
 	_lifetime += delta
-	# PLAYTEST ROOT-CAUSE FIX — see MAX_CARRY_LIFETIME's own comment: a
-	# shopper actively carrying an item toward checkout is judged against
-	# its OWN, much larger budget (_carry_timer/MAX_CARRY_LIFETIME) instead
-	# of the browsing-tuned _lifetime/MAX_LIFETIME_SHOPPER — the two are
-	# mutually exclusive per tick, never summed, so switching from
-	# browsing to carrying doesn't inherit however much of the OLD budget
-	# was already spent searching.
-	if role == "shopper" and _find_carried_by_me() != null:
-		_carry_timer += delta
-		if _carry_timer > MAX_CARRY_LIFETIME:
-			_leave()
-			return
-	else:
-		_carry_timer = 0.0
-		var max_lifetime := MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
-		if _lifetime > max_lifetime:
-			_leave()
-			return
+	# See _lifetime_budget's own comment / LIFETIME_DISTANCE_MULTIPLIER's
+	# header above: one clock, compared against one budget that grows each
+	# time a new target is committed to, replacing the old separate
+	# browsing-vs-carrying comparisons.
+	if _lifetime > _lifetime_budget:
+		_leave()
+		return
 
 	_interact_cooldown -= delta
 	var dir := Vector2.ZERO
@@ -385,6 +394,18 @@ func request_shove(from_position: Vector2) -> void:
 
 ## --- Shopper -------------------------------------------------------------
 
+## Called the moment _shopper_input() below commits this customer to a new,
+## potentially-distant target — a stocked item to fetch, then later that
+## item's checkout — with the target's CURRENT position. Grows
+## _lifetime_budget (never shrinks it: max() against whatever's already
+## been granted, so a second, nearer target committed to later can't claw
+## back time already promised) to comfortably cover the straight-line walk
+## from spawn to that target. See LIFETIME_DISTANCE_MULTIPLIER's own header
+## comment for the full reasoning.
+func _extend_lifetime_budget(target_pos: Vector2) -> void:
+	var travel_time := _spawn_position.distance_to(target_pos) / SPEED
+	_lifetime_budget = max(_lifetime_budget, _lifetime + LIFETIME_BASE_BUFFER + travel_time * LIFETIME_DISTANCE_MULTIPLIER)
+
 func _shopper_input(delta: float) -> Vector2:
 	var carried := _find_carried_by_me()
 	if carried == null:
@@ -415,6 +436,7 @@ func _shopper_input(delta: float) -> Vector2:
 			_committed_item = _find_stocked_item()
 			if _committed_item == null:
 				return _browse_input(delta) # nothing stocked to buy right now — browse instead of standing frozen
+			_extend_lifetime_budget(_committed_item.global_position)
 		var to_item := _committed_item.global_position - global_position
 		if to_item.length() < PICKUP_RANGE:
 			return Vector2.ZERO
@@ -431,7 +453,9 @@ func _shopper_input(delta: float) -> Vector2:
 		_committed_cashier = _find_nearest_cashier()
 		if _committed_cashier == null:
 			return Vector2.ZERO
-		_committed_cashier.get_node("Cashier").request_join_queue(carry_id)
+		var committed_cashier_comp: Node = _committed_cashier.get_node("Cashier")
+		committed_cashier_comp.request_join_queue(carry_id)
+		_extend_lifetime_budget(committed_cashier_comp.checkout.global_position)
 	var cashier: Node = _committed_cashier.get_node("Cashier")
 	var target_pos: Vector2 = cashier.queue_slot_position(carry_id)
 	var to_target := target_pos - global_position
@@ -579,14 +603,29 @@ func _find_stocked_item() -> Node2D:
 ## uses no longer applies to this one — a cashier's reachability is never
 ## gated by a Gate, only by whether Main.gd's _configure_cashiers() has
 ## currently activated that particular station (see Cashier.gd's `active`).
+## PLAYTEST BUG FIX ("customers only use one of two active registers on Day
+## 2"): this used to just return the geometrically NEAREST active cashier.
+## Harmless with a single station, but every customer walks in from
+## roughly the same direction (the Sidewalk strip), so with several
+## stations active (CASHIER_COUNT_BY_TIER, Day 2+) "nearest" resolved to
+## the SAME one station for nearly every shopper — the others sat empty no
+## matter how long that one line got. Picks by shortest CURRENT queue
+## instead (ties broken by distance, so an empty tie still prefers the
+## closer station) — this naturally spreads shoppers across however many
+## stations happen to be active that day, instead of piling onto whichever
+## one is found/declared first.
 func _find_nearest_cashier() -> Node:
 	var best: Node = null
+	var best_queue_len := INF
 	var best_dist := INF
 	for cashier_body in get_tree().get_nodes_in_group("cashier"):
-		if not cashier_body.get_node("Cashier").active:
+		var cashier: Node = cashier_body.get_node("Cashier")
+		if not cashier.active:
 			continue
+		var queue_len: int = cashier.queue_length()
 		var d := global_position.distance_to(cashier_body.global_position)
-		if d < best_dist:
+		if queue_len < best_queue_len or (queue_len == best_queue_len and d < best_dist):
+			best_queue_len = queue_len
 			best_dist = d
 			best = cashier_body
 	return best

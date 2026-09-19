@@ -145,6 +145,13 @@ func _physics_process(delta: float) -> void:
 		return
 	if not is_multiplayer_authority():
 		return # smoothing now happens in _process, see below
+	# PLAYTEST BUG FIX ("world keeps simulating during the end-of-day
+	# report"): players should freeze along with customer AI for the
+	# duration of the report screen — see Customer.gd's matching freeze for
+	# the fuller reasoning (a customer left an item stranded at checkout
+	# when the day ended under it).
+	if get_tree().current_scene.is_day_report_active():
+		return
 
 	var dir := Vector2.ZERO
 	var interact_pressed := false

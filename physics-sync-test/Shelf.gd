@@ -98,6 +98,12 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority():
 		return
+	# PLAYTEST BUG FIX ("world keeps simulating during the end-of-day
+	# report"): without this, an item mid-SETTLE_TIME when the day ended
+	# could finish settling into a slot while the report screen was up —
+	# see Customer.gd's matching freeze for the fuller reasoning.
+	if get_tree().current_scene.is_day_report_active():
+		return
 	for i in slots.size():
 		if _occupant[i] != null:
 			_recheck_occupied(i)
@@ -190,6 +196,20 @@ func _color_matches(obj: Node) -> bool:
 func apply_accent_color() -> void:
 	for slot in slots:
 		slot.get_node("Indicator").default_color = accent_color
+
+## Called by Main.gd at the start of every new day
+## (_reset_shelves_and_products_for_new_day()) — playtest root-cause fix for
+## "Day 2 starts fully stocked, nothing to do": nothing previously reset a
+## shelf's fill state between days, so whatever got stocked during the
+## previous day just carried over untouched. Clears this shelf back to
+## fully empty; the CALLER is responsible for actually removing the
+## physical objects that were occupying these slots — this only forgets
+## the shelf's OWN bookkeeping, it doesn't touch any object directly.
+func reset() -> void:
+	for i in slots.size():
+		_occupant[i] = null
+		filled[i] = false
+		_settle_timers[i] = 0.0
 
 func contains(obj: Node) -> bool:
 	return obj in _occupant
