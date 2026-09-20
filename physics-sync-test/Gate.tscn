@@ -3,7 +3,7 @@
 [ext_resource type="Script" path="res://Gate.gd" id="1"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_gate"]
-size = Vector2(20, 500)
+size = Vector2(20, 540)
 
 [node name="GateBody" type="StaticBody2D"]
 
@@ -13,7 +13,7 @@ shape = SubResource("RectangleShape2D_gate")
 [node name="Locked" type="Node2D" parent="."]
 
 [node name="Line" type="Line2D" parent="Locked"]
-points = PackedVector2Array(0, -250, 0, 250)
+points = PackedVector2Array(0, -270, 0, 270)
 width = 4.0
 default_color = Color(0.8, 0.2, 0.2, 0.7)
 

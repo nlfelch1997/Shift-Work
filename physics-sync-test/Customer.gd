@@ -520,7 +520,7 @@ func _browse_input(delta: float) -> Vector2:
 func _pick_browse_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
-		if not _is_section_unlocked(shelf_body.global_position.x):
+		if not _is_section_unlocked(shelf_body.global_position):
 			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var slot_pos = shelf.nearest_empty_slot_position(global_position)
@@ -536,19 +536,37 @@ func _pick_browse_target() -> Vector2:
 ## fallback had no such guarantee — a shopper/disruptive customer standing
 ## near the break room's boundary could roll a wander target that happened
 ## to fall inside it, for no reason at all (see Main.gd's
-## is_break_room_at_x() for the fuller story on why that's actively
+## is_break_room_at_pos() for the fuller story on why that's actively
 ## harmful, not just odd-looking). Nudges a candidate that lands inside the
 ## break room out to whichever edge is closer instead of picking a whole
 ## new random point — keeps the wander feeling like a small correction, not
-## a teleport.
+## a teleport. UPGRADED to 2D alongside Main.gd's is_break_room_at_pos():
+## the break room is now a grid CELL (a column range AND a row range), not
+## just an x-range, so "closer edge" means whichever of the cell's four
+## sides — not just left/right — the candidate is actually nearest to.
 func _keep_outside_break_room(pos: Vector2) -> Vector2:
 	var main = get_tree().current_scene
-	if not main.is_break_room_at_x(pos.x):
+	if not main.is_break_room_at_pos(pos):
 		return pos
-	var room_x_start: float = main.BREAK_ROOM_ROOM_INDEX * main.ROOM_WIDTH
+	var cell: Vector2i = main.BREAK_ROOM_GRID_POS
+	var room_x_start: float = cell.x * main.ROOM_WIDTH
 	var room_x_end: float = room_x_start + main.ROOM_WIDTH
-	var mid := (room_x_start + room_x_end) * 0.5
-	pos.x = room_x_start - 20.0 if pos.x < mid else room_x_end + 20.0
+	var room_y_start: float = cell.y * main.ROOM_HEIGHT
+	var room_y_end: float = room_y_start + main.ROOM_HEIGHT
+	# Distance to each of the four edges; push out through whichever is nearest.
+	var d_left := pos.x - room_x_start
+	var d_right := room_x_end - pos.x
+	var d_top := pos.y - room_y_start
+	var d_bottom := room_y_end - pos.y
+	var smallest: float = min(min(d_left, d_right), min(d_top, d_bottom))
+	if smallest == d_left:
+		pos.x = room_x_start - 20.0
+	elif smallest == d_right:
+		pos.x = room_x_end + 20.0
+	elif smallest == d_top:
+		pos.y = room_y_start - 20.0
+	else:
+		pos.y = room_y_end + 20.0
 	return pos
 
 ## Week 6 Part 1 follow-up (playtest feedback): every target search below
@@ -567,8 +585,8 @@ func _keep_outside_break_room(pos: Vector2) -> Vector2:
 ## (see Player.gd's WORLD_WIDTH/HEIGHT comment for the same reasoning).
 ## get_tree().current_scene is a live node reference, not a parse-time
 ## import, so it doesn't have that restriction.
-func _is_section_unlocked(world_x: float) -> bool:
-	return get_tree().current_scene.is_unlocked_at_x(world_x)
+func _is_section_unlocked(world_pos: Vector2) -> bool:
+	return get_tree().current_scene.is_unlocked_at_pos(world_pos)
 
 func _find_carried_by_me() -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
@@ -585,7 +603,7 @@ func _find_stocked_item() -> Node2D:
 	var best: Node2D = null
 	var best_dist := INF
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
-		if not _is_section_unlocked(shelf_body.global_position.x):
+		if not _is_section_unlocked(shelf_body.global_position):
 			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var occ: RigidBody2D = shelf.any_filled_object()
@@ -649,7 +667,7 @@ func _disruptive_input(delta: float) -> Vector2:
 func _pick_disruptive_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
-		if not _is_section_unlocked(shelf_body.global_position.x):
+		if not _is_section_unlocked(shelf_body.global_position):
 			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var occ: RigidBody2D = shelf.any_filled_object()
