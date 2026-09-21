@@ -23,24 +23,56 @@ extends Node2D
 ## every explanation that would otherwise live next to Main.tscn's node
 ## definitions lives here instead.
 ##
-## NOTE on each section's Shelf3/Shelf4 (Week 6 greybox layout, now reused
-## across every section — see Part 1 below): a 180° rotation flips
-## Shelf.gd's slots (local y=-70, i.e. "in front of" an unrotated shelf
-## toward -y) to the opposite side, so these two face DOWN into the room
-## the same way Shelf1/2 face UP into it. Checked against Shelf.gd's own
-## collision math, not guessed: body spans local y 42-108 there, slots land
-## at local y=130, both clear of the top wall (inner edge local y=20) and
-## of this file's per-section product spawn band (local y 120-360 — see
-## _spawn_pos_in_section below). Result: a shelved wall on both sides of
-## each room forms one legible central aisle, without interior divider
-## walls inside a section whose collision shapes there's no way to verify
-## visually in this environment (no Godot binary here to actually run and
-## look at it). KNOWN COSMETIC QUIRK, not a bug: each slot's Indicator
-## outline and "C" Prompt label (Shelf.tscn) rotate along with the 180°
-## parent, so they render upside-down on these shelves — functionally
-## identical either way (Shelf.gd's placement math is orientation-
-## agnostic), just backwards art, left for real slot art later rather than
-## a dozen per-node rotation overrides to un-rotate text in a greybox.
+## NOTE on each section's Shelf3/Shelf4 (Week 6 greybox layout, reused
+## across Meat/Deli, Dairy/Frozen, and Bakery — see Part 1 below): a 180°
+## rotation flips Shelf.gd's slots (local y=-70, i.e. "in front of" an
+## unrotated shelf toward -y) to the opposite side, so these two face DOWN
+## into the room the same way Shelf1/2 face UP into it. Checked against
+## Shelf.gd's own collision math, not guessed: body spans local y 42-108
+## there, slots land at local y=130, both clear of the top wall (inner
+## edge local y=20) and of this file's per-section product spawn band
+## (local y 120-360 — see _spawn_pos_in_section below). Result: a shelved
+## wall on both sides of each room forms one legible central aisle,
+## without interior divider walls inside a section whose collision shapes
+## there's no way to verify visually in this environment (no Godot binary
+## here to actually run and look at it). KNOWN COSMETIC QUIRK, not a bug:
+## each slot's Indicator outline and "C" Prompt label (Shelf.tscn) rotate
+## along with the parent, so they render upside-down at 180° (or sideways
+## at ±90°, see Dry Goods below) — functionally identical either way
+## (Shelf.gd's placement math is orientation-agnostic: every check it does
+## — capture radius, color-matching, nearest-slot search — reads
+## global_position and the object's own color, never a hardcoded facing —
+## so no shelf-specific code anywhere needs to know or care which way a
+## shelf is rotated), just backwards/sideways art, left for real slot art
+## later rather than a dozen per-node rotation overrides to fix text
+## orientation in a greybox.
+##
+## DRY GOODS IS THE ONE SECTION THAT DOESN'T USE THE ABOVE PATTERN.
+## PLAYTEST ROOT-CAUSE FIX ("customers can only approach shelves from
+## behind, sway stuck at them"): the up/down-facing pattern above only
+## works because Meat/Deli, Dairy/Frozen, and Bakery are all entered
+## HORIZONTALLY (their only customer-reachable connection is an east-west
+## boundary with the hub or with Dry Goods — see the GRID MAP comment
+## below), perpendicular to their shelves' vertical facing, so a customer
+## walking through the aisle reaches a shelf's front without ever crossing
+## its own collision box. Dry Goods is entered VERTICALLY instead — its
+## only customer-reachable connection is its SOUTH edge, to the hub — so
+## the same up/down-facing layout would need a customer to walk THROUGH
+## Shelf1/2's box to reach their north-facing fronts, since those two sit
+## nearest the entrance with their fronts pointed away from it. Dry
+## Goods' 4 shelves are instead rotated ±90° (1.57079633 / 4.71238898) to
+## flank the EAST and WEST walls, fronts facing sideways into a
+## north-south aisle — perpendicular to the south entrance, the same
+## structural relationship the other three sections already have to
+## their own entrances, just rotated a quarter turn to match Dry Goods'
+## own entrance direction. Verified clear of both the product spawn band
+## and the room's interior bounds by direct calculation (rotating the
+## collision box and slot offsets by hand, not guessed): Shelf1/2 (west,
+## y=130/410, rotation 1.57079633) box lands at world x:[1042,1108],
+## y:[40,220]/[320,500]; Shelf3/4 (east, same y's, rotation 4.71238898)
+## box lands at x:[1772,1838]. Both clear of the spawn band (x:[1140,1740],
+## y:[120,360]) and well inside the room's interior (x:[980,1900],
+## y:[20,520]).
 ##
 ## PART 1 — full store layout (Week 6): originally Main.tscn was 7 uniform
 ## ROOM_WIDTH x ROOM_HEIGHT rooms in a single left-to-right ROW sharing one

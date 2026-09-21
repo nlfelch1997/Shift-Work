@@ -154,18 +154,20 @@ text = "EMPLOYEE OF THE MONTH"
 [node name="DryGoods" type="Node2D" parent="Sections"]
 
 [node name="Shelf1" parent="Sections/DryGoods" instance=ExtResource("2")]
-position = Vector2(1180, 480)
+position = Vector2(1060, 130)
+rotation = 1.57079633
 
 [node name="Shelf2" parent="Sections/DryGoods" instance=ExtResource("2")]
-position = Vector2(1700, 480)
+position = Vector2(1060, 410)
+rotation = 1.57079633
 
 [node name="Shelf3" parent="Sections/DryGoods" instance=ExtResource("2")]
-position = Vector2(1180, 60)
-rotation = 3.14159265
+position = Vector2(1820, 130)
+rotation = 4.71238898
 
 [node name="Shelf4" parent="Sections/DryGoods" instance=ExtResource("2")]
-position = Vector2(1700, 60)
-rotation = 3.14159265
+position = Vector2(1820, 410)
+rotation = 4.71238898
 
 [node name="MeatDeli" type="Node2D" parent="Sections"]
 
