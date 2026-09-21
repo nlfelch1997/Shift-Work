@@ -113,8 +113,29 @@ const CHECKOUT_STOP_RANGE := CashierScript.PURCHASE_RANGE - 15.0
 ## (an item, the checkout queue, a browse point, a disruptive retarget) by
 ## watching actual position over time instead of trusting the intended
 ## direction. See _apply_stuck_avoidance() below for the mechanism.
+##
+## PLAYTEST ROOT-CAUSE FIX ("customers getting stuck behind shelves"): the
+## metric below used to be RAW distance moved per check, in any direction —
+## which is exactly the wrong test against a shelf specifically. A shelf's
+## collision box (180x66, see Shelf.tscn) is long and thin compared to a
+## customer (28x28) or another customer/player, so a customer approaching
+## one at anything but a dead-on angle doesn't stop against it, it SLIDES
+## along its face — move_and_slide()'s normal, correct behavior for hitting
+## a wall at an angle. That sliding easily covers more than
+## STALL_DISTANCE_THRESHOLD per check, so the raw-distance metric read it as
+## "still making progress" indefinitely: a customer could crawl along a
+## shelf's 180px face for as long as its lifetime budget lasted without the
+## stall counter ever incrementing, since it never stopped moving, it just
+## never got any closer to where it was actually trying to go. Other
+## obstacles (a cashier, another customer, a player) are compact enough that
+## hitting them reads as a genuine stop, which is why this read as a
+## shelf-specific bug rather than a generic one. Fixed by measuring
+## progress PROJECTED ONTO the direction the customer is actually trying to
+## move (see _apply_stuck_avoidance()'s dot-product check) instead of raw
+## displacement — sliding sideways along a shelf now correctly nets close to
+## zero progress toward the target, however far it actually traveled.
 const STALL_CHECK_INTERVAL := 0.5 # how often to sample position for progress
-const STALL_DISTANCE_THRESHOLD := 6.0 # must move at least this far per check to count as "making progress"
+const STALL_DISTANCE_THRESHOLD := 6.0 # must gain at least this much progress ALONG the intended direction per check to count as "making progress" — not just move, in any direction, this far (see this section's own root-cause comment)
 const STALL_CHECKS_TO_TRIGGER := 3 # consecutive no-progress checks before reacting (~1.5s)
 const DETOUR_DURATION := 1.0 # how long to hold a sideways detour before aiming at the target directly again
 
@@ -264,25 +285,29 @@ func _physics_process(delta: float) -> void:
 	target_position = position
 
 ## GENERIC STUCK-DETECTION (playtest request — see the STALL_* consts'
-## own comment for the full reasoning). Wraps whatever direction
+## own comment for the full reasoning, including the shelf-sliding
+## root-cause fix to the metric itself). Wraps whatever direction
 ## _shopper_input()/_browse_input()/_disruptive_input() computed — this
 ## doesn't know or care WHAT the target was, only whether actually trying
-## to move toward it is producing real movement. Every STALL_CHECK_INTERVAL
-## seconds, compares current position to where it was at the last check:
-## if it moved less than STALL_DISTANCE_THRESHOLD while actively trying to
-## (dir non-zero — a customer intentionally standing still, e.g. waiting at
-## the front of a queue, is NOT "stuck" and must not trigger this), that
-## counts as a stall; STALL_CHECKS_TO_TRIGGER consecutive stalls (~1.5s)
-## means something is physically in the way move_and_slide() is sliding
-## along rather than getting past. The reaction is a temporary sideways
-## detour — perpendicular to the intended direction, random left or right —
-## blended into the steering for DETOUR_DURATION seconds. This project has
-## no navigation mesh to actually repath with (every target-seeking
-## function here is "walk in a straight line at the target," full stop),
-## so "nudge sideways for a bit, then try the direct line again" is the
-## generic fix that works without one — usually enough to clear whatever
-## edge it was snagged on, and if not, the stall counter just starts
-## climbing again and triggers another detour.
+## to move toward it is producing real progress. Every STALL_CHECK_INTERVAL
+## seconds, projects how far the customer has actually moved onto the
+## direction it was trying to move in (a dot product, not a raw distance —
+## see the STALL_DISTANCE_THRESHOLD comment for why raw distance let a
+## customer sliding along a shelf's face pass this check indefinitely): if
+## that projected progress is less than STALL_DISTANCE_THRESHOLD while
+## actively trying to move (dir non-zero — a customer intentionally
+## standing still, e.g. waiting at the front of a queue, is NOT "stuck" and
+## must not trigger this), that counts as a stall; STALL_CHECKS_TO_TRIGGER
+## consecutive stalls (~1.5s) means something is physically in the way
+## move_and_slide() is sliding along rather than getting past. The reaction
+## is a temporary sideways detour — perpendicular to the intended
+## direction, random left or right — blended into the steering for
+## DETOUR_DURATION seconds. This project has no navigation mesh to actually
+## repath with (every target-seeking function here is "walk in a straight
+## line at the target," full stop), so "nudge sideways for a bit, then try
+## the direct line again" is the generic fix that works without one —
+## usually enough to clear whatever edge it was snagged on, and if not, the
+## stall counter just starts climbing again and triggers another detour.
 func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 	if _detour_timer > 0.0:
 		_detour_timer -= delta
@@ -291,9 +316,16 @@ func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 	_stall_check_timer -= delta
 	if _stall_check_timer <= 0.0:
 		_stall_check_timer = STALL_CHECK_INTERVAL
-		var moved := global_position.distance_to(_stall_check_pos)
+		var displacement := global_position - _stall_check_pos
 		_stall_check_pos = global_position
-		if dir.length() > 0.1 and moved < STALL_DISTANCE_THRESHOLD:
+		# Progress ALONG the intended heading, not raw distance in any
+		# direction — sliding sideways along a long obstacle like a shelf
+		# can rack up plenty of raw distance while netting close to zero
+		# progress toward the target, which is exactly the "stuck" case
+		# this whole system exists to catch (see this function's own header
+		# comment and the STALL_DISTANCE_THRESHOLD comment for the story).
+		var progress := displacement.dot(dir.normalized()) if dir.length() > 0.1 else 0.0
+		if dir.length() > 0.1 and progress < STALL_DISTANCE_THRESHOLD:
 			_stall_count += 1
 			if _stall_count >= STALL_CHECKS_TO_TRIGGER and _detour_dir == Vector2.ZERO:
 				var perp := dir.orthogonal()
@@ -528,7 +560,7 @@ func _pick_browse_target() -> Vector2:
 			candidates.append(slot_pos)
 	if candidates.is_empty() or randf() < 0.3:
 		var wander := global_position + Vector2(randf_range(-BROWSE_RADIUS, BROWSE_RADIUS), randf_range(-BROWSE_RADIUS, BROWSE_RADIUS))
-		return _keep_outside_break_room(wander)
+		return _keep_outside_excluded_zones(wander)
 	return candidates[randi() % candidates.size()]
 
 ## PLAYTEST ROOT-CAUSE FIX: shelf/cashier candidates above can never land in
@@ -537,18 +569,33 @@ func _pick_browse_target() -> Vector2:
 ## near the break room's boundary could roll a wander target that happened
 ## to fall inside it, for no reason at all (see Main.gd's
 ## is_break_room_at_pos() for the fuller story on why that's actively
-## harmful, not just odd-looking). Nudges a candidate that lands inside the
-## break room out to whichever edge is closer instead of picking a whole
+## harmful, not just odd-looking). Nudges a candidate that lands inside an
+## excluded zone out to whichever edge is closer instead of picking a whole
 ## new random point — keeps the wander feeling like a small correction, not
 ## a teleport. UPGRADED to 2D alongside Main.gd's is_break_room_at_pos():
-## the break room is now a grid CELL (a column range AND a row range), not
+## an excluded zone is a grid CELL (a column range AND a row range), not
 ## just an x-range, so "closer edge" means whichever of the cell's four
 ## sides — not just left/right — the candidate is actually nearest to.
-func _keep_outside_break_room(pos: Vector2) -> Vector2:
+##
+## GENERALIZED this session (PLAYTEST BUG FIX "customers can enter
+## Storage") from a break-room-only check to a shared helper covering every
+## AI-excluded zone: Storage is player-only for now (no forklift/delivery
+## system exists yet for a customer to plausibly interact with anything in
+## there), same "exclusion zone, not a physical door" treatment the break
+## room already established, so it plugs into the exact same nudge rather
+## than needing its own parallel copy of this logic.
+func _keep_outside_excluded_zones(pos: Vector2) -> Vector2:
 	var main = get_tree().current_scene
-	if not main.is_break_room_at_pos(pos):
-		return pos
-	var cell: Vector2i = main.BREAK_ROOM_GRID_POS
+	if main.is_break_room_at_pos(pos):
+		return _push_out_of_cell(pos, main.BREAK_ROOM_GRID_POS, main)
+	if main.is_storage_at_pos(pos):
+		return _push_out_of_cell(pos, main.STORAGE_GRID_POS, main)
+	return pos
+
+## Shared by every branch of _keep_outside_excluded_zones() above — nudges
+## `pos` out through whichever of `cell`'s four edges is nearest, 20px past
+## the boundary so the result doesn't land right back on the line.
+func _push_out_of_cell(pos: Vector2, cell: Vector2i, main) -> Vector2:
 	var room_x_start: float = cell.x * main.ROOM_WIDTH
 	var room_x_end: float = room_x_start + main.ROOM_WIDTH
 	var room_y_start: float = cell.y * main.ROOM_HEIGHT
@@ -568,6 +615,18 @@ func _keep_outside_break_room(pos: Vector2) -> Vector2:
 	else:
 		pos.y = room_y_end + 20.0
 	return pos
+
+## Wraps Main.gd's is_storage_at_pos() the same way _is_section_unlocked()
+## below wraps is_unlocked_at_pos() — see that function's own comment for
+## why this is a live scene-tree lookup rather than a preload. Used by
+## _pick_disruptive_target() to keep a player standing inside Storage from
+## being offered as a chase target: Storage has no shelves/cashier, so
+## every OTHER candidate source there is already naturally empty, but a
+## disruptive customer's player-candidate list has no location filter of
+## its own, and a player IS allowed in Storage (it's player-only, not
+## fully unreachable).
+func _is_storage(world_pos: Vector2) -> bool:
+	return get_tree().current_scene.is_storage_at_pos(world_pos)
 
 ## Week 6 Part 1 follow-up (playtest feedback): every target search below
 ## (this one, _find_stocked_item, _find_nearest_cashier,
@@ -664,6 +723,17 @@ func _disruptive_input(delta: float) -> Vector2:
 ## "actively contribute to chaos" per the brief, not neutral wandering —
 ## with a chance of a plain random nearby point so it doesn't read as
 ## perfectly homing in every single retarget.
+##
+## PLAYTEST BUG FIX ("customers can enter Storage"): the player-candidate
+## loop below has no location filter of its own, unlike every other
+## candidate source here (shelf/cashier searches are already empty in
+## Storage since neither exists there) — a player IS allowed in Storage
+## (it's player-only, not fully unreachable), so without this check a
+## disruptive customer could still get a legitimate-looking committed
+## target that walks it straight into Storage to chase them. Skipped
+## outright, same "no awareness it exists" treatment _is_section_unlocked()
+## already gives a locked section's shelves/cashiers, rather than only
+## catching it after the fact.
 func _pick_disruptive_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
@@ -674,8 +744,9 @@ func _pick_disruptive_target() -> Vector2:
 		if occ:
 			candidates.append(occ.global_position)
 	for p in get_tree().get_nodes_in_group("player"):
-		candidates.append(p.global_position)
+		if not _is_storage(p.global_position):
+			candidates.append(p.global_position)
 	if candidates.is_empty() or randf() < 0.3:
 		var wander := global_position + Vector2(randf_range(-150.0, 150.0), randf_range(-150.0, 150.0))
-		return _keep_outside_break_room(wander)
+		return _keep_outside_excluded_zones(wander)
 	return candidates[randi() % candidates.size()]
