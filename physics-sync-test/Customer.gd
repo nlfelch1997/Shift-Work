@@ -138,6 +138,26 @@ const STALL_CHECK_INTERVAL := 0.5 # how often to sample position for progress
 const STALL_DISTANCE_THRESHOLD := 6.0 # must gain at least this much progress ALONG the intended direction per check to count as "making progress" — not just move, in any direction, this far (see this section's own root-cause comment)
 const STALL_CHECKS_TO_TRIGGER := 3 # consecutive no-progress checks before reacting (~1.5s)
 const DETOUR_DURATION := 1.0 # how long to hold a sideways detour before aiming at the target directly again
+## PLAYTEST ROOT-CAUSE FIX ("customers sway side-to-side stuck at shelves,
+## can't escape"): each detour episode used to pick its side (left/right of
+## the intended direction) with an independent coin flip, with nothing
+## remembering the previous episode's choice. Against a compact obstacle
+## (a cashier, a player, another customer) one DETOUR_DURATION-long episode
+## is enough to slip past regardless, so this never showed up. Against a
+## wide obstacle needing more than one episode's worth of sideways travel
+## to actually clear — which is also measured pessimistically, since
+## progress is judged against the ORIGINAL target direction the whole
+## time, so a detour that's genuinely working still reads as "stalled"
+## until it's fully clear — a coin flip every episode meant the customer
+## was about as likely to undo an escape already in progress as to
+## continue it, which is exactly the side-to-side sway that got reported.
+## MAX_DETOUR_EPISODES_PER_SIDE is the escape hatch for the other failure
+## mode: if a customer commits to one side and it genuinely doesn't work
+## either (e.g. boxed into a corner), it isn't allowed to commit to that
+## side forever — after this many consecutive episodes without progress
+## resuming, it tries the other side instead. See _apply_stuck_avoidance()
+## for the mechanism.
+const MAX_DETOUR_EPISODES_PER_SIDE := 3
 
 @export var role := "shopper" # "shopper" or "disruptive"
 @export var carry_id := 0 # unique negative int, assigned by Main.gd — see Carryable.gd's _find_carrier()
@@ -190,6 +210,12 @@ var _stall_check_pos := Vector2.ZERO
 var _stall_count := 0
 var _detour_dir := Vector2.ZERO # ZERO = not currently detouring
 var _detour_timer := 0.0
+## Which side of the intended direction is currently committed to, across
+## consecutive detour episodes against the same stall — 1.0, -1.0, or 0.0
+## (nothing committed yet: the next stall picks a fresh random side). See
+## MAX_DETOUR_EPISODES_PER_SIDE's own comment for the full reasoning.
+var _detour_side := 0.0
+var _detour_episodes_on_side := 0 # consecutive episodes spent on _detour_side without progress resuming
 
 func _ready() -> void:
 	add_to_group("customer")
@@ -301,13 +327,26 @@ func _physics_process(delta: float) -> void:
 ## consecutive stalls (~1.5s) means something is physically in the way
 ## move_and_slide() is sliding along rather than getting past. The reaction
 ## is a temporary sideways detour — perpendicular to the intended
-## direction, random left or right — blended into the steering for
-## DETOUR_DURATION seconds. This project has no navigation mesh to actually
-## repath with (every target-seeking function here is "walk in a straight
-## line at the target," full stop), so "nudge sideways for a bit, then try
-## the direct line again" is the generic fix that works without one —
-## usually enough to clear whatever edge it was snagged on, and if not, the
-## stall counter just starts climbing again and triggers another detour.
+## direction — blended into the steering for DETOUR_DURATION seconds. This
+## project has no navigation mesh to actually repath with (every
+## target-seeking function here is "walk in a straight line at the
+## target," full stop), so "nudge sideways for a bit, then try the direct
+## line again" is the generic fix that works without one — usually enough
+## to clear whatever edge it was snagged on, and if not, the stall counter
+## just starts climbing again and triggers another detour episode.
+##
+## PLAYTEST ROOT-CAUSE FIX ("customers sway side-to-side stuck at shelves,
+## can't escape" — see MAX_DETOUR_EPISODES_PER_SIDE's own comment for the
+## full story): which side (left/right of the intended direction) a NEW
+## detour episode picks is no longer an independent coin flip every time.
+## _detour_side remembers the committed side across consecutive episodes
+## against the same stall, so a customer that needs more than one
+## DETOUR_DURATION-long episode to actually clear a wide obstacle keeps
+## making headway in the same direction instead of a fresh 50/50 roll
+## potentially undoing it. It resets back to "undecided" (0.0) the moment
+## real progress resumes (the plain `else` branch below) — that's the
+## signal whatever was blocking is now cleared, so a later, unrelated
+## stall starts fresh rather than being biased by ancient history.
 func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 	if _detour_timer > 0.0:
 		_detour_timer -= delta
@@ -328,12 +367,19 @@ func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 		if dir.length() > 0.1 and progress < STALL_DISTANCE_THRESHOLD:
 			_stall_count += 1
 			if _stall_count >= STALL_CHECKS_TO_TRIGGER and _detour_dir == Vector2.ZERO:
-				var perp := dir.orthogonal()
-				_detour_dir = perp if randf() < 0.5 else -perp
+				if _detour_side == 0.0:
+					_detour_side = 1.0 if randf() < 0.5 else -1.0
+				elif _detour_episodes_on_side >= MAX_DETOUR_EPISODES_PER_SIDE:
+					_detour_side = -_detour_side # that side isn't working either — try the other one
+					_detour_episodes_on_side = 0
+				_detour_dir = dir.orthogonal() * _detour_side
 				_detour_timer = DETOUR_DURATION
+				_detour_episodes_on_side += 1
 				_stall_count = 0
 		else:
 			_stall_count = 0
+			_detour_side = 0.0
+			_detour_episodes_on_side = 0
 	if _detour_dir != Vector2.ZERO and dir.length() > 0.1:
 		return (dir + _detour_dir).normalized()
 	return dir
@@ -616,17 +662,27 @@ func _push_out_of_cell(pos: Vector2, cell: Vector2i, main) -> Vector2:
 		pos.y = room_y_end + 20.0
 	return pos
 
-## Wraps Main.gd's is_storage_at_pos() the same way _is_section_unlocked()
-## below wraps is_unlocked_at_pos() — see that function's own comment for
-## why this is a live scene-tree lookup rather than a preload. Used by
-## _pick_disruptive_target() to keep a player standing inside Storage from
-## being offered as a chase target: Storage has no shelves/cashier, so
-## every OTHER candidate source there is already naturally empty, but a
-## disruptive customer's player-candidate list has no location filter of
-## its own, and a player IS allowed in Storage (it's player-only, not
+## Wraps Main.gd's is_break_room_at_pos()/is_storage_at_pos() the same way
+## _is_section_unlocked() below wraps is_unlocked_at_pos() — see that
+## function's own comment for why this is a live scene-tree lookup rather
+## than a preload. Used by _pick_disruptive_target() to keep a player
+## standing inside an excluded zone from being offered as a chase target:
+## neither zone has a shelf/cashier, so every OTHER candidate source there
+## is already naturally empty, but a disruptive customer's player-candidate
+## list has no location filter of its own, and a player IS allowed in both
+## (Break Room is where players clock in; Storage is player-only, not
 ## fully unreachable).
-func _is_storage(world_pos: Vector2) -> bool:
-	return get_tree().current_scene.is_storage_at_pos(world_pos)
+##
+## PLAYTEST BUG FIX: originally written Storage-only (this session's
+## earlier Storage-exclusion fix), which left the exact same gap open for
+## the Break Room — a player idling there could still be handed to a
+## disruptive customer as a chase target, walking it straight in as a
+## bypass around _keep_outside_excluded_zones()'s wander-nudge. Generalized
+## to check both, matching that function's own "one shared check covering
+## every excluded zone" shape.
+func _is_excluded_zone(world_pos: Vector2) -> bool:
+	var main = get_tree().current_scene
+	return main.is_break_room_at_pos(world_pos) or main.is_storage_at_pos(world_pos)
 
 ## Week 6 Part 1 follow-up (playtest feedback): every target search below
 ## (this one, _find_stocked_item, _find_nearest_cashier,
@@ -724,16 +780,18 @@ func _disruptive_input(delta: float) -> Vector2:
 ## with a chance of a plain random nearby point so it doesn't read as
 ## perfectly homing in every single retarget.
 ##
-## PLAYTEST BUG FIX ("customers can enter Storage"): the player-candidate
-## loop below has no location filter of its own, unlike every other
-## candidate source here (shelf/cashier searches are already empty in
-## Storage since neither exists there) — a player IS allowed in Storage
-## (it's player-only, not fully unreachable), so without this check a
-## disruptive customer could still get a legitimate-looking committed
-## target that walks it straight into Storage to chase them. Skipped
-## outright, same "no awareness it exists" treatment _is_section_unlocked()
-## already gives a locked section's shelves/cashiers, rather than only
-## catching it after the fact.
+## PLAYTEST BUG FIX ("customers can enter Storage"; generalized to also
+## close the identical Break Room gap): the player-candidate loop below has
+## no location filter of its own, unlike every other candidate source here
+## (shelf/cashier searches are already empty in both excluded zones, since
+## neither has one) — a player IS allowed in Break Room or Storage (that's
+## where players clock in / the player-only delivery room), so without
+## this check a disruptive customer could still get a legitimate-looking
+## committed target that walks it straight into either zone to chase them,
+## bypassing the wander-nudge in _keep_outside_excluded_zones() entirely.
+## Skipped outright, same "no awareness it exists" treatment
+## _is_section_unlocked() already gives a locked section's shelves/
+## cashiers, rather than only catching it after the fact.
 func _pick_disruptive_target() -> Vector2:
 	var candidates: Array[Vector2] = []
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
@@ -744,7 +802,7 @@ func _pick_disruptive_target() -> Vector2:
 		if occ:
 			candidates.append(occ.global_position)
 	for p in get_tree().get_nodes_in_group("player"):
-		if not _is_storage(p.global_position):
+		if not _is_excluded_zone(p.global_position):
 			candidates.append(p.global_position)
 	if candidates.is_empty() or randf() < 0.3:
 		var wander := global_position + Vector2(randf_range(-150.0, 150.0), randf_range(-150.0, 150.0))
