@@ -1113,6 +1113,21 @@ func is_unlocked_at_pos(world_pos: Vector2) -> bool:
 func is_break_room_at_pos(world_pos: Vector2) -> bool:
 	return _grid_cell_of(world_pos) == BREAK_ROOM_GRID_POS
 
+## PLAYTEST BUG FIX ("customers can enter Storage"): same exclusion-zone
+## approach as is_break_room_at_pos() above, applied to Storage
+## (STORAGE_GRID_POS) — Storage is a real, physically open, ungated cell
+## (see STORAGE_GRID_POS's own comment: reachable from Day 1, deliberately
+## not day-gated), so nothing about the map itself stops a customer from
+## walking there. It needs to stay player-only for now because there's no
+## forklift/delivery system yet for a customer to plausibly interact with
+## anything inside it — not a physical door (matching Break Room's own
+## "exclusion zone, not a wall" precedent), just customer AI never being
+## given a target there. Customer.gd calls this the same way it calls
+## is_break_room_at_pos() — see that function's own comment for the "public,
+## live scene-tree lookup, no cyclic preload" shape both share.
+func is_storage_at_pos(world_pos: Vector2) -> bool:
+	return _grid_cell_of(world_pos) == STORAGE_GRID_POS
+
 ## 12 = one section's slot count (4 shelves x 3 slots) — see the big
 ## comment block above PRODUCT_PER_EXTRA_PLAYER for why this scales with
 ## unlocked-section-count instead of staying flat, and why that's flagged
