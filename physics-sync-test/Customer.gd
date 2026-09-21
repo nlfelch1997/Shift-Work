@@ -225,7 +225,11 @@ func _ready() -> void:
 	_spawn_position = position
 	_lifetime_budget = MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
 	_stall_check_pos = position # seed with spawn position, not ZERO — a ZERO default would register a false "moved a huge distance" on the very first check
-	print("[%s] spawned role=%s carry_id=%d pos=%s" % [name, role, carry_id, position])
+	# items_target included here (Week 7 multi-item playtest gap): the log
+	# previously had no way to distinguish "this shopper was only ever
+	# asked to buy 1 item" from "it was asked for 2+ but something stopped
+	# it after the first" — see _leave()'s own matching addition below.
+	print("[%s] spawned role=%s carry_id=%d items_target=%d pos=%s" % [name, role, carry_id, items_target, position])
 	# Shopper = calm blue-green ("good pressure"), disruptive = red ("bad
 	# pressure") — visually distinct at a glance, same reasoning as
 	# Player.gd coloring host vs. client differently.
@@ -411,7 +415,21 @@ func record_purchase() -> void:
 ## boundary) mid-queue would leave a permanently unfillable gap, since
 ## nothing else would ever call leave_queue() for it.
 func _leave() -> void:
-	print("[%s] leaving (role=%s)" % [name, role])
+	# items_bought/items_target included here (Week 7 multi-item playtest
+	# gap, matching _ready()'s own addition): "leaving" fires from THREE
+	# different causes (satisfied — see _shopper_input()'s
+	# _items_bought >= items_target check, lifetime timeout, or a forced
+	# day-boundary despawn) that used to be indistinguishable in the log.
+	# A shopper leaving with items_bought < items_target on a day that
+	# targets more than 1 didn't run out of things to buy — the browsing
+	# fallback (_browse_input) never extends the lifetime budget the way
+	# committing to a real target does, so a shopper that's simply WAITING
+	# for a second item to be stocked (shelves only fill when something —
+	# a player, or a stocker bot — carries a floor product onto a slot;
+	# customers never stock shelves themselves) can time out looking
+	# identical, from outside the log, to one that was only ever asked to
+	# buy 1.
+	print("[%s] leaving (role=%s, items_bought=%d/%d)" % [name, role, _items_bought, items_target])
 	if _committed_cashier and is_instance_valid(_committed_cashier):
 		_committed_cashier.get_node("Cashier").leave_queue(carry_id)
 	var carried := _find_carried_by_me()
