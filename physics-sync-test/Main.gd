@@ -42,53 +42,93 @@ extends Node2D
 ## agnostic), just backwards art, left for real slot art later rather than
 ## a dozen per-node rotation overrides to un-rotate text in a greybox.
 ##
-## PART 1 — full store layout (Week 6): Main.tscn is 7 uniform ROOM_WIDTH x
-## ROOM_HEIGHT rooms in a single left-to-right row sharing one continuous
-## world. Rooms 3-6 are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery, each behind
-## its own Gate (see Gate.gd) except the Dry-Goods boundary itself — no
-## boundary before it (break room/Sidewalk, Sidewalk/Checkout, Checkout/Dry
-## Goods) has a gate at all, since Dry Goods is available from Day 1. Reused
+## PART 1 — full store layout (Week 6): originally Main.tscn was 7 uniform
+## ROOM_WIDTH x ROOM_HEIGHT rooms in a single left-to-right ROW sharing one
+## continuous world (see git history for that layout). THIS SESSION replaced
+## that with a HUB-AND-SPOKE layout: the store is now a 3x3 grid of
+## ROOM_WIDTH x ROOM_HEIGHT cells (GRID_COLS x GRID_ROWS), addressed by a
+## Vector2i(col, row) instead of a single 1D room_index — see the GRID MAP
+## comment below for which cell holds what. This is a direct root-cause fix
+## for a recurring bug pattern: THREE separate playtest rounds hit customer-
+## timeout bugs traced back to the store's shape specifically — a single
+## line that only ever gets LONGER as rooms are added, so the worst-case
+## walk (and therefore the dynamic lifetime budget it drives — see
+## Customer.gd's _extend_lifetime_budget()) kept growing right along with
+## it. A compact grid bounds that worst-case walk by the grid's diagonal
+## instead of its perimeter: the old 7-room line's worst case (break room to
+## Bakery) was 6*ROOM_WIDTH = 5760px; this grid's worst case (Sidewalk to
+## Bakery, the two most distant CUSTOMER-relevant cells) is
+## sqrt((2*ROOM_WIDTH)^2+(2*ROOM_HEIGHT)^2) ≈ 2202px — well under half — and
+## critically, adding another future spoke to the one still-open grid cell
+## (see GRID MAP below) doesn't grow that worst case anywhere near as fast
+## as appending a room to a line does.
+##
+## Mechanically, nothing about how a "room" is built changed — reused
 ## Shelf.tscn/Product.tscn verbatim per the brief's "light re-theming, not
 ## unique content per zone" — each section's shelves are the identical
 ## Shelf1-4 layout Dry Goods already used, just modulate-tinted, and every
-## room additionally gets a flat background-color Polygon2D plus a large
-## text label (see Main.tscn's SectionLabels) for at-a-glance section
-## identification. The store being wider than one screen is why
-## Player.tscn now carries a Camera2D (see Player.gd) — this project had
-## no scrolling/camera concept before Part 1 needed one.
+## room still gets a flat background-color Polygon2D plus a large text label
+## (see Main.tscn's SectionLabels) for at-a-glance section identification.
+## Only WHERE each room sits changed: every place that used to do
+## `room_index * ROOM_WIDTH` now does `grid_pos.x * ROOM_WIDTH, grid_pos.y *
+## ROOM_HEIGHT` — see is_unlocked_at_pos()/is_break_room_at_pos() (renamed
+## from the old _at_x() forms, since an x-only check can no longer tell two
+## stacked cells apart) for the canonical version of that math. The store
+## being bigger than one screen in BOTH dimensions now (not just wide) is
+## why Player.tscn's Camera2D (see Player.gd) needs both limit_right AND
+## limit_bottom updated, not just the one this project's first-ever
+## scrolling camera originally needed.
 ##
-## ROOM_INDEX MAP, three-times-updated by playtest fixes (see the long
-## comment on _despawn_all_customers()/is_break_room_at_x() below for the
-## first one): room 0 is the break room (always open, no Gate, players
-## clock in/reset here every day — see _reset_players_to_break_room()) —
-## it has NEVER had shelves or a cashier, and has NO customer-AI reason to
-## be targeted either (is_break_room_at_x(), used by Customer.gd's wander
-## fallback). Room 1 is the SIDEWALK — PLAYTEST BUG FIX, split out this
-## session from what used to be a single dual-purpose "Entrance" room (see
-## below for why) — a genuinely separate outdoor zone (distinct
-## concrete-gray RoomBackgrounds/SidewalkBg) where every customer spawns
-## and physically walks in from. Room 2 is the CHECKOUT vestibule (a
-## different, warmer indoor tone — RoomBackgrounds/EntranceBg), where the
-## central checkout lives (CentralCheckout in Main.tscn) — customers walk
-## Sidewalk -> Checkout -> whichever section they're headed to. Rooms 3-6
-## are Dry Goods/Meat-Deli/Dairy-Frozen/Bakery.
+## GRID MAP (col, row), 3x3, hub in the center — the ROOM_INDEX MAP this
+## replaces went through three playtest-driven reorderings of its own (see
+## git history), so this map is deliberately kept in ONE place (here) rather
+## than re-derived per file:
+##   (0,0) Break Room   (1,0) Dry Goods (Day 1)   (2,0) Bakery (Day 7)
+##   (0,1) Dairy/Frozen (1,1) CHECKOUT HUB         (2,1) Meat/Deli (Day 3)
+##   (0,2) [reserved]   (1,2) Sidewalk (entrance)  (2,2) Storage (Day 1)
+## The hub (Checkout, CentralCheckout in Main.tscn) sits dead center with
+## every spoke touching it or one hop off it — Dry Goods, Meat/Deli, Dairy/
+## Frozen, and Sidewalk are the four cells directly adjacent to the hub
+## (the brief's "north/east/west/south" arrangement); Bakery branches off
+## Dry Goods (both day-1-or-later retail, same north arm) and Storage
+## branches off Sidewalk (both are "outside access" — customers walk in via
+## Sidewalk, and the forklift will eventually bring deliveries in via
+## Storage — see that room's own comment below) rather than off the hub
+## directly, since the hub only has 4 flat edges to attach to. Break Room
+## branches off Dry Goods too — deliberately NOT off Sidewalk or the hub,
+## the two cells actually in a customer's path — per the existing
+## exclusion-zone approach (is_break_room_at_pos(), unchanged in kind, just
+## upgraded from a 1D check to a 2D one) rather than a physical door: a
+## customer is simply never given a target inside it, wherever it sits, but
+## putting it a hop away from the high-traffic cells is extra insurance the
+## old design already valued (see its own comment further down). (0,2) is
+## the one grid cell nothing occupies — left that way on purpose as
+## breathing room for whatever gets added next, instead of this layout
+## being exactly as full as today's store and needing its own reshape the
+## next time something new is added, the same trap the old line was in.
+## It's still part of the single open floor (no wall seals it off — see
+## Main.tscn's Walls), just empty.
 ##
-## Room 1 used to be a SINGLE room serving both the spawn/sidewalk role and
-## the checkout role at once — cosmetically tinted to read as "outdoor,"
-## but not an actually distinct zone, and a playtest report called that
-## out directly: customers weren't visibly "spawning outside and walking
-## in," they were just already present in the same room as the registers.
-## Splitting it into two real rooms fixes that honestly instead of leaning
-## further on paint. (Separately, and before that: the break room and
-## Entrance/Checkout used to sit the other way around, Entrance at 0 and
-## break room at 1 directly between the Entrance and every section, which
-## forced every shopping trip through the break room twice — fixed by
-## swapping which sits at the dead end; see BREAK_ROOM_ROOM_INDEX's own
-## comment. That fix is unaffected by this one — the break room is still
-## room 0, still behind everything else.)
-## SIDEWALK_ROOM_INDEX/ENTRANCE_ROOM_INDEX/BREAK_ROOM_ROOM_INDEX below are
-## the three non-SECTIONS room indices code needs to reason about
-## explicitly.
+## Three real interior walls exist BECAUSE of this shape, which the old
+## line-of-rooms never needed at all: Break Room/Dairy-Frozen, Bakery/Meat-
+## Deli, and Meat-Deli/Storage each sit diagonally-adjacent-by-row across a
+## shared edge that ISN'T an intentional spoke connection, so each gets a
+## permanent WallSeal segment (same StaticBody2D+CollisionShape2D shape the
+## world's own perimeter walls already use, just interior and row-width
+## sized) instead of being left open, which would let a customer walk into
+## e.g. Bakery from Meat/Deli and bypass GateBakery entirely. Every
+## INTENTIONAL spoke connection (hub<->DryGoods, hub<->Sidewalk, DryGoods<->
+## BreakRoom, Sidewalk<->Storage) stays a plain open boundary with no wall
+## at all, same as the old line's ungated boundaries; hub<->MeatDeli, hub<->
+## DairyFrozen, and DryGoods<->Bakery keep the same Gate-seals-the-whole-
+## boundary approach the old line already used (see Gate.gd), just
+## repositioned — a gate's own collision still spans the FULL playable
+## length of whichever edge it sits on, vertical for a column boundary,
+## unchanged in kind from before, just no longer always-vertical, now that
+## the grid has horizontal boundaries too. (In this grid every actual gate
+## still happens to be vertical since row0/row1's three gated boundaries -
+## hub/MeatDeli, hub/DairyFrozen, DryGoods/Bakery - are all COLUMN
+## boundaries; nothing structurally requires that going forward.)
 ##
 ## REDESIGNED after playtest feedback: Gate.gd originally sat in a narrow
 ## ~120px doorway cut into two permanent wall segments per boundary, and
@@ -108,41 +148,53 @@ extends Node2D
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
-## Break room center — room_index 0 (see the ROOM_INDEX MAP comment above),
-## so this is BREAK_ROOM_ROOM_INDEX * ROOM_WIDTH + (half ROOM_WIDTH) =
-## 0+480 = 480. Players spawn here, not in Dry Goods: you clock in at the
-## break room and walk out through the Sidewalk and Checkout to start your
-## shift — a short walk (Sidewalk is the very next room over), not a
-## multi-room hike.
+## Break room center — grid (0,0) (see the GRID MAP comment above), so this
+## is BREAK_ROOM_GRID_POS * (ROOM_WIDTH, ROOM_HEIGHT) + (half a cell) =
+## (0,0)+(480,270) = (480,270) — unchanged from the old line layout's value
+## by coincidence (the break room happened to sit at the very start of both
+## the old row and this grid's cell (0,0)). Players spawn here, not in Dry
+## Goods: you clock in at the break room and walk out through Dry Goods
+## (its only connection) to reach the hub and start your shift.
 const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
 
 const ROOM_WIDTH := 960.0
 const ROOM_HEIGHT := 540.0
-const NUM_ROOMS := 7 # break room + sidewalk + checkout + 4 retail sections, single left-to-right row (see Main.tscn)
-const WORLD_WIDTH := ROOM_WIDTH * NUM_ROOMS
-const WORLD_HEIGHT := ROOM_HEIGHT
-## The three non-retail room indices — see the ROOM_INDEX MAP comment above
-## this file's header. None appear in SECTIONS (no gate, no shelves), but
-## all three are things other code needs to reason about explicitly:
-## SIDEWALK_ROOM_INDEX is where customers spawn (_store_entrance_pos());
-## ENTRANCE_ROOM_INDEX is where the central checkout lives (CentralCheckout
-## in Main.tscn); BREAK_ROOM_ROOM_INDEX is used by is_break_room_at_x()
+## 3x3 hub-and-spoke grid — see the GRID MAP comment above this file's
+## header for which cell holds what and why this shape (versus the old
+## single-row NUM_ROOMS line) is the actual fix for the recurring customer-
+## timeout pattern.
+const GRID_COLS := 3
+const GRID_ROWS := 3
+const WORLD_WIDTH := ROOM_WIDTH * GRID_COLS
+const WORLD_HEIGHT := ROOM_HEIGHT * GRID_ROWS
+## The four non-retail grid cells — see the GRID MAP comment above this
+## file's header. None appear in SECTIONS (no gate, no shelves), but all
+## four are things other code needs to reason about explicitly:
+## SIDEWALK_GRID_POS is where customers spawn (_store_entrance_pos());
+## ENTRANCE_GRID_POS is where the central checkout hub lives (CentralCheckout
+## in Main.tscn); BREAK_ROOM_GRID_POS is used by is_break_room_at_pos()
 ## below to keep customer AI (and stray physics objects — see
-## _rescue_stranded_products()) out of it.
-const BREAK_ROOM_ROOM_INDEX := 0
-const SIDEWALK_ROOM_INDEX := 1
-const ENTRANCE_ROOM_INDEX := 2
-## room_index matches each section's position in Main.tscn's row. required_day
-## mirrors the brief's Day 1-2 / 3-4 / 5-6 / 7 schedule exactly, and is also
-## what _configure_gates() below sets on each matching Gate instance by
-## node name (not a .tscn property override — see that function's own
-## comment on why), so this table and the actual physical doors can't
-## quietly drift apart from each other.
+## _rescue_stranded_products()) out of it; STORAGE_GRID_POS is the new
+## delivery/storage room (see its own comment on Main.tscn's Storage node)
+## — deliberately NOT in SECTIONS and NOT passed to _configure_gates(), so
+## it's reachable from Day 1 with no gate at all, same as Sidewalk/
+## Checkout/Break Room, rather than joining Dry Goods on a "Day 1" GATE that
+## would still visually/mechanically treat it as a gated section.
+const BREAK_ROOM_GRID_POS := Vector2i(0, 0)
+const SIDEWALK_GRID_POS := Vector2i(1, 2)
+const ENTRANCE_GRID_POS := Vector2i(1, 1)
+const STORAGE_GRID_POS := Vector2i(2, 2)
+## grid_pos matches each section's cell in the GRID MAP comment above this
+## file's header. required_day mirrors the brief's Day 1-2 / 3-4 / 5-6 / 7
+## schedule exactly, and is also what _configure_gates() below sets on each
+## matching Gate instance by node name (not a .tscn property override — see
+## that function's own comment on why), so this table and the actual
+## physical doors can't quietly drift apart from each other.
 const SECTIONS := [
-	{"name": "Dry Goods", "node_name": "DryGoods", "room_index": 3, "required_day": 1},
-	{"name": "Meat/Deli", "node_name": "MeatDeli", "room_index": 4, "required_day": 3},
-	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "room_index": 5, "required_day": 5},
-	{"name": "Bakery", "node_name": "Bakery", "room_index": 6, "required_day": 7},
+	{"name": "Dry Goods", "node_name": "DryGoods", "grid_pos": Vector2i(1, 0), "required_day": 1},
+	{"name": "Meat/Deli", "node_name": "MeatDeli", "grid_pos": Vector2i(2, 1), "required_day": 3},
+	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "grid_pos": Vector2i(0, 1), "required_day": 5},
+	{"name": "Bakery", "node_name": "Bakery", "grid_pos": Vector2i(2, 0), "required_day": 7},
 ]
 ## Per-section accent color, shared by that section's spawned products
 ## (_spawn_product_node below) and its shelf slot indicators
@@ -319,8 +371,9 @@ const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
 ##
 ## Kept deliberately modest, not matching the CUSTOMER_CAP_BY_TIER ramp:
 ## every additional item is another full round-trip to the now-centralized
-## checkout (see MAX_CARRY_LIFETIME's own comment on how long that walk can
-## be for a far section), so a high target on a late, already-longer
+## checkout (see Customer.gd's LIFETIME_DISTANCE_MULTIPLIER for how a
+## shopper's timeout budget scales with that walk for a far section), so a
+## high target on a late, already-longer
 ## SECTION_TIME_BONUS-extended shift risks shoppers rarely finishing their
 ## whole trip before the clock runs out. Starts scaling at Day 3 (tier 1 —
 ## the same threshold every other tiered system here already uses, not a
@@ -549,18 +602,26 @@ func _configure_gates() -> void:
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
-## shelf to a section by WORLD x-position (same room_index math
-## is_unlocked_at_x uses below), not by node path or name, so it doesn't
-## care what a given section's shelves happen to be called.
+## shelf to a section by WORLD grid cell (same grid math is_unlocked_at_pos
+## uses below), not by node path or name, so it doesn't care what a given
+## section's shelves happen to be called.
 func _apply_section_accent_colors() -> void:
 	for shelf_body in shelves:
-		var idx := int(floor(shelf_body.global_position.x / ROOM_WIDTH))
+		var cell := _grid_cell_of(shelf_body.global_position)
 		for section in SECTIONS:
-			if section["room_index"] == idx:
+			if section["grid_pos"] == cell:
 				var shelf: Node = shelf_body.get_node("Shelf")
 				shelf.accent_color = SECTION_COLORS[section["name"]]
 				shelf.apply_accent_color()
 				break
+
+## Which (col, row) grid cell a world position falls in — the single place
+## every other grid-position lookup in this file (is_unlocked_at_pos(),
+## is_break_room_at_pos(), _apply_section_accent_colors(),
+## _apply_section_lock_visuals()) bottoms out at, so the col/row math itself
+## only ever needs to be right in one place.
+func _grid_cell_of(world_pos: Vector2) -> Vector2i:
+	return Vector2i(int(floor(world_pos.x / ROOM_WIDTH)), int(floor(world_pos.y / ROOM_HEIGHT)))
 
 ## Playtest feedback: a locked section previously looked completely
 ## normal except for the Gate's own thin barrier line at its entrance —
@@ -580,10 +641,9 @@ func _apply_section_accent_colors() -> void:
 func _apply_section_lock_visuals() -> void:
 	for section in SECTIONS:
 		var unlocked: bool = current_day >= section["required_day"]
-		var room_x: float = section["room_index"] * ROOM_WIDTH
-		var room_x_end: float = room_x + ROOM_WIDTH
+		var cell: Vector2i = section["grid_pos"]
 		for shelf_body in shelves:
-			if shelf_body.global_position.x >= room_x and shelf_body.global_position.x < room_x_end:
+			if _grid_cell_of(shelf_body.global_position) == cell:
 				var base: Color = _original_shelf_modulate[shelf_body]
 				shelf_body.modulate = base if unlocked else base * LOCKED_DIM
 		# Cashiers are no longer per-section (see CentralCheckout in
@@ -784,6 +844,7 @@ func _start_shift() -> void:
 	# on Day 2+ even though each was individually working correctly for any
 	# customer actually newly spawned.
 	_despawn_all_customers()
+	_reset_shelves_and_products_for_new_day()
 	var grace := _current_customer_grace_period()
 	var duration := _current_shift_duration()
 	_customer_grace_timer = grace
@@ -808,6 +869,35 @@ func _start_shift() -> void:
 func _despawn_all_customers() -> void:
 	for customer in get_tree().get_nodes_in_group("customer"):
 		customer.force_leave()
+
+## Public read of _day_report_active — Customer.gd/Player.gd/Cashier.gd/
+## Shelf.gd all call this (via get_tree().current_scene, same "live scene-
+## tree lookup, no cyclic preload" shape those scripts already use for
+## is_unlocked_at_pos()/is_break_room_at_pos()) to freeze themselves for the
+## duration of the end-of-day report — PLAYTEST BUG FIX: the report used to
+## leave the whole simulation running underneath it, which is how a
+## customer left an item stranded at checkout when a day ended under it.
+func is_day_report_active() -> bool:
+	return _day_report_active
+
+## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
+## nothing previously reset shelf-fill state or the physical product pool
+## between days — whatever got stocked by the end of Day 1 just carried
+## straight into Day 2 untouched, and since the product cap
+## (_product_baseline()) doesn't grow until MORE sections unlock (Day 3+),
+## Day 2 specifically had no new demand to create either, on top of that.
+## Mirrors _despawn_all_customers()'s shape: force-clear the relevant state
+## at the start of EVERY shift (not just conceptually "Day 1"), so each day
+## starts from a genuine restocking need instead of inheriting wherever the
+## previous day happened to leave off. Shelves are reset FIRST, clearing
+## their own _occupant/filled bookkeeping, before the products themselves
+## are freed — Shelf.gd's own per-tick check would otherwise try to inspect
+## an already-freed object on the very next physics tick.
+func _reset_shelves_and_products_for_new_day() -> void:
+	for shelf_body in shelves:
+		shelf_body.get_node("Shelf").reset()
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		obj.queue_free()
 
 ## Host-only: called the instant the clock hits zero (see _process()'s
 ## shift-timer check). Raises the full-screen end-of-day report (ReportLayer,
@@ -894,7 +984,7 @@ func _total_sold() -> int:
 ## either a player or a customer — not just free-floating ones, since
 ## those all still count as "not yet sold" supply. PLAYTEST ROOT-CAUSE FIX:
 ## EXCEPT anything currently sitting in the break room — before this,
-## a stranded item there (see is_break_room_at_x()'s comment for how it
+## a stranded item there (see is_break_room_at_pos()'s comment for how it
 ## gets there) silently counted as "still in play" forever, quietly eating
 ## into the cap and suppressing real, reachable spawns without ever showing
 ## up anywhere a player would think to look. _rescue_stranded_products()
@@ -904,7 +994,7 @@ func _restock_products() -> void:
 	var cap: int = _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
 	var current := 0
 	for obj in get_tree().get_nodes_in_group("carryable"):
-		if not is_break_room_at_x(obj.global_position.x):
+		if not is_break_room_at_pos(obj.global_position):
 			current += 1
 	while current < cap:
 		_spawn_product(_product_spawn_index)
@@ -916,7 +1006,7 @@ func _restock_products() -> void:
 ## sitting in the break room back into play, rather than leaving it there
 ## forever. A product ends up there one of two ways — a shopper's
 ## _leave()/force_leave() dropping it mid-transit (now rare, see
-## MAX_CARRY_LIFETIME's comment, but not literally impossible), or ordinary
+## Customer.gd's dynamic lifetime budget, but not literally impossible), or ordinary
 ## physics chaos (a push, a throw, a disruptive shove) knocking a free item
 ## across the ungated break-room boundary — and per this session's explicit
 ## request, the fix for that spillage is NOT a wall (Week 6 already removed
@@ -928,7 +1018,7 @@ func _restock_products() -> void:
 ## _restock_products() (called right alongside it in _process()), host-only.
 func _rescue_stranded_products() -> void:
 	for obj in get_tree().get_nodes_in_group("carryable"):
-		if not is_break_room_at_x(obj.global_position.x):
+		if not is_break_room_at_pos(obj.global_position):
 			continue
 		var c: Node = obj.get_node("Carryable")
 		if c.carrier_id != 0:
@@ -960,12 +1050,17 @@ func _unlocked_sections() -> Array:
 			result.append(section)
 	return result
 
-## True if the given WORLD x-coordinate falls inside a section that's
-## currently unlocked. Used to keep the debug HUD and the restock-baseline
-## scaling honest about which shelves are actually reachable this session
-## — a shelf behind a locked gate physically exists (so the day advancing
-## past it mid-session doesn't need new scene content) but isn't "in play"
-## for either purpose until its gate opens.
+## True if the given WORLD position falls inside a section that's currently
+## unlocked. Used to keep the debug HUD and the restock-baseline scaling
+## honest about which shelves are actually reachable this session — a
+## shelf behind a locked gate physically exists (so the day advancing past
+## it mid-session doesn't need new scene content) but isn't "in play" for
+## either purpose until its gate opens.
+##
+## UPGRADED from an x-only is_unlocked_at_x() to a full Vector2 check when
+## the store became a 2D grid instead of a 1D line — an x-only lookup can
+## no longer tell two cells in the same column but different rows apart
+## (e.g. Meat/Deli at (2,1) vs. Storage at (2,2)).
 ##
 ## Public (no underscore), unlike this file's other section helpers,
 ## because Customer.gd calls it too (via get_tree().current_scene, not a
@@ -984,12 +1079,12 @@ func _unlocked_sections() -> Array:
 ## searches now skip anything in a locked section outright, so a shopper
 ## has no awareness a locked section's cashier/shelves exist at all, not
 ## just a physical inability to reach them.
-func is_unlocked_at_x(world_x: float) -> bool:
-	var idx := int(floor(world_x / ROOM_WIDTH))
+func is_unlocked_at_pos(world_pos: Vector2) -> bool:
+	var cell := _grid_cell_of(world_pos)
 	for section in SECTIONS:
-		if section["room_index"] == idx:
+		if section["grid_pos"] == cell:
 			return current_day >= section["required_day"]
-	return false # entrance/break room have no shelves, so never matters here
+	return false # entrance/break room/sidewalk/storage have no shelves, so never matters here
 
 ## PLAYTEST ROOT-CAUSE FIX: the central checkout used to live IN the break
 ## room, and nothing stopped customer AI from wandering into it either —
@@ -998,21 +1093,25 @@ func is_unlocked_at_x(world_x: float) -> bool:
 ## below): a shopper timing out mid-walk could drop its item there (no
 ## shelf ever looks for it again), and idle browse/disruptive wandering
 ## could land a customer there for no reason at all. The checkout is now in
-## the Entrance zone instead (ENTRANCE_ROOM_INDEX), and — PLAYTEST BUG FIX,
-## this session's second pass — the break room now sits BEHIND the
-## Entrance (room 0, with Entrance at room 1) rather than between the
-## Entrance and every section, so a customer never has anywhere to be that
-## structurally requires crossing it at all any more (see the ROOM_INDEX
-## MAP comment above this file's header for the full story). This function
+## the hub cell instead (ENTRANCE_GRID_POS), and — carried forward into this
+## session's hub-and-spoke reshape — the break room branches off Dry Goods
+## rather than sitting on the hub or the Sidewalk (the two cells actually in
+## a customer's path), so a customer never has anywhere to be that
+## structurally requires passing through it at all (see the GRID MAP
+## comment above this file's header for the full story). This function
 ## is the remaining safety net for the one thing room ordering alone can't
 ## rule out: the random-offset fallback in Customer.gd's own wander/
 ## disruptive targeting could still roll a candidate point that happens to
 ## land in the break room by pure chance if a customer is standing right at
 ## its boundary. Customer.gd calls this (same "public, live scene-tree
-## lookup, no cyclic preload" shape as is_unlocked_at_x() above) to nudge
-## such a candidate back out instead.
-func is_break_room_at_x(world_x: float) -> bool:
-	return int(floor(world_x / ROOM_WIDTH)) == BREAK_ROOM_ROOM_INDEX
+## lookup, no cyclic preload" shape as is_unlocked_at_pos() above) to nudge
+## such a candidate back out instead. UPGRADED to a full Vector2 check
+## alongside is_unlocked_at_pos() above, same reasoning — the break room's
+## grid cell (0,0) shares a column with Dairy/Frozen's (0,1) and a row with
+## Dry Goods' (1,0), so x-only or y-only would each misfire against one of
+## those.
+func is_break_room_at_pos(world_pos: Vector2) -> bool:
+	return _grid_cell_of(world_pos) == BREAK_ROOM_GRID_POS
 
 ## 12 = one section's slot count (4 shelves x 3 slots) — see the big
 ## comment block above PRODUCT_PER_EXTRA_PLAYER for why this scales with
@@ -1069,21 +1168,24 @@ func _pick_unlocked_section() -> Dictionary:
 ## A spawn point inside the given section's safe interior band — same
 ## shape/margins the original single-room band always used (clear of
 ## shelves at local y ~42-108/432-498 and the walls), just relocated per
-## section by its room_index. Spawning a RigidBody2D (a
+## section by its grid cell (col AND row now, not just a room_index along
+## one axis). Spawning a RigidBody2D (a
 ## product) overlapping a StaticBody2D's collider can make the physics
 ## engine's penetration-resolution fling it at an absurd speed to separate
 ## them, the same class of bug Week 1-3 hit with fast-moving objects
 ## tunneling through thin walls — keeping spawns in open floor avoids ever
 ## creating that overlap in the first place.
 func _spawn_pos_in_section(section: Dictionary) -> Vector2:
-	var room_x: float = section["room_index"] * ROOM_WIDTH
-	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(120.0, 360.0))
+	var cell: Vector2i = section["grid_pos"]
+	var room_x: float = cell.x * ROOM_WIDTH
+	var room_y: float = cell.y * ROOM_HEIGHT
+	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(room_y + 120.0, room_y + 360.0))
 
 ## UPGRADED TWICE this session, replacing the old per-section
 ## _customer_entrance_pos(): playtest request for a real store entrance —
-## a genuinely separate outdoor Sidewalk zone (SIDEWALK_ROOM_INDEX, its own
-## room, distinct from the Checkout room the central registers live in —
-## see the ROOM_INDEX MAP comment above this file's header for why they
+## a genuinely separate outdoor Sidewalk zone (SIDEWALK_GRID_POS, its own
+## room, distinct from the Checkout hub the central registers live in —
+## see the GRID MAP comment above this file's header for why they
 ## used to be one dual-purpose room and aren't any more), that every
 ## customer spawns at and physically walks in from, rather than popping
 ## into existence at whichever section they're headed to. All customers
@@ -1097,13 +1199,36 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 ## into a neighbor's collision box), then whichever section, the same
 ## "just point them at a target position and let the existing straight-
 ## line steering handle it" approach already used for every other long
-## walk in this project. Placed near the edge of the Sidewalk closest to
-## the break room, so a customer visibly walks the Sidewalk's full length
-## before ever reaching the Checkout room. Small random jitter so several
-## customers spawning together don't stack exactly on top of each other.
+## walk in this project. Small random jitter so several customers spawning
+## together don't stack exactly on top of each other.
+## PLAYTEST FIX ("Sidewalk is oversized"): the strip is no longer sized/
+## positioned off the Sidewalk cell's full ROOM_WIDTH x ROOM_HEIGHT slot
+## (that grid cell still reserves the full slot for it, but nothing
+## requires the actual walkable zone to fill that whole slot — Sidewalk
+## isn't a SECTIONS entry and has no shelves, so nothing else's gating logic
+## cares how much of the slot it visually occupies). SIDEWALK_STRIP_CENTER/
+## HALF_SIZE below now describe a small rectangle sitting right against the
+## Checkout hub's edge instead — both because a small outdoor entry strip
+## reads better than a full room-sized square (playtest feedback), and
+## because spawning customers this close to the hub meaningfully shortens
+## the walk every customer has to survive before the dynamic lifetime
+## budget (_extend_lifetime_budget() in Customer.gd) even starts covering
+## it. REPOSITIONED this session for the hub-and-spoke grid: Sidewalk is
+## now the cell directly SOUTH of the hub (SIDEWALK_GRID_POS = (1,2), hub =
+## (1,1)), so the strip hugs the shared horizontal boundary at
+## y=ENTRANCE_GRID_POS.y*ROOM_HEIGHT+ROOM_HEIGHT (top of the Sidewalk cell)
+## instead of a vertical one. Must stay in sync BY HAND with Main.tscn's
+## SidewalkBg position/polygon (no inline .tscn comment to cross-reference
+## them with — see this file's header note on why).
+const SIDEWALK_STRIP_CENTER := Vector2(1440.0, 1230.0)
+const SIDEWALK_STRIP_HALF_SIZE := Vector2(120.0, 150.0)
+
 func _store_entrance_pos() -> Vector2:
-	var room_x: float = SIDEWALK_ROOM_INDEX * ROOM_WIDTH
-	return Vector2(room_x + 80.0 + randf_range(-15.0, 15.0), 270.0 + randf_range(-40.0, 40.0))
+	var margin := 20.0
+	return SIDEWALK_STRIP_CENTER + Vector2(
+		randf_range(-SIDEWALK_STRIP_HALF_SIZE.x + margin, SIDEWALK_STRIP_HALF_SIZE.x - margin),
+		randf_range(-SIDEWALK_STRIP_HALF_SIZE.y + margin, SIDEWALK_STRIP_HALF_SIZE.y - margin)
+	)
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS
 ## above), the same accent color as that section's shelf slot indicators —
@@ -1231,7 +1356,7 @@ func _process(delta: float) -> void:
 	# content) but are never reachable, so counting them would misreport
 	# "half the store sits empty" against sections nobody could have
 	# stocked yet.
-	var unlocked_shelves := shelves.filter(func(s): return is_unlocked_at_x(s.global_position.x))
+	var unlocked_shelves := shelves.filter(func(s): return is_unlocked_at_pos(s.global_position))
 	# Machine-readable, same purpose as GameLog's DATA lines: lets a test run
 	# capture every peer's own view of shelf-fill state to a log file and
 	# diff them afterward, to confirm the replicated "filled" array (see

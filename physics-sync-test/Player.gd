@@ -35,18 +35,19 @@ const INTERACT_COOLDOWN := 3.0
 ## one like pickup.
 const DEFEND_RANGE := 70.0
 const DEFEND_COOLDOWN := 0.8
-## Week 6 Part 1 — the store is now 7 rooms wide (960x540 each), wider than
-## the fixed 960x540 window, so this project needed its first-ever
-## scrolling camera. Duplicated from Main.gd's WORLD_WIDTH/WORLD_HEIGHT
-## rather than preloaded from there — Main.gd already preloads Player.tscn
-## (to spawn players), so preloading Main.gd back from here would be a
-## CYCLIC preload, a real GDScript failure mode, not just messier style.
-## Must be kept in sync by hand with Main.gd's own ROOM_WIDTH x
-## ROOM_HEIGHT x NUM_ROOMS math (960 x 540 x 7 = 6720 x 540 as of this
-## session's Sidewalk/Checkout room split — see Main.gd's ROOM_INDEX MAP
-## comment).
-const WORLD_WIDTH := 6720.0
-const WORLD_HEIGHT := 540.0
+## Week 6 Part 1 — the store became bigger than the fixed 960x540 window,
+## so this project needed its first-ever scrolling camera. Duplicated from
+## Main.gd's WORLD_WIDTH/WORLD_HEIGHT rather than preloaded from there —
+## Main.gd already preloads Player.tscn (to spawn players), so preloading
+## Main.gd back from here would be a CYCLIC preload, a real GDScript
+## failure mode, not just messier style. Must be kept in sync by hand with
+## Main.gd's own ROOM_WIDTH x ROOM_HEIGHT x GRID_COLS x GRID_ROWS math (960
+## x 540 x 3 x 3 = 2880 x 1620 as of this session's hub-and-spoke reshape —
+## see Main.gd's GRID MAP comment). UPGRADED this session: the store is now
+## bigger than one screen in BOTH dimensions (a 3x3 grid, not a 1x7 row), so
+## limit_bottom actually matters now too, not just limit_right.
+const WORLD_WIDTH := 2880.0
+const WORLD_HEIGHT := 1620.0
 const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Carryable.gd's PICKUP_RANGE is the real check
 const BOT_CARRY_DURATION := 2.5
 ## Referenced via preload rather than the global "Carryable" class_name —
@@ -145,6 +146,13 @@ func _physics_process(delta: float) -> void:
 		return
 	if not is_multiplayer_authority():
 		return # smoothing now happens in _process, see below
+	# PLAYTEST BUG FIX ("world keeps simulating during the end-of-day
+	# report"): players should freeze along with customer AI for the
+	# duration of the report screen — see Customer.gd's matching freeze for
+	# the fuller reasoning (a customer left an item stranded at checkout
+	# when the day ended under it).
+	if get_tree().current_scene.is_day_report_active():
+		return
 
 	var dir := Vector2.ZERO
 	var interact_pressed := false
