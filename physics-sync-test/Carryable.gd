@@ -198,6 +198,13 @@ func request_push(impulse: Vector2) -> void:
 		return
 	if carrier_id != 0:
 		return # being carried — frozen anyway, but skip the wasted call
+	# WEEK 9: a remote PLAYER's push arrives here as an RPC (sender > 0); the
+	# forklift/customers call this locally on the host (sender 0) and are
+	# never attributed. The host's own player is attributed in Player.gd's
+	# _push_rigid_bodies() instead, since it doesn't come through here.
+	var sender := multiplayer.get_remote_sender_id()
+	if sender > 0:
+		_notify_manager("note_push", sender, body)
 	body.apply_central_impulse(impulse)
 
 ## --- Pickup / drop / throw ---------------------------------------------
@@ -243,17 +250,33 @@ func _validate_pickup(requester_id: int, requester_pos: Vector2) -> void:
 		return # already held — first request wins, rest are silently ignored
 	if requester_pos.distance_to(body.position) > PICKUP_RANGE:
 		return
+	_notify_manager("note_work", requester_id)
 	rpc("_rpc_set_carrier", requester_id)
 
 func _validate_drop(requester_id: int) -> void:
 	if carrier_id != requester_id:
 		return # only the current carrier may drop it
+	_notify_manager("note_work", requester_id)
 	rpc("_rpc_set_carrier", 0)
 
 func _validate_throw(requester_id: int, direction: Vector2) -> void:
 	if carrier_id != requester_id:
 		return # only the current carrier may throw it
+	_notify_manager("note_chaos", requester_id, "throwing stock")
 	rpc("_rpc_throw", direction.normalized())
+
+## WEEK 9 — tells the manager (Manager.gd, host-only detection) about a
+## pickup/drop (legit work) or a throw/push (possible chaos). Always runs on
+## the host: every caller above is inside an authority-only path. Customers
+## use negative carry ids, which the manager ignores.
+func _notify_manager(method: String, peer_id: int, arg: Variant = null) -> void:
+	var manager := get_tree().get_first_node_in_group("manager")
+	if manager == null:
+		return
+	if arg == null:
+		manager.call(method, peer_id)
+	else:
+		manager.call(method, peer_id, arg)
 
 ## Called by Main.gd when ANY peer disconnects. Without this, a carrier who
 ## disconnects mid-carry leaves the object permanently frozen and stuck —

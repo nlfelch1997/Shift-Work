@@ -212,6 +212,34 @@ extends Node2D
 ##   map, where it would silently count against the cap forever —
 ##   _rescue_stranded_products() now also rescues out-of-bounds items (and
 ##   displays).
+##
+## WEEK 9 — THE MANAGER (Manager.gd, Main.tscn's Manager node), Day 4+.
+## Walks the hub and whichever sections _unlocked_sections() returns today,
+## and writes up anyone he watches standing idle or mid-chaos for a
+## sustained moment (full rules + the warning tell in Manager.gd's header).
+## Host-authoritative, same split as the forklift. What lives HERE:
+## - DAY GATING via MANAGER_START_DAY below — the one hazard that ISN'T tied
+##   to a section opening (Day 4 opens nothing new), so it gets its own named
+##   constant next to SECTIONS rather than a bare "4" inside Manager.gd.
+##   Applied through the same _configure_hazards() the forklift uses.
+## - PAY. There was no currency before this — only a sold count — so a
+##   "pay penalty" needed something to be deducted FROM. Pay Today is
+##   derived, not stored: today's sold count * PAY_PER_SALE minus today's
+##   write-ups * WRITEUP_PENALTY, the same "compute from replicated counters"
+##   shape as Sold Today. Only the write-up counters are new replicated state
+##   (DaySync). Pay is crew-wide (sales are crew-wide); the report also
+##   breaks write-ups down per player so it's clear whose they were. Not
+##   clamped at zero: a write-up always visibly costs something.
+## - The on-screen tell for the WATCHED player ("LOOK BUSY" + meter) and the
+##   write-up toast every peer sees, built in code in _build_alert_layer().
+
+## Day the manager starts his rounds — see the WEEK 9 note above.
+const MANAGER_START_DAY := 4
+## FLAGGED PLACEHOLDER ECONOMY — the first money numbers in the project,
+## picked so one write-up clearly hurts (2.5 sales' worth) without one bad
+## moment erasing a whole shift. Tune freely.
+const PAY_PER_SALE := 10
+const WRITEUP_PENALTY := 25
 
 ## Spawn-overlap clearance (see _spawn_pos_is_clear()). Forklift: its
 ## rotated collision box reaches ~56px from its origin, plus a product's own
@@ -358,6 +386,17 @@ var _sold_at_day_start := 0
 ## and _on_continue_pressed() for what ends this stage — no more automatic
 ## timed transition; the player decides when to move on.
 var _day_report_active := false
+## WEEK 9 — write-up counters (see the WEEK 9 header note). Host-written in
+## record_writeup(), replicated via DaySync. writeups_by_peer is peer_id ->
+## count for today, reassigned (not mutated) on every change so it's plainly
+## a new value to the synchronizer.
+var writeups_today := 0
+var writeups_week := 0
+var writeups_by_peer := {}
+## Local-only UI for the manager tell/toast (_build_alert_layer()).
+var _watch_label: Label
+var _toast_label: Label
+var _toast_timer := 0.0
 
 ## --- Week 4/5B/6 shift-economy placeholders — every number below is a
 ## guess to make the system testable, not a tuned value. Flagging for
@@ -535,6 +574,9 @@ func _current_shift_duration() -> float:
 @onready var save_button: Button = $ReportLayer/Panel/ButtonRow/SaveButton
 @onready var continue_button: Button = $ReportLayer/Panel/ButtonRow/ContinueButton
 @onready var forklift: CharacterBody2D = $Forklift
+@onready var manager: Node2D = $Manager
+@onready var report_writeup_label: Label = $ReportLayer/Panel/WriteupLabel
+@onready var report_pay_label: Label = $ReportLayer/Panel/PayLabel
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -617,7 +659,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -639,6 +681,7 @@ func _ready() -> void:
 	join_button.pressed.connect(_on_join_pressed)
 	continue_button.pressed.connect(_on_continue_pressed)
 	save_button.pressed.connect(_on_save_pressed)
+	_build_alert_layer()
 
 	_parse_cli_args()
 
@@ -691,6 +734,7 @@ func _configure_gates() -> void:
 ## GATING note for why this reads SECTIONS instead of hardcoding Day 3.
 func _configure_hazards() -> void:
 	forklift.configure(is_unlocked_at_pos(forklift.home_position))
+	manager.configure(current_day >= MANAGER_START_DAY)
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
@@ -941,6 +985,9 @@ func _start_shift() -> void:
 	# the forklift and displays go back to their starting spots too, so no
 	# day inherits yesterday's wreckage (same reasoning as the shelf reset).
 	forklift.reset_for_new_day()
+	manager.reset_for_new_day()
+	writeups_today = 0
+	writeups_by_peer = {}
 	for display_body in displays:
 		display_body.get_node("Display").reset_to_home()
 	var grace := _current_customer_grace_period()
@@ -1013,7 +1060,7 @@ func _end_shift() -> void:
 		return
 	shift_active = false
 	_day_report_active = true
-	print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d" % [current_day, _total_sold() - _sold_at_day_start, _total_sold()])
+	print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d  |  Write-ups today: %d  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, _format_money(_pay_today())])
 
 ## Any peer's Continue click routes here. Only the host actually drives the
 ## day advance (current_day/gates/shift are all host-authoritative), so a
@@ -1062,6 +1109,88 @@ func _advance_to_next_day() -> void:
 	_last_configured_day = current_day
 	print("[Main] Starting Day %d..." % current_day)
 	_start_shift()
+
+## --- WEEK 9: manager write-ups and pay ------------------------------------
+
+## Host-only, called by Manager.gd the moment a catch lands.
+func record_writeup(peer_id: int, reason: String) -> void:
+	if not multiplayer.is_server():
+		return
+	writeups_today += 1
+	writeups_week += 1
+	var by_peer := writeups_by_peer.duplicate()
+	by_peer[peer_id] = by_peer.get(peer_id, 0) + 1
+	writeups_by_peer = by_peer
+	rpc("_announce_writeup", peer_id, reason)
+
+## Every peer: the toast. The penalty itself is already in the replicated
+## counters; this is just the moment-of-impact feedback.
+@rpc("authority", "call_local", "reliable")
+func _announce_writeup(peer_id: int, reason: String) -> void:
+	if Net.is_active() and peer_id == multiplayer.get_unique_id():
+		_toast_label.text = "WRITTEN UP for %s!  -$%d" % [reason, WRITEUP_PENALTY]
+	else:
+		_toast_label.text = "%s written up for %s  -$%d" % [player_display_name(peer_id), reason, WRITEUP_PENALTY]
+	_toast_timer = 3.0
+
+## "Host" / "Player 2" / ... instead of a raw ENet peer id (those are large
+## random numbers for clients). Numbered by join order — `players` is filled
+## in spawn order on every peer, host first.
+func player_display_name(peer_id: int) -> String:
+	if peer_id == 1:
+		return "Host"
+	var index := players.keys().find(peer_id)
+	return "Player %d" % (index + 1) if index >= 0 else "Player ?"
+
+func _pay_today() -> int:
+	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE - writeups_today * WRITEUP_PENALTY
+
+func _pay_week() -> int:
+	return _total_sold() * PAY_PER_SALE - writeups_week * WRITEUP_PENALTY
+
+func _format_money(amount: int) -> String:
+	return ("-$%d" % -amount) if amount < 0 else ("$%d" % amount)
+
+func _build_alert_layer() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "AlertLayer"
+	add_child(layer)
+	for i in 2:
+		var label := Label.new()
+		# Bottom of the screen: found by rendering frames — at the top, the
+		# banner sat right over the manager himself whenever he was above
+		# you (and over the debug HUD), hiding the "?"/"!" it's warning about.
+		label.anchor_left = 0.0
+		label.anchor_right = 1.0
+		label.anchor_top = 1.0
+		label.anchor_bottom = 1.0
+		label.offset_top = -60.0 - i * 45.0
+		label.offset_bottom = -20.0 - i * 45.0
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		label.add_theme_font_size_override("font_size", 24)
+		label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
+		label.add_theme_constant_override("shadow_offset_x", 2)
+		label.add_theme_constant_override("shadow_offset_y", 2)
+		label.visible = false
+		layer.add_child(label)
+	_watch_label = layer.get_child(0)
+	_toast_label = layer.get_child(1)
+	_toast_label.add_theme_color_override("font_color", Color(1, 0.35, 0.25))
+
+## Every peer, every frame: the LOOK BUSY warning for whoever the manager is
+## watching (only shown on that player's own screen — everyone else sees
+## the "?"/"!" over his head instead) and the write-up toast.
+func _update_alert_layer(delta: float) -> void:
+	var me := multiplayer.get_unique_id() if Net.is_active() else 0
+	var watched: bool = manager.active and not _day_report_active and manager.watch_peer == me and me != 0 and manager.watch_level > 0.0
+	_watch_label.visible = watched
+	if watched:
+		var bars := int(round(manager.watch_level * 10.0))
+		var hot: bool = manager.watch_level >= manager.WARN_LEVEL
+		_watch_label.text = "%s  [%s%s]" % ["MANAGER IS WATCHING — LOOK BUSY!" if hot else "The manager is looking at you...", "|".repeat(bars), ".".repeat(10 - bars)]
+		_watch_label.add_theme_color_override("font_color", Color(1, 0.3, 0.2) if hot else Color(1, 0.85, 0.2))
+	_toast_timer = maxf(0.0, _toast_timer - delta)
+	_toast_label.visible = _toast_timer > 0.0 and not _day_report_active
 
 ## Cumulative total across every cashier, for as long as the session has
 ## run — never reset, unlike _sold_at_day_start (see the score-continuity
@@ -1462,6 +1591,15 @@ func _process(delta: float) -> void:
 		report_title_label.text = "Day %d Complete!" % current_day
 		report_today_label.text = "Sold Today: %d" % today_sold
 		report_week_label.text = "Week Total: %d" % week_sold
+		# WEEK 9 — write-ups only exist from MANAGER_START_DAY on; before
+		# that the line is hidden rather than showing a meaningless 0.
+		report_writeup_label.visible = current_day >= MANAGER_START_DAY
+		var who := []
+		for peer_id in writeups_by_peer:
+			who.append("%s x%d" % [player_display_name(peer_id), writeups_by_peer[peer_id]])
+		report_writeup_label.text = "Write-ups: %d  (%s docked)%s" % [writeups_today, _format_money(writeups_today * WRITEUP_PENALTY), ("  —  " + ", ".join(who)) if not who.is_empty() else ""]
+		report_pay_label.text = "Pay Today: %s   |   Week: %s" % [_format_money(_pay_today()), _format_money(_pay_week())]
+	_update_alert_layer(delta)
 
 	var connected := Net.is_active()
 	var role := "OFFLINE"
@@ -1534,6 +1672,8 @@ func _process(delta: float) -> void:
 		# rams_today isn't replicated (diagnostic only), so only the host's
 		# count is meaningful — clients just see that it's live.
 		lines.append("FORKLIFT active in Meat/Deli" + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
+	if manager.active:
+		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
 	# No fixed completion state as of Week 5B — stock demand is continuous
 	# for the whole shift, so there's nothing to declare "complete" within
 	# a day. WEEK 7: the clock now ends the DAY, not the session — see
@@ -1544,5 +1684,5 @@ func _process(delta: float) -> void:
 	if shift_active:
 		var week_sold := _total_sold()
 		var today_sold := week_sold - _sold_at_day_start
-		lines.append("Stocked now: %d/%d  |  Today: %d  |  Week total: %d  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, shift_time_left])
+		lines.append("Stocked now: %d/%d  |  Today: %d  |  Week total: %d  |  Pay today: %s  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, _format_money(_pay_today()), shift_time_left])
 	debug_label.text = "\n".join(lines)

@@ -253,6 +253,12 @@ func _push_rigid_bodies(delta: float) -> void:
 		var impulse: Vector2 = -collision.get_normal() * PUSH_FORCE * delta
 		if carryable.is_multiplayer_authority():
 			collider.apply_central_impulse(impulse)
+			# WEEK 9: this is the HOST's own player (a remote player's push
+			# goes through request_push(), which attributes it there) — tell
+			# the manager in case that was shelved stock or a display.
+			var manager := get_tree().get_first_node_in_group("manager")
+			if manager:
+				manager.note_push(get_multiplayer_authority(), collider)
 		else:
 			carryable.rpc_id(carryable.get_multiplayer_authority(), "request_push", impulse)
 

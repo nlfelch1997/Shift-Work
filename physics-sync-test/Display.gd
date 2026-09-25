@@ -99,6 +99,13 @@ func _process(delta: float) -> void:
 func request_push(impulse: Vector2) -> void:
 	if not is_multiplayer_authority():
 		return
+	# WEEK 9: shoving a display is chaos the manager can catch — same sender
+	# attribution as Carryable.gd's request_push() (forklift = local, 0).
+	var sender := multiplayer.get_remote_sender_id()
+	if sender > 0:
+		var manager := get_tree().get_first_node_in_group("manager")
+		if manager:
+			manager.note_push(sender, body)
 	body.apply_central_impulse(impulse)
 
 ## Host-only. Called by Main.gd's _start_shift() every day, and by its
