@@ -1,9 +1,11 @@
-[gd_scene load_steps=8 format=3 uid="uid://mainscn0001"]
+[gd_scene load_steps=10 format=3 uid="uid://mainscn0001"]
 
 [ext_resource type="Script" path="res://Main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://Shelf.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://Cashier.tscn" id="3"]
 [ext_resource type="PackedScene" path="res://Gate.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://Forklift.tscn" id="5"]
+[ext_resource type="PackedScene" path="res://Display.tscn" id="6"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_full_h"]
 size = Vector2(2880, 20)
@@ -352,6 +354,14 @@ theme_override_colors/font_color = Color(0.2, 0.18, 0.15, 1)
 horizontal_alignment = 1
 text = "STORAGE"
 
+[node name="Displays" type="Node2D" parent="."]
+
+[node name="MeatDeliSampleTable" parent="Displays" instance=ExtResource("6")]
+position = Vector2(2400, 810)
+
+[node name="MeatDeliSaleBin" parent="Displays" instance=ExtResource("6")]
+position = Vector2(2400, 690)
+
 [node name="Players" type="Node2D" parent="."]
 
 [node name="PlayerSpawner" type="MultiplayerSpawner" parent="."]
@@ -366,6 +376,9 @@ spawn_path = NodePath("../Products")
 
 [node name="CustomerSpawner" type="MultiplayerSpawner" parent="."]
 spawn_path = NodePath("../Customers")
+
+[node name="Forklift" parent="." instance=ExtResource("5")]
+position = Vector2(2770, 810)
 
 [node name="MenuLayer" type="CanvasLayer" parent="."]
 

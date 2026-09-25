@@ -465,6 +465,8 @@ func _push_rigid_bodies(delta: float) -> void:
 			continue
 		var carryable: Node = collider.get_node_or_null("Carryable")
 		if carryable == null:
+			carryable = collider.get_node_or_null("Display") # WEEK 8 floor displays — see Player.gd's matching note
+		if carryable == null:
 			continue
 		var impulse: Vector2 = -collision.get_normal() * PUSH_FORCE * delta
 		if carryable.is_multiplayer_authority():
@@ -505,7 +507,7 @@ func _extend_lifetime_budget(target_pos: Vector2) -> void:
 func _shopper_input(delta: float) -> Vector2:
 	var carried := _find_carried_by_me()
 	if carried == null:
-		if _committed_item and (not is_instance_valid(_committed_item) or _item_taken_by_someone_else(_committed_item)):
+		if _committed_item and (not is_instance_valid(_committed_item) or _item_taken_by_someone_else(_committed_item) or not _is_still_stocked(_committed_item)):
 			_committed_item = null
 		# FOUND WHILE WIRING multi-item trips: the only way `carried` goes
 		# from non-null back to null is a completed purchase (a shove/stun
@@ -731,6 +733,23 @@ func _find_carried_by_me() -> Node2D:
 func _item_taken_by_someone_else(item: Node2D) -> bool:
 	var c: Node = item.get_node("Carryable")
 	return c.carrier_id != 0 and c.carrier_id != carry_id
+
+## WEEK 8 — a shopper only ever COMMITS to a stocked item
+## (_find_stocked_item() below), but nothing used to re-check that while it
+## walked over: an item knocked off its shelf mid-approach stayed the
+## target, and the shopper would chase it across the floor and buy it
+## anyway. That was a rare pre-existing gap (a disruptive customer's bump),
+## but a forklift wreck flings a whole shelf's stock at once, and if
+## shoppers still bought all of it off the floor the wreck would cost the
+## players nothing — no restocking needed. Re-picking the moment it's no
+## longer on a shelf keeps "knocked off = has to be restocked before it
+## sells" true. Host-only data (Shelf.gd's _occupant), fine since customer
+## AI only runs on the host.
+func _is_still_stocked(item: Node2D) -> bool:
+	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		if shelf_body.get_node("Shelf").contains(item):
+			return true
+	return false
 
 func _find_stocked_item() -> Node2D:
 	var best: Node2D = null

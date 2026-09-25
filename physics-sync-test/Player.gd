@@ -35,6 +35,12 @@ const INTERACT_COOLDOWN := 3.0
 ## one like pickup.
 const DEFEND_RANGE := 70.0
 const DEFEND_COOLDOWN := 0.8
+## WEEK 8 — getting clipped by the forklift (Forklift.gd -> forklift_hit()
+## below). Same knockback-then-stun shape as Customer.gd's DEFEND_KNOCKBACK_*,
+## just harder, since it's a vehicle. Placeholders.
+const FORKLIFT_KNOCKBACK_SPEED := 520.0
+const FORKLIFT_KNOCKBACK_DECEL := 1000.0
+const FORKLIFT_STUN_DURATION := 0.6
 ## Week 6 Part 1 — the store became bigger than the fixed 960x540 window,
 ## so this project needed its first-ever scrolling camera. Duplicated from
 ## Main.gd's WORLD_WIDTH/WORLD_HEIGHT rather than preloaded from there —
@@ -82,6 +88,8 @@ var facing_angle := 0.0
 var _bot_interact_cooldown := 0.0
 var _bot_carry_timer := 0.0
 var _defend_cooldown := 0.0
+var _stun_timer := 0.0
+var _knockback_velocity := Vector2.ZERO
 ## Local-only (never replicated — this is per-viewer UI, not shared game
 ## state, same reasoning as the "C" prompt it drives): which slot, if any,
 ## carrying-and-aiming would currently place into. Recomputed every tick
@@ -152,6 +160,16 @@ func _physics_process(delta: float) -> void:
 	# the fuller reasoning (a customer left an item stranded at checkout
 	# when the day ended under it).
 	if get_tree().current_scene.is_day_report_active():
+		return
+	# WEEK 8 forklift knockback — input ignored until it wears off, same
+	# shape as Customer.gd's shove stun.
+	if _stun_timer > 0.0:
+		_stun_timer -= delta
+		velocity = _knockback_velocity
+		_knockback_velocity = _knockback_velocity.move_toward(Vector2.ZERO, FORKLIFT_KNOCKBACK_DECEL * delta)
+		move_and_slide()
+		_push_rigid_bodies(delta)
+		target_position = position
 		return
 
 	var dir := Vector2.ZERO
@@ -224,6 +242,12 @@ func _push_rigid_bodies(delta: float) -> void:
 		if not (collider is RigidBody2D):
 			continue
 		var carryable: Node = collider.get_node_or_null("Carryable")
+		if carryable == null:
+			# WEEK 8 floor displays (Display.gd) expose the same
+			# request_push() with the same authority, so they're pushed
+			# through the exact same path — without this a player would
+			# treat one as an immovable wall.
+			carryable = collider.get_node_or_null("Display")
 		if carryable == null:
 			continue
 		var impulse: Vector2 = -collision.get_normal() * PUSH_FORCE * delta
@@ -601,6 +625,36 @@ func teleport_to(pos: Vector2) -> void:
 	position = pos
 	target_position = pos
 	reset_physics_interpolation()
+
+## WEEK 8 — the forklift (Forklift.gd, host-only) drove into this player.
+## Movement here is client-authoritative, so the host can't shove a remote
+## player's node itself; it broadcasts this and only the owner acts — the
+## same "any_peer + is_multiplayer_authority() gate" shape as teleport_to()
+## above, plus a sender check so only the HOST can trigger it (a client
+## calling it on someone else's player is ignored; get_remote_sender_id()
+## is 0 when invoked locally outside an RPC context, so that's allowed too).
+## Getting hit also fumbles whatever's being carried: it's thrown in the
+## knockback direction via the normal try_throw() path, so it lands as
+## ordinary loose stock someone has to pick back up — the "physical chaos"
+## cost of not getting out of the way.
+@rpc("any_peer", "call_local", "reliable")
+func forklift_hit(from_position: Vector2) -> void:
+	var sender := multiplayer.get_remote_sender_id()
+	if sender != 1 and sender != 0:
+		return
+	if not is_multiplayer_authority():
+		return
+	var dir := global_position - from_position
+	if dir.length() < 0.01:
+		dir = Vector2.RIGHT.rotated(randf_range(0.0, TAU))
+	dir = dir.normalized()
+	_knockback_velocity = dir * FORKLIFT_KNOCKBACK_SPEED
+	_stun_timer = FORKLIFT_STUN_DURATION
+	var my_id := multiplayer.get_unique_id()
+	var carried := _find_carried_object(my_id)
+	if carried:
+		carried.get_node("Carryable").try_throw(my_id, dir)
+	print("[Player %d] hit by forklift" % my_id)
 
 func _find_carried_object(my_id: int) -> Node2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
