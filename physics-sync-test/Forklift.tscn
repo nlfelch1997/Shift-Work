@@ -1,0 +1,58 @@
+[gd_scene load_steps=3 format=3 uid="uid://cforkliftscn01"]
+
+[ext_resource type="Script" path="res://Forklift.gd" id="1"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_forklift"]
+size = Vector2(92, 44)
+
+[node name="Forklift" type="CharacterBody2D"]
+motion_mode = 1
+script = ExtResource("1")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+position = Vector2(6, 0)
+shape = SubResource("RectangleShape2D_forklift")
+
+[node name="ForkLeft" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(18, -18, 52, -18, 52, -11, 18, -11)
+color = Color(0.45, 0.45, 0.48, 1)
+
+[node name="ForkRight" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(18, 11, 52, 11, 52, 18, 18, 18)
+color = Color(0.45, 0.45, 0.48, 1)
+
+[node name="Body" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-40, -22, 14, -22, 14, 22, -40, 22)
+color = Color(0.95, 0.75, 0.1, 1)
+
+[node name="Stripes" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-40, -22, -32, -22, -40, -12, -40, 12, -32, 22, -40, 22)
+color = Color(0.1, 0.1, 0.1, 1)
+
+[node name="Mast" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(12, -22, 20, -22, 20, 22, 12, 22)
+color = Color(0.2, 0.2, 0.22, 1)
+
+[node name="Seat" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-26, -12, -6, -12, -6, 12, -26, 12)
+color = Color(0.25, 0.2, 0.15, 1)
+
+[node name="Beacon" type="Polygon2D" parent="."]
+polygon = PackedVector2Array(-20, -5, -12, -5, -12, 5, -20, 5)
+color = Color(1, 0.6, 0.1, 1)
+
+[node name="BeepAnchor" type="Node2D" parent="."]
+
+[node name="BeepLabel" type="Label" parent="BeepAnchor"]
+visible = false
+offset_left = -30.0
+offset_top = -52.0
+offset_right = 30.0
+offset_bottom = -30.0
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(1, 0.3, 0.1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+horizontal_alignment = 1
+text = "BEEP"

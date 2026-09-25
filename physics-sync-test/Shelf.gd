@@ -57,6 +57,24 @@ const SETTLE_TIME := 0.35 # seconds of continuous rest before a candidate actual
 ## from a missed wiring step.
 @export var accent_color := Color(1, 0.9, 0.3, 1)
 
+## WEEK 8 — forklift wreck (see Forklift.gd and wreck() below). A wrecked
+## shelf spills everything stocked on it and can't hold stock again until
+## WRECK_DURATION has passed. Placeholders, same as the rest of this block.
+##
+## FLAGGED DESIGN LIMIT: the shelf BODY itself doesn't physically move —
+## it's a StaticBody2D, and every other system that touches shelves
+## (slot positions, Main.gd's grid-cell section matching and lock-dimming,
+## customer shelf-front approach geometry, the product spawn band's
+## clearance math) assumes it never does. Making shelves RigidBody2Ds that
+## could be shoved out of alignment would ripple through all of that, so
+## the physical chaos lives in what the shelf was HOLDING (flung as real
+## RigidBody2D impulses) and nearby displays, while the shelf itself gets
+## a replicated wrecked state: tilted/darkened art, no stock accepted.
+const WRECK_DURATION := 7.0
+const WRECK_SPILL_RADIUS := 130.0 # from the shelf origin — slots sit ~70-92px out, so this catches every slot plus loose items right in front
+const WRECK_SPILL_SPEED := 460.0 # impulse = speed * mass, same convention as Forklift.gd's knocks
+const WRECK_TILT := 0.14 # radians, cosmetic
+
 var body: StaticBody2D # the shelf this component is attached to
 var slots: Array[Marker2D] = []
 ## Replicated so every peer can render "how full" this shelf is without
@@ -69,6 +87,13 @@ var _settle_timers: Array = []
 ## each slot. Not replicated — only the authority needs it, to know which
 ## body to keep checking and to stop two slots claiming the same object.
 var _occupant: Array = []
+## Replicated (added to the same Sync as `filled`) so every peer draws the
+## wrecked art; the countdown itself is authority-only.
+var wrecked := false
+var _wreck_timer := 0.0
+var _polygon_rotation := 0.0
+var _polygon_color := Color.WHITE
+var _wreck_label: Label
 
 func _ready() -> void:
 	body = get_parent()
@@ -83,11 +108,32 @@ func _ready() -> void:
 	_occupant.resize(slots.size())
 	set_multiplayer_authority(1)
 
+	var polygon: Polygon2D = body.get_node("Polygon2D")
+	_polygon_rotation = polygon.rotation
+	_polygon_color = polygon.color
+	# Built in code rather than Shelf.tscn — see this file's VISUAL NOTE on
+	# why nothing new goes into a .tscn that doesn't have to.
+	_wreck_label = Label.new()
+	_wreck_label.name = "WreckLabel"
+	_wreck_label.text = "WRECKED"
+	_wreck_label.add_theme_font_size_override("font_size", 18)
+	_wreck_label.add_theme_color_override("font_color", Color(1, 0.35, 0.2, 1))
+	_wreck_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_wreck_label.position = Vector2(-45, -14)
+	_wreck_label.size = Vector2(90, 28)
+	_wreck_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_wreck_label.visible = false
+	var anchor := Node2D.new()
+	anchor.name = "WreckLabelAnchor"
+	anchor.add_child(_wreck_label)
+	body.add_child.call_deferred(anchor)
+
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	var path := NodePath(".:filled")
-	config.add_property(path)
-	config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+	for prop in [".:filled", ".:wrecked"]:
+		var path := NodePath(prop)
+		config.add_property(path)
+		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
 	sync.replication_config = config
 	# Must be an explicit, identical name on every peer — see Carryable.gd's
 	# matching note on why an auto-generated name breaks replication.
@@ -103,6 +149,13 @@ func _physics_process(delta: float) -> void:
 	# could finish settling into a slot while the report screen was up —
 	# see Customer.gd's matching freeze for the fuller reasoning.
 	if get_tree().current_scene.is_day_report_active():
+		return
+	if wrecked:
+		# Nothing settles into a wrecked shelf — reset() already cleared
+		# every slot at wreck time, so there's nothing occupied to recheck.
+		_wreck_timer -= delta
+		if _wreck_timer <= 0.0:
+			wrecked = false
 		return
 	for i in slots.size():
 		if _occupant[i] != null:
@@ -123,7 +176,15 @@ func _process(_delta: float) -> void:
 	if not Net.is_active():
 		return
 	for i in slots.size():
-		slots[i].get_node("Indicator").visible = not filled[i]
+		slots[i].get_node("Indicator").visible = not filled[i] and not wrecked
+	var polygon: Polygon2D = body.get_node("Polygon2D")
+	polygon.rotation = _polygon_rotation + (WRECK_TILT if wrecked else 0.0)
+	polygon.color = _polygon_color * Color(0.55, 0.5, 0.5, 1) if wrecked else _polygon_color
+	_wreck_label.visible = wrecked
+	# Upright regardless of the shelf's own rotation (the Indicator/Prompt
+	# art doesn't do this — see Main.gd's KNOWN COSMETIC QUIRK note — but a
+	# warning that's upside-down on half the shelves is worth one line).
+	_wreck_label.get_parent().rotation = -body.global_rotation
 
 ## An occupied slot's item is un-placed the instant it's picked back up,
 ## drifts out past LEAVE_RADIUS, or gets knocked hard enough — no grace
@@ -210,6 +271,50 @@ func reset() -> void:
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
+	wrecked = false
+	_wreck_timer = 0.0
+
+## WEEK 8 — called by Forklift.gd (host only) when a ram connects. Returns
+## false (and does nothing) if this shelf is already wrecked, so a forklift
+## grinding against it doesn't re-fling the same pile every tick. Spills
+## every stocked item AND any loose carryable/display within
+## WRECK_SPILL_RADIUS: each one gets flung along the shelf's length, away
+## from the side the forklift hit, with some outward (into-the-aisle) spread
+## — sideways rather than straight away from the forklift, since "away from
+## the forklift" for anything between it and the shelf means INTO the
+## shelf, where it would just bounce back under the forks. Goes through
+## each object's own request_push(), same entry point every other knock
+## uses, so carried items are skipped by Carryable's existing check.
+func wreck(from_pos: Vector2) -> bool:
+	if not is_multiplayer_authority() or wrecked:
+		return false
+	for i in slots.size():
+		_occupant[i] = null
+		filled[i] = false
+		_settle_timers[i] = 0.0
+	wrecked = true
+	_wreck_timer = WRECK_DURATION
+	var along: Vector2 = body.global_transform.x.normalized()
+	var outward: Vector2 = -body.global_transform.y.normalized() # slots sit at local -y, so this points from the shelf into its aisle
+	var hit_side := signf((body.global_position - from_pos).dot(along)) # which way along the shelf is AWAY from the impact
+	var targets: Array = get_tree().get_nodes_in_group("carryable") + get_tree().get_nodes_in_group("display")
+	for obj in targets:
+		if obj.global_position.distance_to(body.global_position) > WRECK_SPILL_RADIUS:
+			continue
+		var comp: Node = obj.get_node_or_null("Carryable")
+		if comp == null:
+			comp = obj.get_node_or_null("Display")
+		if comp == null:
+			continue
+		# Items on the far side of the impact point fly that way; items on
+		# the near side fly the other way — a burst out from the hit, not
+		# everything sliding the same direction.
+		var side := signf((obj.global_position - from_pos).dot(along))
+		if side == 0.0:
+			side = hit_side if hit_side != 0.0 else (1.0 if randf() < 0.5 else -1.0)
+		var dir := (along * side + outward * randf_range(0.3, 0.9)).normalized()
+		comp.request_push(dir * WRECK_SPILL_SPEED * obj.mass)
+	return true
 
 func contains(obj: Node) -> bool:
 	return obj in _occupant
@@ -237,6 +342,8 @@ func slot_count() -> int:
 func nearest_empty_slot_position(from: Vector2) -> Variant:
 	var best_pos = null
 	var best_dist := INF
+	if wrecked:
+		return null
 	for i in slots.size():
 		if filled[i]:
 			continue
@@ -258,6 +365,10 @@ func nearest_empty_slot_position(from: Vector2) -> Variant:
 ## call from any peer: read-only, uses only the already-replicated `filled`
 ## array and static slot positions.
 func placeable_slot_at(predicted_pos: Vector2, obj: Node = null) -> Marker2D:
+	# Wrecked shelves refuse stock (see wreck()), so the "C" prompt must not
+	# promise a placement that the settle check will silently ignore.
+	if wrecked:
+		return null
 	for i in slots.size():
 		if filled[i]:
 			continue

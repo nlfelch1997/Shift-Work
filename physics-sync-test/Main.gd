@@ -176,6 +176,54 @@ extends Node2D
 ## called from _apply_section_accent_colors() below) so a product visually
 ## signals which shelf it belongs on, the same way the indicators already
 ## signal an empty slot.
+##
+## WEEK 8 — THE FORKLIFT HAZARD (Forklift.gd, Main.tscn's Forklift node),
+## plus knock-over-able floor displays (Display.gd, Main.tscn's Displays).
+## The forklift patrols Meat/Deli's central aisle — the east spoke off the
+## hub, the first section that opens after Dry Goods, so it's the first
+## thing a Day 3 crew walks into — and periodically rams a shelf, which
+## wrecks it (Shelf.gd's wreck(): stock flung as real RigidBody2D impulses,
+## shelf refuses stock for a few seconds). Host-authoritative, replicated
+## the same way customers are. (Storage deliveries, which the GRID MAP
+## comment below anticipates a forklift for, are still future work — this
+## one is the brief's Day 3 aisle hazard.) Edge cases found while reading
+## the existing code first, each handled where it lives rather than
+## special-cased here:
+## - DAY GATING is tied to Meat/Deli's own SECTIONS required_day (via
+##   is_unlocked_at_pos(forklift.home_position) in _configure_hazards()),
+##   not a second hardcoded "3", so the two can't drift apart. Inactive =
+##   hidden AND collision disabled, not just parked.
+## - Displays are NOT Carryables: anything in the "carryable" group counts
+##   against the product cap, is deleted every morning by
+##   _reset_shelves_and_products_for_new_day(), and gets picked up/bought.
+##   Display.gd reuses only the sync + request_push() half (see its header).
+## - Knocked-off stock used to still be the committed target of whichever
+##   shopper was walking to it, and got bought off the floor — see
+##   Customer.gd's _is_still_stocked(). Without that fix a wreck cost
+##   nothing.
+## - Forklift contact with a PLAYER can't move the player from the host
+##   (movement is client-authoritative) — it RPCs the owner, see Player.gd's
+##   forklift_hit().
+## - Products respawning in Meat/Deli's spawn band could land on top of the
+##   forklift or a display (the band spans the forklift's lane), and a
+##   RigidBody2D spawned overlapping another body gets flung by
+##   depenetration — _spawn_pos_in_section() now retries for clearance.
+## - A hard knock can in principle push a product through a wall/off the
+##   map, where it would silently count against the cap forever —
+##   _rescue_stranded_products() now also rescues out-of-bounds items (and
+##   displays).
+
+## Spawn-overlap clearance (see _spawn_pos_is_clear()). Forklift: its
+## rotated collision box reaches ~56px from its origin, plus a product's own
+## ~20px half-diagonal and margin. Carryable: two 28px boxes overlap inside
+## ~40px center-to-center.
+const SPAWN_CLEARANCE_FORKLIFT := 95.0
+const SPAWN_CLEARANCE_DISPLAY := 50.0
+const SPAWN_CLEARANCE_PRODUCT := 40.0
+const SPAWN_ATTEMPTS := 10
+## Anything closer than this to the outer edge is inside/past the 20px
+## perimeter walls — see _is_out_of_bounds().
+const WORLD_EDGE_MARGIN := 20.0
 
 const PlayerScene := preload("res://Player.tscn")
 const ProductScene := preload("res://Product.tscn")
@@ -486,6 +534,7 @@ func _current_shift_duration() -> float:
 @onready var report_week_label: Label = $ReportLayer/Panel/WeekLabel
 @onready var save_button: Button = $ReportLayer/Panel/ButtonRow/SaveButton
 @onready var continue_button: Button = $ReportLayer/Panel/ButtonRow/ContinueButton
+@onready var forklift: CharacterBody2D = $Forklift
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -502,6 +551,8 @@ var carryable_objects: Array[Node] = []
 var shelves: Array[Node] = []
 ## Every CashierBody found generically, same reasoning.
 var cashiers: Array[Node] = []
+## Week 8 floor displays (Display.gd), found by group the same way.
+var displays: Array[Node] = []
 var players := {} # peer_id -> Player node (populated on every peer)
 var bot_mode := false
 var bot_run_seconds := 20.0
@@ -541,6 +592,7 @@ func _ready() -> void:
 	carryable_objects = get_tree().get_nodes_in_group("carryable")
 	shelves = get_tree().get_nodes_in_group("shelf")
 	cashiers = get_tree().get_nodes_in_group("cashier")
+	displays = get_tree().get_nodes_in_group("display")
 	_apply_section_accent_colors()
 	_cache_original_colors()
 	player_spawner.spawn_function = _spawn_player_node
@@ -631,6 +683,14 @@ func _configure_gates() -> void:
 		if required_days.has(gate_body.name):
 			gate.required_day = required_days[gate_body.name]
 		gate.configure(current_day)
+
+## WEEK 8 — turns the forklift on/off for the current day. Called from the
+## same two places as _configure_gates() (the day-change poll on every peer,
+## and _advance_to_next_day() on the host). Active exactly when the
+## section the forklift is parked in is unlocked — see Forklift.gd's DAY
+## GATING note for why this reads SECTIONS instead of hardcoding Day 3.
+func _configure_hazards() -> void:
+	forklift.configure(is_unlocked_at_pos(forklift.home_position))
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
@@ -877,6 +937,12 @@ func _start_shift() -> void:
 	# customer actually newly spawned.
 	_despawn_all_customers()
 	_reset_shelves_and_products_for_new_day()
+	# WEEK 8: every shelf's wrecked state was cleared by the reset above;
+	# the forklift and displays go back to their starting spots too, so no
+	# day inherits yesterday's wreckage (same reasoning as the shelf reset).
+	forklift.reset_for_new_day()
+	for display_body in displays:
+		display_body.get_node("Display").reset_to_home()
 	var grace := _current_customer_grace_period()
 	var duration := _current_shift_duration()
 	_customer_grace_timer = grace
@@ -991,6 +1057,7 @@ func _advance_to_next_day() -> void:
 	current_day += 1
 	_configure_gates()
 	_configure_cashiers()
+	_configure_hazards()
 	_apply_section_lock_visuals()
 	_last_configured_day = current_day
 	print("[Main] Starting Day %d..." % current_day)
@@ -1026,7 +1093,7 @@ func _restock_products() -> void:
 	var cap: int = _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
 	var current := 0
 	for obj in get_tree().get_nodes_in_group("carryable"):
-		if not is_break_room_at_pos(obj.global_position):
+		if not is_break_room_at_pos(obj.global_position) and not _is_out_of_bounds(obj.global_position):
 			current += 1
 	while current < cap:
 		_spawn_product(_product_spawn_index)
@@ -1050,13 +1117,27 @@ func _restock_products() -> void:
 ## _restock_products() (called right alongside it in _process()), host-only.
 func _rescue_stranded_products() -> void:
 	for obj in get_tree().get_nodes_in_group("carryable"):
-		if not is_break_room_at_pos(obj.global_position):
+		if not is_break_room_at_pos(obj.global_position) and not _is_out_of_bounds(obj.global_position):
 			continue
 		var c: Node = obj.get_node("Carryable")
 		if c.carrier_id != 0:
 			continue
 		obj.global_position = _spawn_pos_in_section(_pick_unlocked_section())
 		obj.linear_velocity = Vector2.ZERO
+	# WEEK 8: a display knocked clean off the map (see the header's forklift
+	# edge-case list) just goes home — it isn't stock, so there's no
+	# "respawn somewhere useful" question to answer.
+	for display_body in displays:
+		if _is_out_of_bounds(display_body.global_position):
+			display_body.get_node("Display").reset_to_home()
+
+## WEEK 8 — true if a position is inside or past the world's perimeter
+## walls. Nothing should ever be there; if something is (a hard forklift
+## knock, or the old MAX_SPEED spike Carryable.gd clamps against), it's
+## unreachable, so it's rescued rather than counted.
+func _is_out_of_bounds(world_pos: Vector2) -> bool:
+	return world_pos.x < WORLD_EDGE_MARGIN or world_pos.y < WORLD_EDGE_MARGIN \
+		or world_pos.x > WORLD_WIDTH - WORLD_EDGE_MARGIN or world_pos.y > WORLD_HEIGHT - WORLD_EDGE_MARGIN
 
 ## Same shape as _restock_products(), for the combined shopper+disruptive
 ## population — tops back up to _customer_baseline() + PER_EXTRA_PLAYER
@@ -1226,7 +1307,29 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	var cell: Vector2i = section["grid_pos"]
 	var room_x: float = cell.x * ROOM_WIDTH
 	var room_y: float = cell.y * ROOM_HEIGHT
-	return Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(room_y + 120.0, room_y + 360.0))
+	# WEEK 8: the same overlap-fling reasoning now applies to MOVING bodies
+	# inside the band too — Meat/Deli's band spans the forklift's lane and
+	# a display's home spot, and products spawning on top of each other was
+	# already a mild pre-existing version of it. Retry a few times for a
+	# clear spot; if the section is genuinely crowded, accept the last roll
+	# rather than fail to spawn (the MAX_SPEED clamp still bounds the result).
+	var pos := Vector2.ZERO
+	for attempt in SPAWN_ATTEMPTS:
+		pos = Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(room_y + 120.0, room_y + 360.0))
+		if _spawn_pos_is_clear(pos):
+			break
+	return pos
+
+func _spawn_pos_is_clear(pos: Vector2) -> bool:
+	if forklift.active and pos.distance_to(forklift.global_position) < SPAWN_CLEARANCE_FORKLIFT:
+		return false
+	for display_body in displays:
+		if pos.distance_to(display_body.global_position) < SPAWN_CLEARANCE_DISPLAY:
+			return false
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if pos.distance_to(obj.global_position) < SPAWN_CLEARANCE_PRODUCT:
+			return false
+	return true
 
 ## UPGRADED TWICE this session, replacing the old per-section
 ## _customer_entrance_pos(): playtest request for a real store entrance —
@@ -1341,6 +1444,7 @@ func _process(delta: float) -> void:
 		_last_configured_day = current_day
 		_configure_gates()
 		_configure_cashiers()
+		_configure_hazards()
 		_apply_section_lock_visuals()
 		print("[Main] Day is now %d" % current_day)
 
@@ -1425,7 +1529,11 @@ func _process(delta: float) -> void:
 		var s: int = shelf.slot_count()
 		total_filled += f
 		total_slots += s
-		lines.append("%s: %d/%d" % [shelf_body.name, f, s])
+		lines.append("%s: %d/%d%s" % [shelf_body.name, f, s, "  WRECKED" if shelf.wrecked else ""])
+	if forklift.active:
+		# rams_today isn't replicated (diagnostic only), so only the host's
+		# count is meaningful — clients just see that it's live.
+		lines.append("FORKLIFT active in Meat/Deli" + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
 	# No fixed completion state as of Week 5B — stock demand is continuous
 	# for the whole shift, so there's nothing to declare "complete" within
 	# a day. WEEK 7: the clock now ends the DAY, not the session — see
