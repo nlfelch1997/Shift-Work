@@ -237,6 +237,9 @@ func _carried_by(carry_id: int) -> Node2D:
 func _complete_purchase(item: Node2D, carry_id: int) -> void:
 	total_sold += 1
 	print("[%s] purchase complete: %s (total_sold=%d)" % [body.name, item.name, total_sold])
+	# WEEK 11 — before the item is freed: Main.gd reads its priority-order
+	# tag (if any) to decide whether this sale earns the order multiplier.
+	get_tree().current_scene.note_sale(item)
 	item.queue_free()
 	var customer := _customer_by_carry_id(carry_id)
 	if customer:

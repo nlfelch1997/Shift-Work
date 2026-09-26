@@ -18,6 +18,14 @@ extends SceneTree
 ## Add --shots (and run under xvfb-run, no --headless) to render real frames
 ## to user://hazard_shots/ whenever the manager and forklift are both on
 ## screen together.
+## WEEK 11 — the Day 5+ stocking grace bonus and the manager's priority stock
+## orders (per-item tagging, the 1.5x pay, lapsed orders, the banner vs the
+## LOOK BUSY warning, the day rollover):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --test=orders
+## The solo sim (--test=solo) also plays the orders from Day 5 on — the brain
+## goes for the called section's stock while an order is open — and reports
+## orders filled, bonus pay, and any frame where the order banner and the
+## LOOK BUSY warning overlapped on screen.
 
 var main: Node
 var fails := 0
@@ -44,6 +52,8 @@ func _initialize() -> void:
 			_run_interact.call_deferred()
 		"solo":
 			_run_solo.call_deferred()
+		"orders":
+			_run_orders.call_deferred()
 
 func check(cond: bool, what: String) -> void:
 	print(("PASS  " if cond else "FAIL  ") + what)
@@ -421,10 +431,21 @@ func slot_color_ok(shelf_body: Node, obj: Node) -> bool:
 
 ## Best (product, slot) job for a stocker: nearest free product that has an
 ## open, matching, reachable slot.
+## WEEK 11: while a priority order is open, a human goes for the called
+## section's stock first (falls back to anything if none is reachable).
 func pick_product(p: Node2D) -> Node2D:
+	if main.order_section != "":
+		var for_order := _pick_product(p, main.SECTION_COLORS[main.order_section])
+		if for_order != null:
+			return for_order
+	return _pick_product(p, Color(0, 0, 0, 0))
+
+func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
 	for obj in get_nodes_in_group("carryable"):
+		if only_color.a > 0.0 and not obj.get_node("Polygon2D").color.is_equal_approx(only_color):
+			continue
 		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or recent_drops.has(obj):
 			continue
 		if not main.is_unlocked_at_pos(obj.global_position) and main._grid_cell_of(obj.global_position) != Vector2i(1, 1):
@@ -468,16 +489,19 @@ func _run_solo() -> void:
 	var day_stats := []
 	for day in solo_days:
 		await wait_until(func(): return main.shift_active and main.current_day == day, 20.0)
-		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0}
+		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main._customer_grace_timer}
 		var start_sold: int = main._sold_at_day_start
 		print("SOLO  Day %d start — %.0fs shift, sections %s, product cap %d" % [day, main.shift_time_left, str(main._unlocked_sections().map(func(s): return s["name"])), main._product_baseline()])
 		await _play_shift()
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
 		var sold: int = main._total_sold() - main._sold_at_day_start
-		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], main.report_pay_label.text]
+		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.report_pay_label.text]
 		print(line)
 		day_stats.append(line)
+		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
+		check(day < main.PRIORITY_ORDER_START_DAY or main.orders_called_today > 0, "Day %d: priority orders called: %d" % [day, main.orders_called_today])
+		check(day >= main.PRIORITY_ORDER_START_DAY or main.orders_called_today == 0, "Day %d: no priority orders before Day %d" % [day, main.PRIORITY_ORDER_START_DAY])
 		if day != solo_days[-1]:
 			main._on_continue_pressed()
 	print("SOLO SUMMARY%s" % (" (careless: never dodges the forklift)" if careless else ""))
@@ -523,6 +547,18 @@ func _play_shift() -> void:
 			stats["watched_s"] += dt
 		if fk().active and mgr().active and manager_overlaps_forklift():
 			stats["overlap"] += 1
+		# (Yesterday's customers are freed at shift start but linger in the
+		# group until the frame ends — only count live ones.)
+		if stats["first_customer_s"] < 0.0 and get_nodes_in_group("customer").any(func(c): return not c.is_queued_for_deletion()):
+			stats["first_customer_s"] = stats["shift_len"] - main.shift_time_left
+		# WEEK 11: the order banner and the LOOK BUSY warning on screen at once.
+		if main._order_label.visible and main._watch_label.visible:
+			stats["banner_and_busy_s"] += dt
+			if rects_overlap(main._order_label, main._watch_label) or (main._toast_label.visible and rects_overlap(main._order_label, main._toast_label)):
+				stats["banner_clash"] += 1
+			if shots and not stats.has("banner_shot"):
+				stats["banner_shot"] = true
+				await shot("solo_day%d_order_banner_and_look_busy" % main.current_day)
 		shot_cool -= dt
 		if shots and shot_cool <= 0.0 and fk().active and mgr().active and main._grid_cell_of(pos) == Vector2i(2, 1) and main._grid_cell_of(mgr().global_position) == Vector2i(2, 1):
 			shot_cool = 12.0
@@ -600,3 +636,255 @@ func _play_shift() -> void:
 		last_pos = pos
 		steer(dir)
 	steer(Vector2.ZERO)
+
+## ---------------------------------------------------------------------------
+## WEEK 11 — PRIORITY ORDERS + STOCKING GRACE
+
+func section_by_name(n: String) -> Dictionary:
+	for s in main.SECTIONS:
+		if s["name"] == n:
+			return s
+	return {}
+
+## Free, unshelved products of a section's color, sitting in open floor.
+func loose_products(section_name: String) -> Array:
+	var color: Color = main.SECTION_COLORS[section_name]
+	var out := []
+	for obj in get_nodes_in_group("carryable"):
+		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj):
+			continue
+		if obj.get_node("Polygon2D").color.is_equal_approx(color):
+			out.append(obj)
+	return out
+
+## An empty slot on a (non-wrecked) shelf in the given section.
+func empty_slot_in(section_name: String) -> Marker2D:
+	var cell: Vector2i = section_by_name(section_name)["grid_pos"]
+	for sb in main.shelves:
+		if main._grid_cell_of(sb.global_position) != cell:
+			continue
+		var shelf: Node = sb.get_node("Shelf")
+		if shelf.wrecked:
+			continue
+		for i in shelf.slots.size():
+			if not shelf.filled[i]:
+				return shelf.slots[i]
+	return null
+
+## Real placement: the product is put down on a slot and the shelf's own
+## settle check decides it's stocked (which is what fires the order hook).
+func stock_one(section_name: String, obj: RigidBody2D = null) -> RigidBody2D:
+	if obj == null:
+		var pool := loose_products(section_name)
+		if pool.is_empty():
+			return null
+		obj = pool[0]
+	var slot := empty_slot_in(section_name)
+	if slot == null:
+		return null
+	move_body(obj, slot.global_position)
+	var ok := await wait_until(func(): return _is_placed(obj), 2.0)
+	return obj if ok else null
+
+## Sell an item the way a shopper does: it leaves the shelf (a shopper picks
+## it up first), then the register completes the purchase.
+func sell(obj: RigidBody2D) -> void:
+	move_body(obj, main.cashiers[0].global_position + Vector2(0, 120))
+	await wait_until(func(): return not _is_placed(obj), 1.0)
+	main.cashiers[0].get_node("Cashier")._complete_purchase(obj, -99999)
+	await physics_frame
+
+func rects_overlap(a: Control, b: Control) -> bool:
+	return a.get_global_rect().intersects(b.get_global_rect())
+
+func _run_orders() -> void:
+	await wait_until(func(): return main.shift_active, 10.0)
+	# Captured on the very first frames of the shift, before it ticks away.
+	var grace_now: float = main._customer_grace_timer
+	var clock_now: float = main.shift_time_left
+	check(main.current_day == 5, "started on Day 5")
+
+	# --- G: grace period. Existing per-section scaling intact, +15s flat on
+	# top from Day 5; Days 1-4 unchanged.
+	var base: float = main.CUSTOMER_GRACE_PERIOD
+	var bonus: float = main.SECTION_TIME_BONUS
+	var real_day: int = main.current_day
+	var table := {}
+	for d in range(1, 8):
+		main.current_day = d
+		table[d] = [main._current_customer_grace_period(), main._current_shift_duration()]
+	main.current_day = real_day
+	print("GRACE  day -> [grace, shift clock]: %s" % str(table))
+	var sd: float = main.shift_duration
+	for d in [1, 2]:
+		check(is_equal_approx(table[d][0], base) and is_equal_approx(table[d][1], sd), "G: Day %d unchanged: %.0fs grace, %.0fs clock" % [d, table[d][0], table[d][1]])
+	for d in [3, 4]:
+		check(is_equal_approx(table[d][0], base + bonus) and is_equal_approx(table[d][1], sd + bonus), "G: Day %d unchanged: %.0fs grace, %.0fs clock" % [d, table[d][0], table[d][1]])
+	for d in [5, 6]:
+		check(is_equal_approx(table[d][0], base + 2 * bonus + 15.0) and is_equal_approx(table[d][1], sd + 2 * bonus + 15.0), "G: Day %d = per-section %.0fs + flat 15s: %.0fs grace, %.0fs clock" % [d, base + 2 * bonus, table[d][0], table[d][1]])
+	check(is_equal_approx(table[7][0], base + 3 * bonus + 15.0), "G: Day 7 (Bakery opens) keeps both: %.0fs grace" % table[7][0])
+	check(absf(grace_now - table[5][0]) < 0.5, "G: the live Day 5 shift actually started with %.1fs of grace" % grace_now)
+	check(absf(clock_now - table[5][1]) < 0.5, "G: ...and %.1fs on the clock" % clock_now)
+
+	# Test control: no auto orders, no customers buying our stock, manager
+	# and forklift parked far away, player in the break room.
+	main._order_timer = 1.0e9
+	main._customer_grace_timer = 1.0e9
+	fk()._pause_timer = 1.0e9
+	pin_manager(Vector2(480, 1350), 0.0)
+	player().teleport_to(Vector2(480, 270))
+	await wait(0.5)
+	var cashier: Node = main.cashiers[0].get_node("Cashier")
+
+	# --- O1: a filled order. Wrong-section stock doesn't count, a tagged item
+	# sold BEFORE the order fills is still credited once it fills, stock
+	# placed after it closed is untagged, and only the tagged items pay 1.5x.
+	main._issue_priority_order("Dry Goods", 3)
+	await wait(0.1) # a Main._process pass, so the banner has been drawn
+	check(main.order_section == "Dry Goods" and main.order_needed == 3, "O1: order open: %d in %s" % [main.order_needed, main.order_section])
+	check(main._order_label.visible and "Stock 3 more in Dry Goods" in main._order_label.text and "15s left" in main._order_label.text, "O1: banner: '%s'" % main._order_label.text)
+	var wrong := await stock_one("Dairy/Frozen")
+	check(wrong != null and not wrong.has_meta("priority_order") and main.order_stocked == 0, "O1: stocking Dairy/Frozen doesn't count toward a Dry Goods order")
+	var sold0: int = main._total_sold() - main._sold_at_day_start
+	var pay0: int = main._pay_today()
+	var a := await stock_one("Dry Goods")
+	check(a != null and a.get_meta("priority_order", 0) == main._order_id and main.order_stocked == 1, "O1: first Dry Goods item tagged to order #%d" % main._order_id)
+	await wait(0.1)
+	check("Stock 2 more in Dry Goods" in main._order_label.text, "O1: banner counts down the quantity: '%s'" % main._order_label.text)
+	await sell(a)
+	check(main.priority_sales_today == 0, "O1: tagged item sold before the order filled: not credited yet")
+	var b := await stock_one("Dry Goods")
+	# Knock b off its shelf and put it back — re-stocking the same item mustn't count twice.
+	move_body(b, b.global_position + Vector2(0, 80) * (-b.get_parent().global_transform.y if false else Vector2.ONE))
+	await wait_until(func(): return not _is_placed(b), 1.0)
+	await stock_one("Dry Goods", b)
+	check(main.order_stocked == 2, "O1: re-shelving the same item doesn't count twice (%d/3)" % main.order_stocked)
+	var c := await stock_one("Dry Goods")
+	check(main.order_section == "" and main.orders_filled_today == 1, "O1: third item fills the order (filled today: %d)" % main.orders_filled_today)
+	check(main.priority_sales_today == 1, "O1: the early sale is credited once it fills (priority sales: %d)" % main.priority_sales_today)
+	await wait(0.1)
+	check(main._order_label.visible and "ORDER FILLED" in main._order_label.text, "O1: result on the banner: '%s'" % main._order_label.text)
+	var d := await stock_one("Dry Goods")
+	check(d != null and not d.has_meta("priority_order"), "O1: stock placed after the order closed is untagged")
+	await sell(b)
+	await sell(c)
+	await sell(d)
+	await sell(wrong)
+	var sold_now: int = main._total_sold() - main._sold_at_day_start
+	check(sold_now - sold0 == 5, "O1: 5 sales recorded (%d)" % (sold_now - sold0))
+	check(main.priority_sales_today == 3, "O1: exactly the 3 tagged items earned the bonus (%d)" % main.priority_sales_today)
+	var expect: int = pay0 + 5 * main.PAY_PER_SALE + 3 * 5
+	check(main._pay_today() == expect, "O1: pay +$%d = 2 plain x $10 + 3 order items x $15 (got %s, expected %s)" % [expect - pay0, main._format_money(main._pay_today()), main._format_money(expect)])
+
+	# --- O2: a lapsed order. Partial stock, window runs out: no penalty, no
+	# bonus on the partial items, ordinary pay for them.
+	await wait(main.PRIORITY_ORDER_RESULT_SECONDS + 0.2)
+	main._issue_priority_order("Dairy/Frozen", 4)
+	var p1 := await stock_one("Dairy/Frozen")
+	var p2 := await stock_one("Dairy/Frozen")
+	check(main.order_stocked == 2 and p1.has_meta("priority_order") and p2.has_meta("priority_order"), "O2: 2/4 stocked toward the Dairy/Frozen order")
+	await sell(p1) # sold during the window — held pending
+	var ps_before: int = main.priority_sales_today
+	var pay_before: int = main._pay_today()
+	var lapsed := await wait_until(func(): return main.order_section == "", main.PRIORITY_ORDER_WINDOW + 1.0)
+	check(lapsed and main.orders_filled_today == 1 and main.orders_called_today == 2, "O2: window expired unfilled (filled %d of %d called)" % [main.orders_filled_today, main.orders_called_today])
+	check(main._pay_today() == pay_before, "O2: no penalty for missing it (pay %s -> %s)" % [main._format_money(pay_before), main._format_money(main._pay_today())])
+	await physics_frame
+	await wait(0.1)
+	check("missed" in main._order_label.text, "O2: result on the banner: '%s'" % main._order_label.text)
+	await sell(p2)
+	check(main.priority_sales_today == ps_before, "O2: items stocked toward a missed order pay normally (priority sales still %d)" % main.priority_sales_today)
+	check(main._pay_today() == pay_before + main.PAY_PER_SALE, "O2: ...$10, not $15")
+	check(not main._pending_order_sales.has(p1.get_meta("priority_order") if is_instance_valid(p1) else -1), "O2: nothing left pending")
+
+	# --- O3: the order banner and the LOOK BUSY warning (and the write-up
+	# toast) up at the same time — separate rows, no overlap, all on screen.
+	await wait(main.PRIORITY_ORDER_RESULT_SECONDS + 0.2)
+	var spot := Vector2(1440, 270) # Dry Goods aisle
+	player().teleport_to(spot)
+	pin_manager(spot + Vector2(-180, 0), 0.0)
+	var st: Dictionary = mgr()._player_state(1)
+	st["cooldown"] = 0.0
+	main._issue_priority_order("Meat/Deli", 3)
+	# Wait for the hot "!" stage — the longest LOOK BUSY text.
+	var both := await wait_until(func(): return main._watch_label.visible and main._order_label.visible and mgr().watch_level >= mgr().WARN_LEVEL, 6.0)
+	main._toast_label.text = "WRITTEN UP for standing around!  -$25"
+	main._toast_timer = 3.0
+	await process_frame
+	await process_frame
+	check(both, "O3: LOOK BUSY ('%s') and the order banner ('%s') both up" % [main._watch_label.text, main._order_label.text])
+	var labels := [main._watch_label, main._toast_label, main._order_label]
+	var clash := false
+	for i in labels.size():
+		for j in range(i + 1, labels.size()):
+			if rects_overlap(labels[i], labels[j]):
+				clash = true
+	print("RECTS  watch %s | toast %s | order %s" % [main._watch_label.get_global_rect(), main._toast_label.get_global_rect(), main._order_label.get_global_rect()])
+	check(not clash, "O3: banner, LOOK BUSY and the toast sit in separate rows (no overlap)")
+	# The game's own viewport (project.godot), not the headless window's.
+	var vp := Vector2(ProjectSettings.get_setting("display/window/size/viewport_width"), ProjectSettings.get_setting("display/window/size/viewport_height"))
+	var widest := ""
+	var fits := true
+	for sample in ["MANAGER: Stock 9 more in Dairy/Frozen!  15s left  (1.5x pay)", "ORDER FILLED — those 9 Dairy/Frozen items pay 1.5x!", "Priority order missed (Dairy/Frozen) — no bonus", main._watch_label.text]:
+		main._order_label.text = sample
+		var w: float = main._order_label.get_theme_font("font").get_string_size(sample, HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x
+		if w > vp.x:
+			fits = false
+			widest = "%s (%.0fpx)" % [sample, w]
+	check(fits, "O3: longest banner texts fit the %.0fpx screen%s" % [vp.x, (" — too wide: " + widest) if not fits else ""])
+	await shot("o3_order_banner_with_look_busy")
+	release_manager()
+	main._clear_priority_order()
+	pin_manager(Vector2(480, 1350), 0.0)
+	st["meter"] = 0.0
+	st["cooldown"] = 1000.0
+
+	# --- O4: the automatic call-outs — random over unlocked sections, sized
+	# to what each can take, never before Day 5.
+	var called_before: int = main.orders_called_today
+	var seen := {}
+	var qtys := []
+	for i in 40:
+		main._issue_priority_order()
+		if main.order_section != "":
+			seen[main.order_section] = true
+			qtys.append(main.order_needed)
+		main._clear_priority_order()
+	main.orders_called_today = called_before # those were test rolls, not the day's orders
+	var unlocked: Array = main._unlocked_sections().map(func(s): return s["name"])
+	check(seen.size() >= 2 and seen.keys().all(func(n): return n in unlocked), "O4: sections called over 40 rolls: %s (unlocked: %s)" % [str(seen.keys()), str(unlocked)])
+	check(qtys.all(func(q): return q >= 1 and q <= main.PRIORITY_ORDER_QTY_MAX), "O4: quantities in range: %s" % str(qtys))
+	main._order_timer = 0.01
+	await wait(0.1)
+	check(main.order_section != "", "O4: the interval timer calls one out on its own (%s x%d)" % [main.order_section, main.order_needed])
+	check(is_equal_approx(main._order_timer, main.PRIORITY_ORDER_INTERVAL) or main._order_timer > main.PRIORITY_ORDER_INTERVAL - 1.0, "O4: next call-out %.0fs later" % main._order_timer)
+	main._clear_priority_order()
+	main.current_day = 4
+	main._order_timer = 0.01
+	main._tick_priority_orders(1.0)
+	check(main.order_section == "", "O4: no orders on Day 4")
+	main.current_day = real_day
+	main._order_timer = 1.0e9
+
+	# --- O5: day rollover with an order open — the report shows the orders
+	# line, the order lapses at the bell, Day 6 starts clean with orders on
+	# and the week's bonus kept.
+	main._issue_priority_order("Dry Goods", 2)
+	var week_bonus: int = main.priority_sales_week
+	main.shift_time_left = 0.1
+	await wait_until(func(): return main.is_day_report_active(), 3.0)
+	await wait(0.2) # let Main._process refresh the report labels
+	check(main.order_section == "" and not main._order_label.visible, "O5: open order lapses at the end of the day, banner hidden under the report")
+	check(main.report_order_label.visible and main.report_order_label.text.begins_with("Priority orders: 1/"), "O5: report line: '%s'" % main.report_order_label.text)
+	var expect_pay: int = (main._total_sold() - main._sold_at_day_start) * main.PAY_PER_SALE + main.priority_sales_today * 5 - main.writeups_today * main.WRITEUP_PENALTY
+	check(main.report_pay_label.text.begins_with("Pay Today: %s" % main._format_money(expect_pay)), "O5: report pay includes the order bonus: '%s'" % main.report_pay_label.text)
+	print("REPORT  %s | %s | %s | %s" % [main.report_today_label.text, main.report_writeup_label.text, main.report_order_label.text, main.report_pay_label.text])
+	await shot("o5_report")
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and main.current_day == 6, 5.0)
+	check(main.current_day == 6, "O5: advanced to Day 6")
+	check(absf(main._customer_grace_timer - (base + 2 * bonus + 15.0)) < 0.5, "O5: Day 6 grace %.1fs (per-section + 15)" % main._customer_grace_timer)
+	check(main.orders_called_today == 0 and main.orders_filled_today == 0 and main.priority_sales_today == 0, "O5: Day 6 order tallies reset")
+	check(main.priority_sales_week == week_bonus, "O5: week keeps its %d bonus sales" % main.priority_sales_week)
+	check(is_equal_approx(main._order_timer, main.PRIORITY_ORDER_INTERVAL) or main._order_timer > main.PRIORITY_ORDER_INTERVAL - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
+	finish()

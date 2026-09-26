@@ -247,6 +247,21 @@ extends Node2D
 ##   both from Day 5; Days 1-4 are untouched. _spawn_pos_is_clear() now also
 ##   keeps spawns off slots, since the outer row reaches into the spawn band.
 ## - tools/hazards_test.gd holds the repro scenarios and a solo-play sim.
+##
+## WEEK 11 — DAY 5+ TUNING: a longer stocking head start, and the manager's
+## priority stock orders. Both reuse what was already here:
+## - STOCKING_GRACE_BONUS: a flat +15s on top of SECTION_TIME_BONUS's
+##   per-section scaling (_extra_day_time()), from Day 5, on both the grace
+##   period and the shift clock.
+## - PRIORITY ORDERS (PRIORITY_ORDER_*): every 45s of shift he calls out a
+##   random unlocked section and a quantity; 15s to stock it. Tracking is
+##   per ITEM, not per shift: Shelf.gd reports each item the moment it's
+##   stocked (note_item_stocked()), and one that counts toward the open order
+##   is tagged with that order's id (node meta, host-side). Cashier.gd
+##   reports each sale (note_sale()); a tagged item whose order was filled
+##   counts in priority_sales_today, which _pay_today() pays at the multiplier
+##   — the existing Pay Today math, plus one term. The banner is a third row
+##   of the LOOK BUSY alert layer (_build_alert_layer()).
 
 ## Day the manager starts his rounds — see the WEEK 9 note above.
 const MANAGER_START_DAY := 4
@@ -255,6 +270,26 @@ const MANAGER_START_DAY := 4
 ## moment erasing a whole shift. Tune freely.
 const PAY_PER_SALE := 10
 const WRITEUP_PENALTY := 25
+## WEEK 11 — manager priority stock orders, Day 5+ (see the WEEK 11 header
+## note). Every PRIORITY_ORDER_INTERVAL of shift clock he calls out one
+## unlocked section and a quantity; the crew has PRIORITY_ORDER_WINDOW to
+## stock that many into it. Items stocked toward an order that gets FILLED
+## pay PRIORITY_ORDER_MULTIPLIER x PAY_PER_SALE when they sell (the rest of
+## the day's sales are untouched); an order that runs out of time costs
+## nothing, it just pays no bonus. Quantity: a random roll in
+## [QTY_MIN, QTY_MAX] (+ per extra player), capped at what the section can
+## actually take right now (open slots, loose stock of its color) so an
+## order is never impossible. FLAGGED placeholders, tuned against the solo
+## sim in tools/hazards_test.gd, not a human playtest.
+const PRIORITY_ORDER_START_DAY := 5
+const PRIORITY_ORDER_INTERVAL := 45.0
+const PRIORITY_ORDER_WINDOW := 15.0
+const PRIORITY_ORDER_MULTIPLIER := 1.5
+const PRIORITY_ORDER_QTY_MIN := 3
+const PRIORITY_ORDER_QTY_MAX := 5
+const PRIORITY_ORDER_QTY_PER_EXTRA_PLAYER := 2
+## How long the "ORDER FILLED" / "order missed" line stays on the banner.
+const PRIORITY_ORDER_RESULT_SECONDS := 3.0
 
 ## Spawn-overlap clearance (see _spawn_pos_is_clear()). Forklift: its
 ## rotated collision box reaches ~56px from its origin, plus a product's own
@@ -408,10 +443,43 @@ var _day_report_active := false
 var writeups_today := 0
 var writeups_week := 0
 var writeups_by_peer := {}
+## WEEK 11 — priority orders (see PRIORITY_ORDER_* above). The open order and
+## the day's order tallies are host-written and replicated via DaySync, the
+## same as the write-up counters, so every peer's banner and report read
+## the same values. order_section == "" means no order is open.
+var order_section := ""
+var order_needed := 0
+var order_stocked := 0
+var order_time_left := 0.0
+var orders_called_today := 0
+var orders_filled_today := 0
+## Sales that earned the multiplier. Pay is derived from these the same way
+## it is from write-ups (_pay_today()/_pay_week()), not stored as money.
+var priority_sales_today := 0
+var priority_sales_week := 0
+## Host-only bookkeeping. HOW AN ITEM IS TIED TO AN ORDER: the moment an item
+## settles into a slot in the ordered section during the window (Shelf.gd ->
+## note_item_stocked()), the product node gets a "priority_order" meta set to
+## that order's id. The tag is on the item itself, so it doesn't matter
+## where the item goes or how long it sits after that; it's read once, at
+## checkout (Cashier.gd -> note_sale()). Ids are unique for the whole session
+## and never reused, so a tag can't be mistaken for a later order's. A tagged
+## item that sells BEFORE its order fills is parked in
+## _pending_order_sales and credited only if the order goes on to fill.
+var _order_id := 0 # the open order's id, 0 = none
+var _next_order_id := 1
+var _order_timer := 0.0
+var _filled_order_ids := {}
+var _pending_order_sales := {} # order id -> tagged items already sold
 ## Local-only UI for the manager tell/toast (_build_alert_layer()).
 var _watch_label: Label
 var _toast_label: Label
 var _toast_timer := 0.0
+var _order_label: Label
+var _order_result_text := ""
+var _order_result_timer := 0.0
+var _order_result_filled := false
+var report_order_label: Label
 
 ## --- Week 4/5B/6 shift-economy placeholders — every number below is a
 ## guess to make the system testable, not a tuned value. Flagging for
@@ -574,16 +642,33 @@ const CUSTOMER_GRACE_PERIOD := 9.0
 ## Day 1-2 (1 section) is unaffected and later days automatically pick up
 ## whatever's unlocked that day.
 const SECTION_TIME_BONUS := 10.0
+## WEEK 11 — playtest feedback: Day 5's density (two-deep shelves, 1.5x
+## stock on the floor, both hazards live) made the grace period above feel
+## too short to get shelves stocked before customers walk in. A FLAT extra
+## STOCKING_GRACE_BONUS on top of SECTION_TIME_BONUS's per-section scaling
+## (additive, that scaling is untouched), every day from
+## STOCKING_GRACE_BONUS_START_DAY — the same day the density tier starts, so
+## Days 1-4 (already playtested and confirmed) are unchanged. It also goes on
+## the shift clock, the same way SECTION_TIME_BONUS extends both, so the
+## extra stocking time doesn't come out of selling time. FLAGGED placeholder.
+const STOCKING_GRACE_BONUS := 15.0
+const STOCKING_GRACE_BONUS_START_DAY := 5
 
-## See SECTION_TIME_BONUS above.
+## See SECTION_TIME_BONUS / STOCKING_GRACE_BONUS above.
+func _extra_day_time() -> float:
+	var extra: float = SECTION_TIME_BONUS * max(0, _unlocked_sections().size() - 1)
+	if current_day >= STOCKING_GRACE_BONUS_START_DAY:
+		extra += STOCKING_GRACE_BONUS
+	return extra
+
 func _current_customer_grace_period() -> float:
-	return CUSTOMER_GRACE_PERIOD + SECTION_TIME_BONUS * max(0, _unlocked_sections().size() - 1)
+	return CUSTOMER_GRACE_PERIOD + _extra_day_time()
 
 ## See SECTION_TIME_BONUS above. shift_duration is still the Day-1/single-
 ## section BASE (and still overridable via --shift-seconds=) — this is what
 ## actually gets loaded into shift_time_left at the start of every shift.
 func _current_shift_duration() -> float:
-	return shift_duration + SECTION_TIME_BONUS * max(0, _unlocked_sections().size() - 1)
+	return shift_duration + _extra_day_time()
 
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
@@ -687,7 +772,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1024,6 +1109,11 @@ func _start_shift() -> void:
 	manager.reset_for_new_day()
 	writeups_today = 0
 	writeups_by_peer = {}
+	_clear_priority_order()
+	orders_called_today = 0
+	orders_filled_today = 0
+	priority_sales_today = 0
+	_order_timer = PRIORITY_ORDER_INTERVAL
 	for display_body in displays:
 		display_body.get_node("Display").reset_to_home()
 	var grace := _current_customer_grace_period()
@@ -1096,6 +1186,9 @@ func _end_shift() -> void:
 		return
 	shift_active = false
 	_day_report_active = true
+	# An order still open when the clock runs out simply lapses (no bonus,
+	# no penalty) — nothing it tagged can sell from here anyway.
+	_clear_priority_order()
 	print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d  |  Write-ups today: %d  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, _format_money(_pay_today())])
 
 ## Any peer's Continue click routes here. Only the host actually drives the
@@ -1179,20 +1272,177 @@ func player_display_name(peer_id: int) -> String:
 	var index := players.keys().find(peer_id)
 	return "Player %d" % (index + 1) if index >= 0 else "Player ?"
 
+## WEEK 11: a priority-order sale is already in the sold count at
+## PAY_PER_SALE, so it only adds the multiplier's extra on top.
 func _pay_today() -> int:
-	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE - writeups_today * WRITEUP_PENALTY
+	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE + _priority_bonus(priority_sales_today) - writeups_today * WRITEUP_PENALTY
 
 func _pay_week() -> int:
-	return _total_sold() * PAY_PER_SALE - writeups_week * WRITEUP_PENALTY
+	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) - writeups_week * WRITEUP_PENALTY
+
+func _priority_bonus(sales: int) -> int:
+	return int(round(sales * PAY_PER_SALE * (PRIORITY_ORDER_MULTIPLIER - 1.0)))
 
 func _format_money(amount: int) -> String:
 	return ("-$%d" % -amount) if amount < 0 else ("$%d" % amount)
+
+## --- WEEK 11: manager priority stock orders --------------------------------
+
+## Host-only, every frame from _process() while the shift runs: counts the
+## open order's window down, and the gap to the next call-out. The gap keeps
+## running while an order is open, so call-outs land every
+## PRIORITY_ORDER_INTERVAL of shift clock (the window is shorter than the
+## interval, so one is always closed before the next is due).
+func _tick_priority_orders(delta: float) -> void:
+	if current_day < PRIORITY_ORDER_START_DAY:
+		return
+	if _order_id != 0:
+		order_time_left = maxf(0.0, order_time_left - delta)
+		if order_time_left <= 0.0:
+			_close_priority_order(false)
+	_order_timer -= delta
+	if _order_timer <= 0.0:
+		_order_timer = PRIORITY_ORDER_INTERVAL
+		# Don't call one out that the shift clock would cut short.
+		if _order_id == 0 and shift_time_left > PRIORITY_ORDER_WINDOW:
+			_issue_priority_order()
+
+## Host-only. Picks a random unlocked section that can take at least
+## PRIORITY_ORDER_QTY_MIN items right now (falls back to any that can take
+## one), rolls a quantity, and opens the window. forced_* are for tests.
+func _issue_priority_order(forced_section := "", forced_qty := 0) -> void:
+	if not multiplayer.is_server():
+		return
+	var roomy := []
+	var any := []
+	var capacity := {}
+	for section in _unlocked_sections():
+		var sec_name: String = section["name"]
+		if forced_section != "" and sec_name != forced_section:
+			continue
+		capacity[sec_name] = mini(_open_slots_in_section(section), _loose_stock_for_section(section))
+		if capacity[sec_name] >= PRIORITY_ORDER_QTY_MIN:
+			roomy.append(sec_name)
+		if capacity[sec_name] >= 1:
+			any.append(sec_name)
+	var pool := roomy if not roomy.is_empty() else any
+	if pool.is_empty():
+		return # nothing anywhere can take stock right now — try again next interval
+	var pick: String = pool[randi() % pool.size()]
+	var qty := forced_qty
+	if qty <= 0:
+		qty = randi_range(PRIORITY_ORDER_QTY_MIN, PRIORITY_ORDER_QTY_MAX) + PRIORITY_ORDER_QTY_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+		qty = mini(qty, capacity[pick])
+	_order_id = _next_order_id
+	_next_order_id += 1
+	order_section = pick
+	order_needed = qty
+	order_stocked = 0
+	order_time_left = PRIORITY_ORDER_WINDOW
+	orders_called_today += 1
+	print("[Main] Priority order #%d: stock %d in %s (%.0fs)" % [_order_id, qty, pick, PRIORITY_ORDER_WINDOW])
+
+func _open_slots_in_section(section: Dictionary) -> int:
+	var n := 0
+	for shelf_body in shelves:
+		if _grid_cell_of(shelf_body.global_position) != section["grid_pos"]:
+			continue
+		var shelf: Node = shelf_body.get_node("Shelf")
+		if not shelf.wrecked:
+			n += shelf.slot_count() - shelf.filled_count()
+	return n
+
+## Loose (not shelved, not break-room/out-of-bounds) products of the
+## section's color — carried ones count, they're on their way somewhere.
+func _loose_stock_for_section(section: Dictionary) -> int:
+	var color: Color = SECTION_COLORS[section["name"]]
+	var n := 0
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if is_break_room_at_pos(obj.global_position) or _is_out_of_bounds(obj.global_position):
+			continue
+		var visual := obj.get_node_or_null("Polygon2D")
+		if visual == null or not visual.color.is_equal_approx(color):
+			continue
+		if shelves.any(func(s): return s.get_node("Shelf").contains(obj)):
+			continue
+		n += 1
+	return n
+
+## Host-only, called by Shelf.gd the moment an item settles into one of its
+## slots. Tags it to the open order if it's the ordered section and the item
+## isn't already tagged (re-shelving a knocked-off item doesn't count twice).
+func note_item_stocked(obj: Node, shelf_body: Node) -> void:
+	if not multiplayer.is_server() or _order_id == 0 or obj.has_meta("priority_order"):
+		return
+	var cell := _grid_cell_of(shelf_body.global_position)
+	var in_section := SECTIONS.any(func(s): return s["name"] == order_section and s["grid_pos"] == cell)
+	if not in_section:
+		return
+	obj.set_meta("priority_order", _order_id)
+	order_stocked += 1
+	if order_stocked >= order_needed:
+		_close_priority_order(true)
+
+## Host-only, called by Cashier.gd as a purchase completes.
+func note_sale(item: Node) -> void:
+	if not multiplayer.is_server() or not item.has_meta("priority_order"):
+		return
+	var id: int = item.get_meta("priority_order")
+	if _filled_order_ids.has(id):
+		priority_sales_today += 1
+		priority_sales_week += 1
+	elif id == _order_id:
+		_pending_order_sales[id] = _pending_order_sales.get(id, 0) + 1
+	# else: its order lapsed unfilled — an ordinary sale.
+
+func _close_priority_order(filled: bool) -> void:
+	var id := _order_id
+	var section := order_section
+	var qty := order_needed
+	var stocked := order_stocked
+	if filled:
+		_filled_order_ids[id] = true
+		orders_filled_today += 1
+		var early: int = _pending_order_sales.get(id, 0)
+		priority_sales_today += early
+		priority_sales_week += early
+	_pending_order_sales.erase(id)
+	_clear_priority_order()
+	print("[Main] Priority order #%d %s" % [id, "FILLED" if filled else "lapsed (%d/%d stocked)" % [stocked, qty]])
+	rpc("_announce_order_result", filled, section, qty)
+
+## Host-only: forgets the open order without announcing anything (day
+## start/end). Tags already on items stay, harmlessly — they only pay out
+## for ids in _filled_order_ids.
+func _clear_priority_order() -> void:
+	if _order_id != 0:
+		_pending_order_sales.erase(_order_id)
+	_order_id = 0
+	order_section = ""
+	order_needed = 0
+	order_stocked = 0
+	order_time_left = 0.0
+
+## Every peer: the few seconds of "filled"/"missed" feedback on the banner,
+## same moment-of-impact role as _announce_writeup()'s toast.
+@rpc("authority", "call_local", "reliable")
+func _announce_order_result(filled: bool, section: String, qty: int) -> void:
+	_order_result_filled = filled
+	if filled:
+		_order_result_text = "ORDER FILLED — those %d %s items pay %sx!" % [qty, section, str(PRIORITY_ORDER_MULTIPLIER)]
+	else:
+		_order_result_text = "Priority order missed (%s) — no bonus" % section
+	_order_result_timer = PRIORITY_ORDER_RESULT_SECONDS
 
 func _build_alert_layer() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "AlertLayer"
 	add_child(layer)
-	for i in 2:
+	# Rows from the bottom up: 0 LOOK BUSY, 1 write-up toast, 2 (WEEK 11) the
+	# priority order banner. Each row has its own fixed band, so all three
+	# can be up at once without overlapping — the order banner sits above
+	# the other two rather than sharing a row and getting covered by them.
+	for i in 3:
 		var label := Label.new()
 		# Bottom of the screen: found by rendering frames — at the top, the
 		# banner sat right over the manager himself whenever he was above
@@ -1213,6 +1463,17 @@ func _build_alert_layer() -> void:
 	_watch_label = layer.get_child(0)
 	_toast_label = layer.get_child(1)
 	_toast_label.add_theme_color_override("font_color", Color(1, 0.35, 0.25))
+	_order_label = layer.get_child(2)
+	# End-of-day report line for the orders, built in code like the rest of
+	# this layer (nothing new goes into a .tscn — see the header note on
+	# .tscn comments), placed just above the Pay line it feeds.
+	report_order_label = Label.new()
+	report_order_label.name = "OrderLabel"
+	report_order_label.add_theme_font_size_override("font_size", 22)
+	report_order_label.add_theme_color_override("font_color", Color(0.45, 0.9, 1, 1))
+	report_order_label.visible = false
+	report_pay_label.add_sibling(report_order_label)
+	report_pay_label.get_parent().move_child(report_order_label, report_pay_label.get_index())
 
 ## Every peer, every frame: the LOOK BUSY warning for whoever the manager is
 ## watching (only shown on that player's own screen — everyone else sees
@@ -1228,6 +1489,17 @@ func _update_alert_layer(delta: float) -> void:
 		_watch_label.add_theme_color_override("font_color", Color(1, 0.3, 0.2) if hot else Color(1, 0.85, 0.2))
 	_toast_timer = maxf(0.0, _toast_timer - delta)
 	_toast_label.visible = _toast_timer > 0.0 and not _day_report_active
+	# WEEK 11 — the priority order banner: every peer (it's a crew order),
+	# same style as the LOOK BUSY row, cyan so the two never read as the
+	# same warning. The open order wins over a lingering result line.
+	_order_result_timer = maxf(0.0, _order_result_timer - delta)
+	if order_section != "":
+		_order_label.text = "MANAGER: Stock %d more in %s!  %ds left  (%sx pay)" % [order_needed - order_stocked, order_section, ceili(order_time_left), str(PRIORITY_ORDER_MULTIPLIER)]
+		_order_label.add_theme_color_override("font_color", Color(1, 0.85, 0.2) if order_time_left <= 5.0 else Color(0.45, 0.9, 1))
+	elif _order_result_timer > 0.0:
+		_order_label.text = _order_result_text
+		_order_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5) if _order_result_filled else Color(0.75, 0.75, 0.75))
+	_order_label.visible = (order_section != "" or _order_result_timer > 0.0) and not _day_report_active
 
 ## Cumulative total across every cashier, for as long as the session has
 ## run — never reset, unlike _sold_at_day_start (see the score-continuity
@@ -1644,6 +1916,8 @@ func _process(delta: float) -> void:
 			who.append("%s x%d" % [player_display_name(peer_id), writeups_by_peer[peer_id]])
 		report_writeup_label.text = "Write-ups: %d  (%s docked)%s" % [writeups_today, _format_money(writeups_today * WRITEUP_PENALTY), ("  —  " + ", ".join(who)) if not who.is_empty() else ""]
 		report_pay_label.text = "Pay Today: %s   |   Week: %s" % [_format_money(_pay_today()), _format_money(_pay_week())]
+		report_order_label.visible = current_day >= PRIORITY_ORDER_START_DAY
+		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
 	_update_alert_layer(delta)
 
 	var connected := Net.is_active()
@@ -1684,6 +1958,7 @@ func _process(delta: float) -> void:
 			# window, not just an empty floor.
 			if _customer_grace_timer <= 0.0:
 				_restock_customers()
+		_tick_priority_orders(delta)
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist
 	# (so the day advancing past it mid-session doesn't need new scene
@@ -1719,6 +1994,8 @@ func _process(delta: float) -> void:
 		lines.append("FORKLIFT active in Meat/Deli" + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
 	if manager.active:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
+	if order_section != "":
+		lines.append("PRIORITY ORDER: %d/%d in %s, %.0fs left" % [order_stocked, order_needed, order_section, order_time_left])
 	# No fixed completion state as of Week 5B — stock demand is continuous
 	# for the whole shift, so there's nothing to declare "complete" within
 	# a day. WEEK 7: the clock now ends the DAY, not the session — see
