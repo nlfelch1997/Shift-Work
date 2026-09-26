@@ -262,6 +262,88 @@ extends Node2D
 ##   counts in priority_sales_today, which _pay_today() pays at the multiplier
 ##   — the existing Pay Today math, plus one term. The banner is a third row
 ##   of the LOOK BUSY alert layer (_build_alert_layer()).
+##
+## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
+## constants below are the source of truth, and every one is still a FLAGGED
+## placeholder, none human-playtest-tuned yet). One place to see every knob
+## that shapes a Day 3+ shift, its current value, and where it lives. Edit
+## the value where it lives, then update the line here. Tier arrays are
+## indexed by (unlocked sections - 1): [Day 1-2, Day 3-4, Day 5-6, Day 7].
+## Deliberately left out: collision/geometry/pathing internals (arrive
+## distances, clearances, smoothing, stall detection), which are
+## correctness plumbing, not balance.
+##
+##   SHIFT CLOCK & GRACE — Main.gd
+##     SHIFT_DURATION_DEFAULT            120.0 s  base shift (--shift-seconds= overrides)
+##     CUSTOMER_GRACE_PERIOD               9.0 s  base no-customer head start
+##     SECTION_TIME_BONUS                 10.0 s  per extra unlocked section, on grace AND clock
+##     STOCKING_GRACE_BONUS               15.0 s  flat, on grace AND clock, from...
+##     STOCKING_GRACE_BONUS_START_DAY      5
+##     -> resulting grace / clock: Day 3-4 19/130s, Day 5-6 44/155s, Day 7 54/165s
+##
+##   DAY GATING — Main.gd
+##     SECTIONS required_day              Meat/Deli 3 (+ forklift), Dairy/Frozen 5, Bakery 7
+##     MANAGER_START_DAY                   4
+##     PRIORITY_ORDER_START_DAY            5
+##
+##   STORE DENSITY (tiered) — Main.gd
+##     CUSTOMER_CAP_BY_TIER               [5, 9, 13, 17]
+##     CASHIER_COUNT_BY_TIER              [2, 3, 4, 5]
+##     ITEMS_TARGET_BY_TIER               [1, 2, 2, 3]  items per shopper trip
+##     STACK_ROWS_BY_TIER                 [1, 1, 2, 2]  shelf rows (Shelf.gd set_stack_rows())
+##     PRODUCT_DENSITY_BY_TIER            [1.0, 1.0, 1.5, 1.5]  x per-section product cap
+##     PRODUCT_PER_EXTRA_PLAYER            3
+##     CUSTOMER_PER_EXTRA_PLAYER           2
+##     CUSTOMER_DISRUPTIVE_RATIO           0.35
+##     RESTOCK_CHECK_INTERVAL              3.0 s  floor top-up cadence
+##
+##   PAY — Main.gd
+##     PAY_PER_SALE                       $10
+##     WRITEUP_PENALTY                    $25
+##     PRIORITY_ORDER_MULTIPLIER           1.5 x  (order items pay $15)
+##
+##   PRIORITY ORDERS — Main.gd
+##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
+##     PRIORITY_ORDER_WINDOW              15.0 s  to fill one
+##     PRIORITY_ORDER_QTY_MIN / _MAX       3 / 5  (capped by what the section can take)
+##     PRIORITY_ORDER_QTY_PER_EXTRA_PLAYER 2
+##     PRIORITY_ORDER_RESULT_SECONDS       3.0 s  FILLED/missed line on the banner
+##
+##   FORKLIFT — Forklift.gd (hit reaction in Player.gd)
+##     DRIVE_SPEED / RAM_SPEED / REVERSE_SPEED   120 / 175 / 85 px/s  (player is 220)
+##     TURN_RATE                           3.2 rad/s
+##     TELEGRAPH_TIME                      0.9 s  beacon warning before a ram
+##     RAMS_PER_LAP                        1
+##     LOAD_PAUSE / END_PAUSE              1.2 / 1.6 s
+##     START_PAUSE                         4.0 s  after each day's reset
+##     KNOCK_SPEED_PRODUCT / _DISPLAY      480 / 360 px/s
+##     Player.gd FORKLIFT_KNOCKBACK_SPEED  520 px/s
+##     Player.gd FORKLIFT_STUN_DURATION    0.6 s
+##
+##   SHELF WRECKS — Shelf.gd
+##     WRECK_DURATION                      7.0 s  shelf refuses stock
+##     WRECK_SPILL_RADIUS                130 px   (+ STACK_ROW_DEPTH 56 per extra row)
+##     WRECK_SPILL_SPEED                 460 px/s
+##     KNOCK_SPEED                       120 px/s  hit that un-shelves a placed item
+##     SETTLE_TIME                         0.35 s  rest before an item counts as stocked
+##     Display.gd TOPPLE_SPEED           200 px/s  floor display knock-over
+##
+##   MANAGER — Manager.gd
+##     WALK_SPEED                         95 px/s
+##     HUB_PAUSE / LOOKOUT_PAUSE           2.5 / 2.2 s
+##     START_PAUSE                         8.0 s  after each day's reset
+##     DETECT_RANGE                      280 px
+##     DETECT_HALF_ANGLE                  65 deg  (130-degree cone)
+##     DETECT_NEAR_RANGE                  70 px   seen regardless of facing
+##     CATCH_TIME                          2.5 s  of suspicion-in-sight to write up
+##     WARN_LEVEL                          0.5    "?" -> "!" / LOOK BUSY turns red
+##     DECAY_RATE                          0.6 /s meter drain once busy/out of sight
+##     CAUGHT_COOLDOWN                    10.0 s  per player
+##     IDLE_DELAY                          1.0 s  still this long = idle
+##     WORK_GRACE                          2.0 s  after a pickup/drop/place
+##     CHAOS_MEMORY                        1.5 s
+##     REGISTER_RANGE                    110 px   at a register = busy
+##     FORKLIFT_EXCUSE                     1.5 s  forklift-hit chaos amnesty
 
 ## Day the manager starts his rounds — see the WEEK 9 note above.
 const MANAGER_START_DAY := 4
