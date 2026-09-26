@@ -42,6 +42,22 @@ extends Node2D
 ## counter-play to disruptive customers, and punishing it would make the
 ## Week 6 mechanic a trap.
 ##
+## FORKLIFT (WEEK 10 — Day 5 is the first day both hazards are live at once,
+## and two interaction bugs turned up the first time they ran together):
+## - He has no collision and the forklift can't see him, so his old Meat/Deli
+##   lookouts — the section center and a point deeper along the same line,
+##   i.e. ON the forklift's lane (and on top of the sample-table display) —
+##   had it driving straight through him. Lookouts in a forklift's section
+##   now sit LANE_OFFSET off its lane (_plan_visit()), and he yields to it
+##   at all times (_avoid_forklift()): waits rather than walk into its
+##   footprint, steps aside if it comes at him. He yields, never the
+##   forklift — its route is the confirmed-fun part and stays as it was.
+## - A forklift hit read as chaos: Player.gd's forklift_hit() fumbles the
+##   carried item through the normal try_throw() ("throwing stock"), and the
+##   knockback slide pushes whatever it slides into ("knocking over a
+##   display"). The forklift now reports each hit (note_forklift_hit()), and
+##   for FORKLIFT_EXCUSE after it nothing that player does counts as chaos.
+##
 ## THE TELL (reactable, not a gotcha — same spirit as the forklift's
 ## beacon + "!!"): the moment someone suspicious is in his sight (range +
 ## cone + line of sight — shelves block it), he STOPS walking and turns to
@@ -86,6 +102,23 @@ const WORK_GRACE := 2.0
 ## throwing / keep bowling over stock and it lands.
 const CHAOS_MEMORY := 1.5
 const REGISTER_RANGE := 110.0
+## WEEK 10 — forklift coexistence (see the FORKLIFT note in the header).
+## After the forklift clips a player, nothing that player "does" for this
+## long counts as chaos: covers the 0.6s knockback slide (Player.gd's
+## FORKLIFT_STUN_DURATION) plus the fumble throw's round trip from a client.
+const FORKLIFT_EXCUSE := 1.5
+## Lookouts in a forklift section sit this far off its lane's center line —
+## the lane's swept width (its turning circle) is ~56px either side.
+const LANE_OFFSET := 100.0
+## Gap he keeps between his ~17px body and the forklift's collision box.
+const FORKLIFT_CLEARANCE := 34.0
+## How far ahead of a MOVING forklift its footprint is projected, so he's
+## already out of the way when it arrives instead of being touched first.
+const FORKLIFT_LOOKAHEAD := 0.6
+const DODGE_SPEED := 150.0 # a quick step back — faster than his stroll
+## Waiting on the forklift this long mid-walk gives up on the leg — it never
+## blocks his rounds for good.
+const YIELD_GIVE_UP := 6.0
 
 ## Replicated (see _ready()).
 var target_position := Vector2.ZERO
@@ -105,6 +138,7 @@ var _sweep_t := 0.0
 var _look_heading := 0.0
 var _last_section := ""
 var _blink_t := 0.0
+var _yield_timer := 0.0
 ## Host-only per-player bookkeeping, keyed by peer id:
 ## {anchor, still_time, last_work, last_chaos, meter, cooldown, reason}
 var _state := {}
@@ -150,6 +184,7 @@ func reset_for_new_day() -> void:
 	_pause_timer = START_PAUSE
 	_caught_timer = 0.0
 	_last_section = ""
+	_yield_timer = 0.0
 	_state.clear()
 	watch_peer = 0
 	watch_level = 0.0
@@ -165,17 +200,27 @@ func note_work(peer_id: int) -> void:
 
 ## A chaotic action (throw, knocking shelved stock / a display).
 func note_chaos(peer_id: int, what: String) -> void:
-	if peer_id <= 0:
+	if peer_id <= 0 or _excused(peer_id):
 		return
 	var s := _player_state(peer_id)
 	s["last_chaos"] = _now()
 	s["chaos_what"] = what
 
+## WEEK 10: the forklift just clipped this player (Forklift.gd, host-side).
+## Whatever the hit makes them do next — fumble their item, slide into stock
+## or a display — is the forklift's doing, not theirs.
+func note_forklift_hit(peer_id: int) -> void:
+	if peer_id > 0:
+		_player_state(peer_id)["forklift_until"] = _now() + FORKLIFT_EXCUSE
+
+func _excused(peer_id: int) -> bool:
+	return _now() < _player_state(peer_id)["forklift_until"]
+
 ## A player shoved a RigidBody2D (Player.gd push-on-contact, arriving via
 ## request_push() for remote players or directly for the host's own). Only
 ## counts as chaos if the thing was stock sitting on a shelf, or a display.
 func note_push(peer_id: int, body: Node) -> void:
-	if peer_id <= 0 or body == null:
+	if peer_id <= 0 or body == null or _excused(peer_id):
 		return
 	if body.is_in_group("display"):
 		note_chaos(peer_id, "knocking over a display")
@@ -195,6 +240,10 @@ func _physics_process(delta: float) -> void:
 		return
 	_update_detection(delta, main)
 	writing_up = _caught_timer > 0.0
+	var forklift = _live_forklift()
+	if forklift and _dodge_forklift(forklift, delta):
+		target_position = position
+		return
 	if watch_peer != 0 or _caught_timer > 0.0:
 		_caught_timer = maxf(0.0, _caught_timer - delta)
 		var p = main.players.get(watch_peer)
@@ -226,7 +275,19 @@ func _walk(delta: float, main) -> void:
 		_look_heading = facing
 		return
 	_turn_toward(to_target.angle(), delta)
-	position += to_target / dist * minf(WALK_SPEED * delta, dist)
+	var step := to_target / dist * minf(WALK_SPEED * delta, dist)
+	var forklift = _live_forklift()
+	if forklift and _forklift_gap(forklift, position + step) < FORKLIFT_CLEARANCE \
+			and _forklift_gap(forklift, position + step) <= _forklift_gap(forklift, position):
+		# Let it pass. Watch it go by rather than stare at the waypoint.
+		_yield_timer += delta
+		_turn_toward((forklift.global_position - global_position).angle(), delta)
+		if _yield_timer >= YIELD_GIVE_UP:
+			_yield_timer = 0.0
+			_legs.pop_front()
+		return
+	_yield_timer = 0.0
+	position += step
 
 func _turn_toward(angle: float, delta: float) -> void:
 	var diff := wrapf(angle - facing, -PI, PI)
@@ -258,7 +319,17 @@ func _plan_visit(main) -> void:
 	var last: Vector2i = path[-1]
 	var dir := Vector2(last - prev)
 	var center := _cell_center(main, last)
-	var deeper := center + dir * Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT) * LOOKOUT_DEPTH
+	var depth := LOOKOUT_DEPTH
+	# WEEK 10: a section with a forklift has its lane down the middle — the
+	# center line these lookouts sit on. Stand beside the lane instead, and
+	# not as deep (the deeper point would otherwise sit right in front of a
+	# shelf the forklift pulls up to).
+	var forklift = _live_forklift()
+	if forklift and _cell_of(main, forklift.home_position) == last:
+		center.y = forklift.home_position.y + LANE_OFFSET
+		depth *= 0.5
+		_legs[-1]["pos"] = center
+	var deeper := center + dir * Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT) * depth
 	_legs[-1]["pause"] = LOOKOUT_PAUSE
 	_legs.append({"pos": deeper, "pause": LOOKOUT_PAUSE})
 	_legs.append({"pos": center})
@@ -284,6 +355,65 @@ func _cell_path(main, target: Vector2i) -> Array:
 		if _adjacent(hub, mid) and _adjacent(mid, target) and mid.y == target.y:
 			return [mid, target]
 	return [target] # unreachable in the current map; a straight walk is the least-bad fallback
+
+func _cell_of(main, pos: Vector2) -> Vector2i:
+	return Vector2i(int(floor(pos.x / main.ROOM_WIDTH)), int(floor(pos.y / main.ROOM_HEIGHT)))
+
+## --- Forklift avoidance (WEEK 10) -------------------------------------------
+
+func _live_forklift() -> CharacterBody2D:
+	var f := get_tree().get_first_node_in_group("forklift") as CharacterBody2D
+	return f if f and f.active else null
+
+## Distance from a point to the forklift's collision box (Forklift.tscn: 92x44,
+## offset +6 along its heading) — and, while it's moving, to where that box
+## will be FORKLIFT_LOOKAHEAD from now, whichever is closer.
+func _forklift_gap(forklift: CharacterBody2D, pos: Vector2) -> float:
+	var gap := _box_gap(forklift.global_position, forklift.rotation, pos)
+	if forklift.velocity.length() > 1.0:
+		gap = minf(gap, _box_gap(forklift.global_position + forklift.velocity * FORKLIFT_LOOKAHEAD, forklift.rotation, pos))
+	return gap
+
+func _box_gap(origin: Vector2, rot: float, pos: Vector2) -> float:
+	var local := (pos - origin).rotated(-rot) - Vector2(6, 0)
+	return Vector2(maxf(absf(local.x) - 46.0, 0.0), maxf(absf(local.y) - 22.0, 0.0)).length()
+
+## Returns true if he spent this tick stepping out of the forklift's way.
+## Moving forklift: step sideways off its line of travel (backing away along
+## it would lose — it's faster than him). Stopped or turning in place: step
+## straight away from it. Never steps into a wall or shelf.
+func _dodge_forklift(forklift: CharacterBody2D, delta: float) -> bool:
+	if _forklift_gap(forklift, position) >= FORKLIFT_CLEARANCE:
+		return false
+	var away := position - forklift.global_position
+	if away.length() < 0.01:
+		away = Vector2.DOWN
+	var dirs: Array[Vector2] = []
+	if forklift.velocity.length() > 1.0:
+		var side := forklift.velocity.normalized().orthogonal()
+		if side.dot(away) < 0.0:
+			side = -side
+		dirs = [side, (side + away.normalized()).normalized(), -side]
+	else:
+		dirs = [away.normalized(), away.normalized().orthogonal(), -away.normalized().orthogonal()]
+	for d in dirs:
+		var next := position + d * DODGE_SPEED * delta
+		if not _blocked(next):
+			position = next
+			_turn_toward((forklift.global_position - position).angle(), delta)
+			return true
+	return false
+
+func _blocked(pos: Vector2) -> bool:
+	var shape := CircleShape2D.new()
+	shape.radius = 14.0
+	var q := PhysicsShapeQueryParameters2D.new()
+	q.shape = shape
+	q.transform = Transform2D(0.0, pos)
+	for hit in get_world_2d().direct_space_state.intersect_shape(q, 4):
+		if hit["collider"] is StaticBody2D:
+			return true
+	return false
 
 func _adjacent(a: Vector2i, b: Vector2i) -> bool:
 	return absi(a.x - b.x) + absi(a.y - b.y) == 1
@@ -387,7 +517,7 @@ func _can_see(p: Node2D) -> bool:
 
 func _player_state(peer_id: int) -> Dictionary:
 	if not _state.has(peer_id):
-		_state[peer_id] = {"anchor": Vector2.INF, "still_time": 0.0, "last_work": -INF, "last_chaos": -INF, "meter": 0.0, "cooldown": 0.0, "reason": ""}
+		_state[peer_id] = {"anchor": Vector2.INF, "still_time": 0.0, "last_work": -INF, "last_chaos": -INF, "meter": 0.0, "cooldown": 0.0, "reason": "", "forklift_until": -INF}
 	return _state[peer_id]
 
 func _now() -> float:

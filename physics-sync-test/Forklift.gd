@@ -280,6 +280,12 @@ func _handle_contacts(mode: String, ram_shelf: Node2D) -> bool:
 				ended = true
 		elif other.is_in_group("player"):
 			if _cooldown_ready(other, ACTOR_HIT_COOLDOWN):
+				# WEEK 10: tell the manager first — the fumble and knockback
+				# slide this hit causes aren't the player's chaos (see
+				# Manager.gd's note_forklift_hit()).
+				var manager := get_tree().get_first_node_in_group("manager")
+				if manager:
+					manager.note_forklift_hit(other.get_multiplayer_authority())
 				# Player movement is client-authoritative, so the host can't
 				# move a remote player itself — it asks that player's owner
 				# to, the same broadcast-and-only-the-owner-acts shape as
