@@ -232,6 +232,21 @@ extends Node2D
 ##   clamped at zero: a write-up always visibly costs something.
 ## - The on-screen tell for the WATCHED player ("LOOK BUSY" + meter) and the
 ##   write-up toast every peer sees, built in code in _build_alert_layer().
+##
+## WEEK 10 — DAY 5, COMPOUNDING HAZARDS. No new systems; Day 5 is the first
+## day the forklift and the manager run at the same time, Dairy/Frozen opens
+## (it already existed end to end — SECTIONS row, gate, shelves, colors, his
+## rounds — so this week only verified it), and the store gets denser:
+## - Two forklift x manager interaction bugs, fixed where they live (see
+##   Manager.gd's FORKLIFT header note): a forklift hit was being logged as
+##   the player's chaos (the fumble "throw", the knockback slide into a
+##   display), and his Meat/Deli lookouts sat on the forklift's lane, so it
+##   could drive straight through him.
+## - Density: STACK_ROWS_BY_TIER (shelves stock two deep, Shelf.gd's
+##   set_stack_rows()) and PRODUCT_DENSITY_BY_TIER (more stock on the floor),
+##   both from Day 5; Days 1-4 are untouched. _spawn_pos_is_clear() now also
+##   keeps spawns off slots, since the outer row reaches into the spawn band.
+## - tools/hazards_test.gd holds the repro scenarios and a solo-play sim.
 
 ## Day the manager starts his rounds — see the WEEK 9 note above.
 const MANAGER_START_DAY := 4
@@ -499,6 +514,19 @@ const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
 ## new one invented for this), not Day 1, matching "keep single-item trips
 ## for the early days" literally.
 const ITEMS_TARGET_BY_TIER := [1, 2, 2, 3]
+## WEEK 10 — Day 5+ density, same tier shape as the arrays above (Day 5-6 =
+## tier 2, when Dairy/Frozen opens). Both FLAGGED placeholders, tuned against
+## the solo sim in tools/hazards_test.gd, not a human playtest:
+## - STACK_ROWS_BY_TIER: shelves stock two deep from Day 5 (Shelf.gd's
+##   set_stack_rows() — the second row of the existing slot system, the
+##   "taller/heavier stacks"). Days 1-4 unchanged at one row.
+## - PRODUCT_DENSITY_BY_TIER: multiplies the per-section product cap
+##   (_product_baseline()). 1.0 is the old "one product per row-1 slot"
+##   ratio; Day 5's 1.5 puts more stock on the floor — more to haul, and
+##   more loose clutter in the forklift's aisle — while staying under the
+##   now-doubled slot count so a solo crew can't simply run out of shelf.
+const STACK_ROWS_BY_TIER := [1, 1, 2, 2]
+const PRODUCT_DENSITY_BY_TIER := [1.0, 1.0, 1.5, 1.5]
 const CUSTOMER_PER_EXTRA_PLAYER := 2
 ## Week 6: restored to 0.35 now that the spacebar defend/shove action
 ## (Player.gd's _try_defend(), Customer.gd's request_shove()) gives players
@@ -732,6 +760,14 @@ func _configure_gates() -> void:
 ## and _advance_to_next_day() on the host). Active exactly when the
 ## section the forklift is parked in is unlocked — see Forklift.gd's DAY
 ## GATING note for why this reads SECTIONS instead of hardcoding Day 3.
+## WEEK 10 — one or two stocked rows per shelf for today (STACK_ROWS_BY_TIER).
+## Every peer, same call sites as _configure_gates(); runs before the host's
+## _start_shift() reset, so a day never starts with half-built rows.
+func _configure_shelf_stacks() -> void:
+	var tier := clampi(_unlocked_sections().size() - 1, 0, STACK_ROWS_BY_TIER.size() - 1)
+	for shelf_body in shelves:
+		shelf_body.get_node("Shelf").set_stack_rows(STACK_ROWS_BY_TIER[tier])
+
 func _configure_hazards() -> void:
 	forklift.configure(is_unlocked_at_pos(forklift.home_position))
 	manager.configure(current_day >= MANAGER_START_DAY)
@@ -1105,6 +1141,7 @@ func _advance_to_next_day() -> void:
 	_configure_gates()
 	_configure_cashiers()
 	_configure_hazards()
+	_configure_shelf_stacks()
 	_apply_section_lock_visuals()
 	_last_configured_day = current_day
 	print("[Main] Starting Day %d..." % current_day)
@@ -1375,7 +1412,8 @@ func is_storage_at_pos(world_pos: Vector2) -> bool:
 ## unlocked-section-count instead of staying flat, and why that's flagged
 ## as a judgment call rather than a confirmed decision.
 func _product_baseline() -> int:
-	return 12 * _unlocked_sections().size()
+	var tier := clampi(_unlocked_sections().size() - 1, 0, PRODUCT_DENSITY_BY_TIER.size() - 1)
+	return roundi(12 * _unlocked_sections().size() * PRODUCT_DENSITY_BY_TIER[tier])
 
 ## See CUSTOMER_CAP_BY_TIER's own comment for what these numbers are and why.
 func _customer_baseline() -> int:
@@ -1458,6 +1496,12 @@ func _spawn_pos_is_clear(pos: Vector2) -> bool:
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		if pos.distance_to(obj.global_position) < SPAWN_CLEARANCE_PRODUCT:
 			return false
+	# WEEK 10: Day 5's outer stock row reaches into the spawn band — a product
+	# spawned on a slot would settle into it and stock itself.
+	for shelf_body in shelves:
+		for slot in shelf_body.get_node("Shelf").slots:
+			if pos.distance_to(slot.global_position) < SPAWN_CLEARANCE_PRODUCT:
+				return false
 	return true
 
 ## UPGRADED TWICE this session, replacing the old per-section
@@ -1574,6 +1618,7 @@ func _process(delta: float) -> void:
 		_configure_gates()
 		_configure_cashiers()
 		_configure_hazards()
+		_configure_shelf_stacks()
 		_apply_section_lock_visuals()
 		print("[Main] Day is now %d" % current_day)
 

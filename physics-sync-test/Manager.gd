@@ -374,9 +374,15 @@ func _forklift_gap(forklift: CharacterBody2D, pos: Vector2) -> float:
 		gap = minf(gap, _box_gap(forklift.global_position + forklift.velocity * FORKLIFT_LOOKAHEAD, forklift.rotation, pos))
 	return gap
 
+## The box, but never less than its turning circle: it pivots in place (see
+## Forklift.gd's _drive()), sweeping the fork tips ~57px around its origin —
+## FOUND BY the solo sim: a box-only gap let a pivot swing the forks into him.
+const FORKLIFT_SWEEP_RADIUS := 57.0
+
 func _box_gap(origin: Vector2, rot: float, pos: Vector2) -> float:
 	var local := (pos - origin).rotated(-rot) - Vector2(6, 0)
-	return Vector2(maxf(absf(local.x) - 46.0, 0.0), maxf(absf(local.y) - 22.0, 0.0)).length()
+	var box := Vector2(maxf(absf(local.x) - 46.0, 0.0), maxf(absf(local.y) - 22.0, 0.0)).length()
+	return minf(box, maxf(0.0, pos.distance_to(origin) - FORKLIFT_SWEEP_RADIUS))
 
 ## Returns true if he spent this tick stepping out of the forklift's way.
 ## Moving forklift: step sideways off its line of travel (backing away along

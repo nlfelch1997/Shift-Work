@@ -29,6 +29,9 @@ func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	shots = "--shots" in args and DisplayServer.get_name() != "headless"
 	careless = "--careless" in args
+	for a in args:
+		if a.begins_with("--days="):
+			solo_days.assign(Array(a.substr(7).split(",")).map(func(x): return int(x)))
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
@@ -161,13 +164,16 @@ func _run_interact() -> void:
 	for d in [3, 4, 5]:
 		main.current_day = d
 		var total := 0
+		var rows: int = main.STACK_ROWS_BY_TIER[clampi(main._unlocked_sections().size() - 1, 0, 3)]
 		for s in main.shelves:
 			if main.is_unlocked_at_pos(s.global_position):
-				total += s.get_node("Shelf").slot_count()
+				total += 3 * rows
 		slots_by_day[d] = [total, main._product_baseline()]
 	main.current_day = real_day
 	print("DENSITY  day -> [reachable slots, product cap]: %s" % str(slots_by_day))
-	check(slots_by_day[5][1] > slots_by_day[5][0] * slots_by_day[4][1] / float(slots_by_day[4][0]), "Day 5 spawn density (product cap per reachable slot) is higher than Day 4's: %s" % str(slots_by_day))
+	check(slots_by_day[5][1] / 3.0 > slots_by_day[4][1] / 2.0, "Day 5 spawn density (product cap per open section) is higher than Day 4's: %s" % str(slots_by_day))
+	check(slots_by_day[5][0] == 2 * 36, "Day 5 shelves stock two deep: %d reachable slots (36 one-deep)" % slots_by_day[5][0])
+	check(dairy_slots == 24, "Dairy/Frozen shelves two deep: %d slots" % dairy_slots)
 
 	# --- I1: forklift clips a CARRYING player right in front of the manager.
 	# Getting hit fumbles the item (Player.forklift_hit -> try_throw). That's
@@ -227,8 +233,10 @@ func _run_interact() -> void:
 	check(shoved, "I2: forklift knocked the player into the display (display moved)")
 	check(st["last_chaos"] == chaos_before, "I2: being knocked INTO a display by the forklift NOT counted as chaos (recorded: '%s')" % st.get("chaos_what", ""))
 	# Sanity: the exemption is narrow — the same player deliberately walking
-	# into a display a few seconds later still counts.
-	await wait(2.0)
+	# into a display a few seconds later still counts. Park the forklift
+	# first — a second hit would (correctly) open a fresh excuse window.
+	fk()._pause_timer = 1000.0
+	await wait(mgr().FORKLIFT_EXCUSE + 0.5)
 	var d_pos: Vector2 = display.global_position
 	player().teleport_to(d_pos + Vector2(-40, 0))
 	await physics_frame
@@ -239,6 +247,7 @@ func _run_interact() -> void:
 		await physics_frame
 	check(st.get("chaos_what", "") == "knocking over a display", "I2: deliberately shoving a display afterward still counts ('%s')" % st.get("chaos_what", ""))
 	release_manager()
+	fk()._pause_timer = 0.0
 	for d in main.displays:
 		d.get_node("Display").reset_to_home()
 
@@ -349,7 +358,9 @@ func _run_interact() -> void:
 ## ---------------------------------------------------------------------------
 ## SOLO SIM
 
-const SOLO_DAYS := [3, 4, 5, 6]
+## Override with --days=5 (together with --day=5) to repeat one day in
+## fresh processes — single runs vary by several sales.
+var solo_days: Array = [3, 4, 5, 6]
 var _held := {}
 
 func press(action: String, strength := 1.0) -> void:
@@ -414,7 +425,7 @@ func pick_product(p: Node2D) -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
 	for obj in get_nodes_in_group("carryable"):
-		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj):
+		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or recent_drops.has(obj):
 			continue
 		if not main.is_unlocked_at_pos(obj.global_position) and main._grid_cell_of(obj.global_position) != Vector2i(1, 1):
 			continue
@@ -451,10 +462,11 @@ func pick_slot(from: Vector2, obj: Node) -> Dictionary:
 	return best
 
 var stats := {}
+var recent_drops := {} # product -> seconds left before the brain may target it again
 
 func _run_solo() -> void:
 	var day_stats := []
-	for day in SOLO_DAYS:
+	for day in solo_days:
 		await wait_until(func(): return main.shift_active and main.current_day == day, 20.0)
 		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0}
 		var start_sold: int = main._sold_at_day_start
@@ -463,10 +475,10 @@ func _run_solo() -> void:
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
 		var sold: int = main._total_sold() - main._sold_at_day_start
-		var line := "SOLO  Day %d: sold %d, placed %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], main.report_pay_label.text]
+		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], main.report_pay_label.text]
 		print(line)
 		day_stats.append(line)
-		if day != SOLO_DAYS[-1]:
+		if day != solo_days[-1]:
 			main._on_continue_pressed()
 	print("SOLO SUMMARY%s" % (" (careless: never dodges the forklift)" if careless else ""))
 	for l in day_stats:
@@ -488,6 +500,10 @@ func _play_shift() -> void:
 	var approach_phase := 0
 	while main.shift_active:
 		await physics_frame
+		for k in recent_drops.keys():
+			recent_drops[k] -= dt
+			if recent_drops[k] <= 0.0 or not is_instance_valid(k):
+				recent_drops.erase(k)
 		var pos := p.global_position
 		var my_carry: Node2D = null
 		for o in get_nodes_in_group("carryable"):
@@ -532,6 +548,7 @@ func _play_shift() -> void:
 						dir = (stand - pos).normalized()
 					if p._place_target_slot != null:
 						await tap("host_place")
+						recent_drops[my_carry] = 2.5 # let it settle — don't grab it straight back
 						stats["placed"] += 1
 						job = {}
 						approach_phase = 0

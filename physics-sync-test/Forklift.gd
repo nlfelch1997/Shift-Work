@@ -404,7 +404,8 @@ func _build_lap() -> void:
 			var aim: Vector2 = shelf_body.get_node("CollisionShape2D").global_position
 			_legs.append({"pos": Vector2(station.x, aim.y), "mode": "ram", "telegraph": true, "shelf": shelf_body})
 		else:
-			var slot_y: float = shelf_body.get_node("Shelf").slots[0].global_position.y
+			# WEEK 10: the OUTERMOST stocked row (two deep from Day 5).
+			var slot_y: float = shelf_body.to_global(Vector2(0, -shelf_body.get_node("Shelf").outermost_slot_offset())).y
 			var toward_lane := signf(lane_y - slot_y)
 			var stop_y := slot_y + toward_lane * (PRODUCT_HALF_SIZE + NEAR_MISS_CLEARANCE + FRONT_REACH)
 			_legs.append({"pos": Vector2(station.x, stop_y), "mode": "drive", "pause": LOAD_PAUSE})
