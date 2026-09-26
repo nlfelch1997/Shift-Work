@@ -321,7 +321,7 @@ func _run_interact() -> void:
 			dodged = true
 		if dodged and not shot_taken and mgr().global_position.distance_to(fk().global_position) < 140.0:
 			shot_taken = true
-			player().teleport_to(Vector2(2400, 1000))
+			player().teleport_to(Vector2(2400, 810))
 			await shot("i3b_manager_steps_aside")
 			player().teleport_to(Vector2(480, 270))
 	check(dodged, "I3b: standing in the lane, he stepped out of the forklift's way")
@@ -347,7 +347,7 @@ func _run_interact() -> void:
 	# player where the camera frames all of Meat/Deli and grab a frame when
 	# both are close.
 	if shots:
-		player().teleport_to(Vector2(2400, 1000))
+		player().teleport_to(Vector2(2400, 810))
 		var got_close := await wait_until(func(): return main._grid_cell_of(mgr().global_position) == Vector2i(2, 1) and mgr().global_position.distance_to(fk().global_position) < 220.0, 120.0)
 		if got_close:
 			await shot("i4_both_hazards_meat_deli")
