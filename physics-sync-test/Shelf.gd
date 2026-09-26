@@ -231,6 +231,10 @@ func _settle_check_empty(i: int, delta: float) -> void:
 	if _settle_timers[i] >= SETTLE_TIME:
 		_occupant[i] = candidate
 		filled[i] = true
+		# WEEK 11 — the one place "an item was stocked" is decided, so it's
+		# where the manager's priority order hears about it (Main.gd's
+		# note_item_stocked() tags the item if it counts toward the order).
+		get_tree().current_scene.note_item_stocked(candidate, body)
 
 func _find_settling_candidate(slot_index: int) -> RigidBody2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
