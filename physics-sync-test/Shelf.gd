@@ -76,7 +76,20 @@ const WRECK_SPILL_SPEED := 460.0 # impulse = speed * mass, same convention as Fo
 const WRECK_TILT := 0.14 # radians, cosmetic
 
 var body: StaticBody2D # the shelf this component is attached to
-var slots: Array[Marker2D] = []
+var slots: Array[Marker2D] = [] # the ACTIVE slots — row 1 only, or rows 1+2 from Day 5 (see set_stack_rows())
+## WEEK 10 — "taller/heavier stacks" from Day 5. There was no stack system
+## before this: a shelf was one fixed row of three Slot markers (Shelf.tscn).
+## Rather than a new mechanic, the existing slot system just gets a second
+## row: _ready() clones row 1 STACK_ROW_DEPTH further out (same Indicator/
+## Prompt children), and Main.gd turns it on per day (set_stack_rows(),
+## STACK_ROWS_BY_TIER). Stocked two deep, a shelf holds twice the stock —
+## twice the restocking, and a forklift ram (wreck()) spills up to six.
+## Every loop in this file walks `slots`, so rows 1+2 behave exactly like
+## one longer row; nothing outside this file indexes slots except
+## Forklift.gd's near-miss (now outermost_slot_offset()).
+const STACK_ROW_DEPTH := 56.0 # row 2's capture circle (26px) clears row 1's with room to spare
+var _all_slots: Array[Marker2D] = []
+var stack_rows := 1
 ## Replicated so every peer can render "how full" this shelf is without
 ## each of them re-deriving it from raw physics state (which only the
 ## authority actually evaluates) — same "authority computes, clients just
@@ -101,6 +114,14 @@ func _ready() -> void:
 	for child in body.get_children():
 		if child is Marker2D:
 			slots.append(child)
+	_all_slots.assign(slots)
+	for row1 in slots.duplicate():
+		var row2: Marker2D = row1.duplicate()
+		row2.name = "%sRow2" % row1.name
+		row2.position = row1.position + Vector2(0, -STACK_ROW_DEPTH)
+		row2.visible = false
+		body.add_child.call_deferred(row2)
+		_all_slots.append(row2)
 	filled.resize(slots.size())
 	filled.fill(false)
 	_settle_timers.resize(slots.size())
@@ -176,7 +197,7 @@ func _process(_delta: float) -> void:
 	if not Net.is_active():
 		return
 	for i in slots.size():
-		slots[i].get_node("Indicator").visible = not filled[i] and not wrecked
+		slots[i].get_node("Indicator").visible = not _is_filled(i) and not wrecked
 	var polygon: Polygon2D = body.get_node("Polygon2D")
 	polygon.rotation = _polygon_rotation + (WRECK_TILT if wrecked else 0.0)
 	polygon.color = _polygon_color * Color(0.55, 0.5, 0.5, 1) if wrecked else _polygon_color
@@ -255,7 +276,7 @@ func _color_matches(obj: Node) -> bool:
 ## its own) — same "export var + explicit apply call, run by Main.gd after
 ## setting it" shape as Gate.gd's configure().
 func apply_accent_color() -> void:
-	for slot in slots:
+	for slot in _all_slots:
 		slot.get_node("Indicator").default_color = accent_color
 
 ## Called by Main.gd at the start of every new day
@@ -266,6 +287,40 @@ func apply_accent_color() -> void:
 ## fully empty; the CALLER is responsible for actually removing the
 ## physical objects that were occupying these slots — this only forgets
 ## the shelf's OWN bookkeeping, it doesn't touch any object directly.
+## WEEK 10 — every peer, from Main.gd's day-change poll (and the host's
+## _advance_to_next_day()), BEFORE that day's reset(). Only rebuilds when the
+## row count actually changes, so an ordinary day changes nothing.
+func set_stack_rows(rows: int) -> void:
+	rows = clampi(rows, 1, 2)
+	if rows == stack_rows:
+		return
+	stack_rows = rows
+	var per_row := _all_slots.size() / 2
+	slots.assign(_all_slots.slice(0, per_row * rows))
+	for i in _all_slots.size():
+		_all_slots[i].visible = i < slots.size()
+	var new_filled := []
+	new_filled.resize(slots.size())
+	new_filled.fill(false)
+	filled = new_filled # reassigned, not resized in place, so the synchronizer sees a new value
+	_settle_timers.resize(slots.size())
+	_settle_timers.fill(0.0)
+	_occupant.resize(slots.size())
+	_occupant.fill(null)
+
+## A client can briefly hold a replicated `filled` sized for the other row
+## count (the day and the array arrive separately) — never index past it.
+func _is_filled(i: int) -> bool:
+	return i < filled.size() and filled[i]
+
+## How far out (shelf-local, along -y) the outermost active slot row sits —
+## Forklift.gd stops its near-miss short of this.
+func outermost_slot_offset() -> float:
+	var best := 0.0
+	for slot in slots:
+		best = maxf(best, -slot.position.y)
+	return best
+
 func reset() -> void:
 	for i in slots.size():
 		_occupant[i] = null
@@ -298,8 +353,9 @@ func wreck(from_pos: Vector2) -> bool:
 	var outward: Vector2 = -body.global_transform.y.normalized() # slots sit at local -y, so this points from the shelf into its aisle
 	var hit_side := signf((body.global_position - from_pos).dot(along)) # which way along the shelf is AWAY from the impact
 	var targets: Array = get_tree().get_nodes_in_group("carryable") + get_tree().get_nodes_in_group("display")
+	var spill_radius := WRECK_SPILL_RADIUS + STACK_ROW_DEPTH * (stack_rows - 1) # reach the outer row too
 	for obj in targets:
-		if obj.global_position.distance_to(body.global_position) > WRECK_SPILL_RADIUS:
+		if obj.global_position.distance_to(body.global_position) > spill_radius:
 			continue
 		var comp: Node = obj.get_node_or_null("Carryable")
 		if comp == null:
@@ -345,7 +401,7 @@ func nearest_empty_slot_position(from: Vector2) -> Variant:
 	if wrecked:
 		return null
 	for i in slots.size():
-		if filled[i]:
+		if _is_filled(i):
 			continue
 		var d := from.distance_to(slots[i].global_position)
 		if d < best_dist:
@@ -370,7 +426,7 @@ func placeable_slot_at(predicted_pos: Vector2, obj: Node = null) -> Marker2D:
 	if wrecked:
 		return null
 	for i in slots.size():
-		if filled[i]:
+		if _is_filled(i):
 			continue
 		if predicted_pos.distance_to(slots[i].global_position) <= CAPTURE_RADIUS:
 			if obj != null and not _color_matches(obj):

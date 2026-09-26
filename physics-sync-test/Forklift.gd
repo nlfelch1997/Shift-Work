@@ -280,6 +280,12 @@ func _handle_contacts(mode: String, ram_shelf: Node2D) -> bool:
 				ended = true
 		elif other.is_in_group("player"):
 			if _cooldown_ready(other, ACTOR_HIT_COOLDOWN):
+				# WEEK 10: tell the manager first — the fumble and knockback
+				# slide this hit causes aren't the player's chaos (see
+				# Manager.gd's note_forklift_hit()).
+				var manager := get_tree().get_first_node_in_group("manager")
+				if manager:
+					manager.note_forklift_hit(other.get_multiplayer_authority())
 				# Player movement is client-authoritative, so the host can't
 				# move a remote player itself — it asks that player's owner
 				# to, the same broadcast-and-only-the-owner-acts shape as
@@ -398,7 +404,8 @@ func _build_lap() -> void:
 			var aim: Vector2 = shelf_body.get_node("CollisionShape2D").global_position
 			_legs.append({"pos": Vector2(station.x, aim.y), "mode": "ram", "telegraph": true, "shelf": shelf_body})
 		else:
-			var slot_y: float = shelf_body.get_node("Shelf").slots[0].global_position.y
+			# WEEK 10: the OUTERMOST stocked row (two deep from Day 5).
+			var slot_y: float = shelf_body.to_global(Vector2(0, -shelf_body.get_node("Shelf").outermost_slot_offset())).y
 			var toward_lane := signf(lane_y - slot_y)
 			var stop_y := slot_y + toward_lane * (PRODUCT_HALF_SIZE + NEAR_MISS_CLEARANCE + FRONT_REACH)
 			_legs.append({"pos": Vector2(station.x, stop_y), "mode": "drive", "pause": LOAD_PAUSE})
