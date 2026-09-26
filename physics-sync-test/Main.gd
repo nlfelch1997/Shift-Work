@@ -752,6 +752,20 @@ func _current_customer_grace_period() -> float:
 func _current_shift_duration() -> float:
 	return shift_duration + _extra_day_time()
 
+## Screen-space draw order, bottom to top. PLAYTEST BUG FIX (debug HUD
+## drawn behind the write-up toast and, from Day 5, the priority order
+## banner): every CanvasLayer used to sit on the default layer 1, which
+## leaves draw order to tree order, and AlertLayer is built in code in
+## _ready(), after the scene's own layers, so it drew over everything. Set
+## explicitly in _ready()/_build_alert_layer() instead: the in-game alert
+## rows at the bottom, the debug HUD above them, and the modal end-of-day
+## report above both (the relative order the scene's own layers already had
+## is unchanged).
+const UI_LAYER_ALERTS := 1
+const UI_LAYER_MENU := 2
+const UI_LAYER_DEBUG := 3
+const UI_LAYER_REPORT := 4
+
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
 @onready var join_button: Button = $MenuLayer/Menu/JoinButton
@@ -876,6 +890,9 @@ func _ready() -> void:
 	join_button.pressed.connect(_on_join_pressed)
 	continue_button.pressed.connect(_on_continue_pressed)
 	save_button.pressed.connect(_on_save_pressed)
+	menu_layer.layer = UI_LAYER_MENU
+	$DebugLayer.layer = UI_LAYER_DEBUG
+	report_layer.layer = UI_LAYER_REPORT
 	_build_alert_layer()
 
 	_parse_cli_args()
@@ -1519,6 +1536,7 @@ func _announce_order_result(filled: bool, section: String, qty: int) -> void:
 func _build_alert_layer() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "AlertLayer"
+	layer.layer = UI_LAYER_ALERTS
 	add_child(layer)
 	# Rows from the bottom up: 0 LOOK BUSY, 1 write-up toast, 2 (WEEK 11) the
 	# priority order banner. Each row has its own fixed band, so all three
@@ -2000,7 +2018,6 @@ func _process(delta: float) -> void:
 		report_pay_label.text = "Pay Today: %s   |   Week: %s" % [_format_money(_pay_today()), _format_money(_pay_week())]
 		report_order_label.visible = current_day >= PRIORITY_ORDER_START_DAY
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
-	_update_alert_layer(delta)
 
 	var connected := Net.is_active()
 	var role := "OFFLINE"
@@ -2090,3 +2107,7 @@ func _process(delta: float) -> void:
 		var today_sold := week_sold - _sold_at_day_start
 		lines.append("Stocked now: %d/%d  |  Today: %d  |  Week total: %d  |  Pay today: %s  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, _format_money(_pay_today()), shift_time_left])
 	debug_label.text = "\n".join(lines)
+	# Last, after this frame's shift/order ticks above: found by the net-orders
+	# bot pass — run earlier in _process(), the host's banner showed a new
+	# priority order one frame late (clients were fine, they get it by sync).
+	_update_alert_layer(delta)

@@ -22,6 +22,11 @@ extends SceneTree
 ## orders (per-item tagging, the 1.5x pay, lapsed orders, the banner vs the
 ## LOOK BUSY warning, the day rollover):
 ##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --test=orders
+## Same, with 2-4 real players over ENet — one host plus N-1 clients, every
+## peer driving its own player through its real keyboard actions (host_* on
+## the host, client_* on clients), all stocking toward the same orders:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --players=4 --test=net-orders &
+##   (x3) godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-orders
 ## The solo sim (--test=solo) also plays the orders from Day 5 on — the brain
 ## goes for the called section's stock while an order is open — and reports
 ## orders filled, bonus pay, and any frame where the order banner and the
@@ -54,6 +59,11 @@ func _initialize() -> void:
 			_run_solo.call_deferred()
 		"orders":
 			_run_orders.call_deferred()
+		"net-orders":
+			if "--client" in args:
+				_run_net_orders_client.call_deferred()
+			else:
+				_run_net_orders_host.call_deferred()
 
 func check(cond: bool, what: String) -> void:
 	print(("PASS  " if cond else "FAIL  ") + what)
@@ -93,8 +103,13 @@ func mgr() -> Node2D:
 func fk() -> CharacterBody2D:
 	return main.forklift
 
+## The player this process drives: the host's own (peer 1), or — in the
+## net-orders client mode — this client's own, through the client_* actions.
+var me := 1
+var act := "host_"
+
 func player() -> Node2D:
-	return main.players[1]
+	return main.players[me]
 
 func pin_manager(pos: Vector2, heading: float) -> void:
 	var m := mgr()
@@ -115,9 +130,29 @@ func free_product() -> Node2D:
 	return null
 
 func _is_placed(obj: Node) -> bool:
+	# Shelf occupancy (_occupant) is host-only; a client reads the replicated
+	# `filled` flags plus where the item is sitting instead.
+	if not main.multiplayer.is_server():
+		return _is_placed_replicated(obj)
 	for s in main.shelves:
 		if s.get_node("Shelf").contains(obj):
 			return true
+	return false
+
+func _at_a_slot(obj: Node) -> bool:
+	for s in main.shelves:
+		var shelf: Node = s.get_node("Shelf")
+		for slot in shelf.slots:
+			if obj.global_position.distance_to(slot.global_position) <= shelf.CAPTURE_RADIUS:
+				return true
+	return false
+
+func _is_placed_replicated(obj: Node) -> bool:
+	for s in main.shelves:
+		var shelf: Node = s.get_node("Shelf")
+		for i in shelf.slots.size():
+			if shelf._is_filled(i) and obj.global_position.distance_to(shelf.slots[i].global_position) <= shelf.LEAVE_RADIUS:
+				return true
 	return false
 
 func pickup_near_player() -> Node2D:
@@ -388,10 +423,10 @@ func tap(action: String) -> void:
 	Input.action_release(action)
 
 func steer(dir: Vector2) -> void:
-	press("host_move_right", maxf(dir.x, 0.0))
-	press("host_move_left", maxf(-dir.x, 0.0))
-	press("host_move_down", maxf(dir.y, 0.0))
-	press("host_move_up", maxf(-dir.y, 0.0))
+	press(act + "move_right", maxf(dir.x, 0.0))
+	press(act + "move_left", maxf(-dir.x, 0.0))
+	press(act + "move_down", maxf(dir.y, 0.0))
+	press(act + "move_up", maxf(-dir.y, 0.0))
 
 ## Cell-to-cell route (every connection the map actually has open): through
 ## the hub, with Bakery and the break room hanging off Dry Goods.
@@ -438,6 +473,8 @@ func pick_product(p: Node2D) -> Node2D:
 		var for_order := _pick_product(p, main.SECTION_COLORS[main.order_section])
 		if for_order != null:
 			return for_order
+	if order_only:
+		return null
 	return _pick_product(p, Color(0, 0, 0, 0))
 
 func _pick_product(p: Node2D, only_color: Color) -> Node2D:
@@ -445,6 +482,11 @@ func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 	var best_d := INF
 	for obj in get_nodes_in_group("carryable"):
 		if only_color.a > 0.0 and not obj.get_node("Polygon2D").color.is_equal_approx(only_color):
+			continue
+		# Leave stock that's sitting at a shelf slot alone — including the
+		# 0.35s before the shelf counts it (SETTLE_TIME), when it still looks
+		# loose. Without this a bot would snatch what a teammate just set down.
+		if _at_a_slot(obj):
 			continue
 		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or recent_drops.has(obj):
 			continue
@@ -464,6 +506,8 @@ func pick_slot(from: Vector2, obj: Node) -> Dictionary:
 	for s in main.shelves:
 		if not main.is_unlocked_at_pos(s.global_position):
 			continue
+		if my_shelf != null and s != my_shelf and slot_color_ok(my_shelf, obj):
+			continue
 		var shelf: Node = s.get_node("Shelf")
 		if shelf.wrecked or not slot_color_ok(s, obj):
 			continue
@@ -482,8 +526,16 @@ func pick_slot(from: Vector2, obj: Node) -> Dictionary:
 				best = {"slot": shelf.slots[i], "pos": sp, "out": outward}
 	return best
 
-var stats := {}
+var stats := {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": 0.0, "grace": 0.0}
 var recent_drops := {} # product -> seconds left before the brain may target it again
+## net-orders: stock ONLY for the open order (idle otherwise), and a hook
+## called with (item, slot) on every place press.
+var order_only := false
+var on_place := Callable()
+## net-orders: each peer works its own shelf of the ordered section, the way
+## a real crew spreads out (identical bots all aiming at the one nearest
+## empty slot just knock each other's stock back out).
+var my_shelf: Node = null
 
 func _run_solo() -> void:
 	var day_stats := []
@@ -509,7 +561,8 @@ func _run_solo() -> void:
 		print(l)
 	finish()
 
-func _play_shift() -> void:
+## stop: when to hand control back (default: the shift ends).
+func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 	var p := player()
 	var obj: Node2D = null
 	var job := {}
@@ -522,7 +575,7 @@ func _play_shift() -> void:
 	var dt := 1.0 / 60.0
 	var shot_cool := 0.0
 	var approach_phase := 0
-	while main.shift_active:
+	while not stop.call():
 		await physics_frame
 		for k in recent_drops.keys():
 			recent_drops[k] -= dt
@@ -531,18 +584,18 @@ func _play_shift() -> void:
 		var pos := p.global_position
 		var my_carry: Node2D = null
 		for o in get_nodes_in_group("carryable"):
-			if o.get_node("Carryable").carrier_id == 1:
+			if o.get_node("Carryable").carrier_id == me:
 				my_carry = o
 		# bookkeeping
 		var stunned: bool = p._stun_timer > 0.0
 		if stunned and not prev_stun:
 			stats["hits"] += 1
 		prev_stun = stunned
-		if main.writeups_today > prev_writeups:
+		if main.writeups_today > prev_writeups and main.multiplayer.is_server():
 			var why: String = mgr()._state[1]["reason"]
 			stats["reasons"][why] = stats["reasons"].get(why, 0) + 1
 			prev_writeups = main.writeups_today
-		var watched: bool = mgr().active and mgr().watch_peer == 1 and mgr().watch_level > 0.0
+		var watched: bool = mgr().active and mgr().watch_peer == me and mgr().watch_level > 0.0
 		if watched:
 			stats["watched_s"] += dt
 		if fk().active and mgr().active and manager_overlaps_forklift():
@@ -583,9 +636,23 @@ func _play_shift() -> void:
 					if pos.distance_to(stand) > 3.0:
 						dir = (stand - pos).normalized()
 					if p._place_target_slot != null:
-						await tap("host_place")
+						# A client stops for a beat before C, like a person does:
+						# the host drops the item from ITS copy of this player,
+						# which trails a moving client (see Carryable.gd's
+						# _validate_drop()) — press while walking and it lands
+						# short of the slot the prompt showed.
+						if not main.multiplayer.is_server():
+							steer(Vector2.ZERO)
+							await wait(0.2)
+						await tap(act + "place")
+						# On a client the drop is a round trip to the host; don't
+						# press again (or re-plan) until it has landed.
+						var dropped := my_carry
+						await wait_until(func(): return not is_instance_valid(dropped) or dropped.get_node("Carryable").carrier_id != me, 0.6)
 						recent_drops[my_carry] = 2.5 # let it settle — don't grab it straight back
 						stats["placed"] += 1
+						if on_place.is_valid():
+							on_place.call(my_carry, job["slot"])
 						job = {}
 						approach_phase = 0
 					elif pos.distance_to(stand) <= 3.0:
@@ -597,7 +664,11 @@ func _play_shift() -> void:
 			if obj != null:
 				var target: Vector2 = obj.global_position
 				if pos.distance_to(target) < 40.0:
-					await tap("host_interact")
+					await tap(act + "interact")
+					# Same on pickup: a second E before the host's answer arrives
+					# would drop what was just picked up.
+					var grabbed := obj
+					await wait_until(func(): return not is_instance_valid(grabbed) or grabbed.get_node("Carryable").carrier_id != 0, 0.6)
 					obj = null
 				else:
 					dir = (waypoint(pos, target) - pos).normalized()
@@ -821,6 +892,9 @@ func _run_orders() -> void:
 				clash = true
 	print("RECTS  watch %s | toast %s | order %s" % [main._watch_label.get_global_rect(), main._toast_label.get_global_rect(), main._order_label.get_global_rect()])
 	check(not clash, "O3: banner, LOOK BUSY and the toast sit in separate rows (no overlap)")
+	var alert_layer: CanvasLayer = main.get_node("AlertLayer")
+	var debug_layer: CanvasLayer = main.get_node("DebugLayer")
+	check(debug_layer.layer > alert_layer.layer and main.report_layer.layer > debug_layer.layer, "O3: debug HUD draws above the banner/toast/LOOK BUSY rows, report above both (layers %d / %d / %d)" % [alert_layer.layer, debug_layer.layer, main.report_layer.layer])
 	# The game's own viewport (project.godot), not the headless window's.
 	var vp := Vector2(ProjectSettings.get_setting("display/window/size/viewport_width"), ProjectSettings.get_setting("display/window/size/viewport_height"))
 	var widest := ""
@@ -887,4 +961,428 @@ func _run_orders() -> void:
 	check(main.orders_called_today == 0 and main.orders_filled_today == 0 and main.priority_sales_today == 0, "O5: Day 6 order tallies reset")
 	check(main.priority_sales_week == week_bonus, "O5: week keeps its %d bonus sales" % main.priority_sales_week)
 	check(is_equal_approx(main._order_timer, main.PRIORITY_ORDER_INTERVAL) or main._order_timer > main.PRIORITY_ORDER_INTERVAL - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
+	finish()
+
+## ---------------------------------------------------------------------------
+## NET ORDERS — 2-4 players, one order, several contributors
+##
+## Tags live only on the host (Main.gd's note_item_stocked()); clients only
+## ever see the replicated order counters. So "no desync" is checked from
+## both ends: the host checks every item a CLIENT saw itself stock into the
+## ordered section is tagged to that order, exactly once, and nothing else
+## is; every client checks its own banner/counters/report against what the
+## host saw. Peers swap facts through small JSON files in user://net_orders/
+## (same machine), never through the game's own RPCs.
+
+const NET_DIR := "user://net_orders/"
+const PER_PLAYER := 2 # items each player stocks toward the shared order
+
+func _net_write(file: String, data: Dictionary) -> void:
+	DirAccess.make_dir_recursive_absolute(NET_DIR)
+	var f := FileAccess.open(NET_DIR + file + ".tmp", FileAccess.WRITE)
+	f.store_string(JSON.stringify(data))
+	f.close()
+	DirAccess.rename_absolute(NET_DIR + file + ".tmp", NET_DIR + file) # atomic: readers never see half a file
+
+func _net_read(file: String, timeout: float) -> Dictionary:
+	var t := 0.0
+	while t < timeout:
+		if FileAccess.file_exists(NET_DIR + file):
+			var parsed = JSON.parse_string(FileAccess.get_file_as_string(NET_DIR + file))
+			if parsed is Dictionary:
+				return parsed
+		await create_timer(0.25).timeout
+		t += 0.25
+	return {}
+
+## True once `item` is stocked in any slot of a shelf in `cell` — not just
+## the slot it was aimed at: a dropped item can come to rest in the next one
+## over, and that still counts. On the host, the shelf's own occupancy says
+## so exactly; a client only has the replicated `filled` flags, so there it
+## has to be a filled slot whose nearest item is this one (within the
+## shelf's LEAVE_RADIUS — the placing player can nudge it).
+func _settled_in_cell(item: Node2D, cell: Vector2i) -> bool:
+	for s in main.shelves:
+		if main._grid_cell_of(s.global_position) != cell:
+			continue
+		var shelf: Node = s.get_node("Shelf")
+		if main.multiplayer.is_server():
+			if shelf.contains(item):
+				return true
+			continue
+		for i in shelf.slots.size():
+			if not shelf._is_filled(i):
+				continue
+			var sp: Vector2 = shelf.slots[i].global_position
+			var d := item.global_position.distance_to(sp)
+			if d > shelf.LEAVE_RADIUS:
+				continue
+			var nearest := true
+			for other in get_nodes_in_group("carryable"):
+				if other != item and other.global_position.distance_to(sp) < d:
+					nearest = false
+					break
+			if nearest:
+				return true
+	return false
+
+## Stock PER_PLAYER items toward the open order with this peer's own player,
+## through the real keyboard path. An item counts as "mine" once this peer
+## sees (via replication, on a client) its slot fill with the item sitting in
+## it. Returns their node names — identical on every peer (spawner names).
+## Every peer stocks its share (PER_PLAYER) of the ordered section first —
+## so the zero-latency host can't fill the whole order before a client gets
+## a turn — then gives slower peers a moment, then everyone keeps going
+## until the order fills. Returns [items it saw settle (from replicated
+## state on a client), items it pressed C on in the section]. The second is
+## exact on every peer — it's this peer's own keypress — so it's what the
+## host's attribution is checked against. An item nudged off a shelf and
+## re-stocked shows up again for whoever re-stocked it; the host must not
+## count it twice.
+func _contribute_to_order() -> Array:
+	var settled := []
+	var placed := []
+	var section: String = main.order_section
+	var cell: Vector2i = section_by_name(section)["grid_pos"]
+	var mine_shelves: Array = main.shelves.filter(func(s): return main._grid_cell_of(s.global_position) == cell)
+	mine_shelves.sort_custom(func(a, b): return String(a.name) < String(b.name))
+	var ids: Array = main.players.keys()
+	ids.sort()
+	my_shelf = mine_shelves[ids.find(me) % mine_shelves.size()]
+	order_only = true
+	on_place = func(item: Node2D, slot: Marker2D):
+		if main._grid_cell_of(slot.global_position) != cell or main.order_section == "":
+			return
+		if not (String(item.name) in placed):
+			placed.append(String(item.name))
+		var ok := await wait_until(func(): return is_instance_valid(item) and _settled_in_cell(item, cell), 4.0)
+		if ok and not (item.name in settled):
+			settled.append(String(item.name))
+	var closed := func(): return main.order_section != section or not main.shift_active
+	await _play_shift(func(): return settled.size() >= PER_PLAYER or closed.call())
+	steer(Vector2.ZERO)
+	if main.multiplayer.is_server():
+		# The host has no network latency, so it always finishes its share
+		# first — hold off until every client says its share is in.
+		var t := 0.0
+		while t < 30.0 and not closed.call() and not main.players.keys().all(func(id): return id == 1 or FileAccess.file_exists(NET_DIR + "share_%d.json" % id)):
+			await wait(0.25)
+			t += 0.25
+	else:
+		_net_write("share_%d.json" % me, {"settled": settled.size()})
+		await wait_until(closed, 6.0)
+	await _play_shift(closed)
+	steer(Vector2.ZERO)
+	await wait(4.2) # let the last verdicts come in
+	my_shelf = null
+	order_only = false
+	on_place = Callable()
+	return [settled, placed]
+
+## What every peer saw of the orders during free play: each order it saw
+## open (section, quantity, and whether its own banner was up the whole
+## time the order was), and each FILLED/missed result line it got.
+var _net_view := {"orders": [], "results": [], "open_frames": 0, "banner_frames": 0, "text_bad": 0}
+var _net_watch := false
+
+func _watch_orders_view() -> void:
+	_net_watch = true
+	var was_open := false
+	var last_result_t := 0.0
+	while _net_watch:
+		await physics_frame
+		var open: bool = main.order_section != "" and not main.is_day_report_active()
+		if open:
+			_net_view["open_frames"] += 1
+			if main._order_label.visible:
+				_net_view["banner_frames"] += 1
+			var expect_text := "MANAGER: Stock %d more in %s!" % [main.order_needed - main.order_stocked, main.order_section]
+			if not main._order_label.text.begins_with(expect_text):
+				_net_view["text_bad"] += 1
+			if not was_open:
+				_net_view["orders"].append([main.order_section, main.order_needed])
+		was_open = open
+		if main._order_result_timer > last_result_t + 0.5: # a fresh result RPC just landed
+			_net_view["results"].append("FILLED" if main._order_result_filled else "missed")
+		last_result_t = main._order_result_timer
+
+## Host-side, every physics frame: which items carry which order's tag, who
+## last carried each tagged item, and which tagged items have since been
+## sold (freed — nothing else frees product mid-shift).
+var _tags := {} # item name -> order id
+var _tag_carrier := {} # item name -> peer id that last carried it
+var _last_carrier := {} # item name -> last nonzero carrier
+var _tag_sold := {} # item name -> order id, for tagged items that vanished
+var _tag_nodes := {}
+var _order_needed_seen := {} # order id -> quantity
+var _order_stocked_seen := {} # order id -> last stocked count seen while open
+var _tag_watch := false
+
+func _watch_tags() -> void:
+	_tag_watch = true
+	while _tag_watch:
+		await physics_frame
+		if main._order_id != 0:
+			_order_needed_seen[main._order_id] = main.order_needed
+			_order_stocked_seen[main._order_id] = main.order_stocked
+		for n in _tag_nodes.keys():
+			if not is_instance_valid(_tag_nodes[n]):
+				_tag_sold[n] = _tags[n]
+				_tag_nodes.erase(n)
+		for obj in get_nodes_in_group("carryable"):
+			var c: int = obj.get_node("Carryable").carrier_id
+			if c > 0:
+				_last_carrier[String(obj.name)] = c
+			if obj.has_meta("priority_order") and not _tags.has(String(obj.name)):
+				_tags[String(obj.name)] = obj.get_meta("priority_order")
+				_tag_carrier[String(obj.name)] = _last_carrier.get(String(obj.name), 0)
+				_tag_nodes[String(obj.name)] = obj
+
+func _run_net_orders_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	var d := DirAccess.open("user://")
+	if d and d.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
+	var names := {}
+	for id in main.players:
+		names[id] = main.player_display_name(id)
+	check(main.players.size() == want, "net: %d players connected (%s)" % [main.players.size(), str(names.values())])
+	check(main.current_day == 5, "net: Day 5")
+	# Controlled phase: no auto orders, no customers, both hazards parked.
+	main._order_timer = 1.0e9
+	main._customer_grace_timer = 1.0e9
+	fk()._pause_timer = 1.0e9
+	pin_manager(Vector2(480, 1350), 0.0)
+	_watch_tags()
+	_watch_orders_view()
+	await wait(2.0)
+
+	# --- N0: players touching each other over the network. Found by this
+	# pass: players were CharacterBody2D in the default GROUNDED mode, so a
+	# player treated whoever it was touching as a floor and rode its velocity
+	# — and in network play each process rides the OTHER's synced copy, a
+	# feedback loop that ran both off the bottom of the map at ~400px/s.
+	await _n0_touching_players(names)
+
+	# --- N1: one Dry Goods order sized so every player has to contribute.
+	# Everyone starts in Dry Goods so the test measures the stocking, not the
+	# walk out of the break room (teleport_to is an RPC to each player's owner
+	# — movement is client-authoritative). On the open floor BELOW the product
+	# spawn band (y 120-360): teleporting a player onto loose stock makes the
+	# physics engine fling it apart, straight into slots.
+	var k := 0
+	for id in main.players:
+		main.players[id].rpc("teleport_to", Vector2(1335 + 70 * k, 470))
+		k += 1
+	await wait(1.5)
+	var qty := PER_PLAYER * want
+	main._issue_priority_order("Dry Goods", qty)
+	# 45s instead of 15 for this one: it checks attribution across players,
+	# not the window (free play below runs the real 15s windows).
+	main.order_time_left = 45.0
+	var order_id: int = main._order_id
+	var mine: Array = await _contribute_to_order()
+	var filled := await wait_until(func(): return main.order_section == "", 60.0)
+	check(filled and main._filled_order_ids.has(order_id), "N1: %d-item order filled by %d players" % [qty, want])
+	check(main.orders_filled_today == 1 and main.orders_called_today == 1, "N1: filled %d of %d called" % [main.orders_filled_today, main.orders_called_today])
+	await wait(0.5)
+	var tagged := _tags.keys().filter(func(n): return _tags[n] == order_id)
+	check(tagged.size() == qty, "N1: exactly %d items tagged to order #%d (got %d: %s)" % [qty, order_id, tagged.size(), str(tagged)])
+	var by_peer := {}
+	for n in tagged:
+		var who: int = _tag_carrier[n]
+		by_peer[who] = by_peer.get(who, 0) + 1
+	print("NET  tagged items by the player who stocked them: %s" % str(by_peer))
+	# Peer 0 = never carried by anyone: a loose item walked into a matching
+	# slot, which the game has always counted as stocked (see Shelf.gd).
+	var pushed_in: int = by_peer.get(0, 0)
+	check(main.players.keys().all(func(id): return by_peer.get(id, 0) >= 1), "N1: every player's stock counted toward the order: %s" % str(by_peer))
+	# Cross-check against what each peer saw itself stock (clients report theirs).
+	var stocked_by := {1: mine[0]}
+	var pressed_by := {1: mine[1]}
+	for id in main.players.keys():
+		if id == 1:
+			continue
+		var r := await _net_read("placed_%d.json" % id, 30.0)
+		stocked_by[id] = r.get("items", [])
+		pressed_by[id] = r.get("pressed", [])
+	var union := []
+	for id in stocked_by:
+		for n in stocked_by[id]:
+			if not (n in union):
+				union.append(n)
+	print("NET  items each peer saw itself stock: %s" % str(stocked_by))
+	union.sort()
+	tagged.sort()
+	# Every tag the host placed on an item a player carried in is one that
+	# player's own process pressed C on in Dry Goods — no phantom tags, none
+	# credited to the wrong peer.
+	var phantom := tagged.filter(func(n): return _tag_carrier[n] != 0 and not (n in pressed_by.get(_tag_carrier[n], [])))
+	check(phantom.is_empty(), "N1: every carried-in tagged item was placed (C pressed) by the peer the host credits (mismatches: %s)" % str(phantom))
+	print("NET  C pressed in Dry Goods by each peer: %s" % str(pressed_by))
+	print("NET  %d of %d tagged items were pushed in loose, not carried" % [pushed_in, qty])
+	check(main.order_stocked == 0 and _order_stocked_seen.get(order_id, 0) <= qty, "N1: the order's stocked count never ran past its quantity")
+
+	# --- N2: sell them all plus two untagged ones: only the order's items pay 1.5x.
+	await wait(1.0)
+	var sold0: int = main._total_sold() - main._sold_at_day_start
+	var pay0: int = main._pay_today()
+	for n in tagged:
+		var obj: Node = _tag_nodes.get(n)
+		if obj:
+			await sell(obj)
+	var plain := loose_products("Dry Goods").slice(0, 2)
+	for obj in plain:
+		await sell(obj)
+	await wait(0.3)
+	check(main._total_sold() - main._sold_at_day_start - sold0 == qty + 2, "N2: %d sales" % (qty + 2))
+	check(main.priority_sales_today == qty, "N2: exactly the %d order items earned the bonus (%d)" % [qty, main.priority_sales_today])
+	check(main._pay_today() == pay0 + (qty + 2) * 10 + qty * 5, "N2: pay +%s = %d x $15 + 2 x $10" % [main._format_money(main._pay_today() - pay0), qty])
+	await wait(1.0) # let DaySync carry it
+	_net_write("phase_n2.json", {"priority_sales_today": main.priority_sales_today, "orders_filled_today": main.orders_filled_today, "orders_called_today": main.orders_called_today, "pay_today": main._pay_today(), "tagged": tagged})
+
+	# --- N3: free play — orders on their own cadence, customers buying,
+	# manager and forklift live, everyone stocking. Then the bell.
+	release_manager()
+	fk()._pause_timer = 0.0
+	main._customer_grace_timer = 0.0
+	main._order_timer = 3.0
+	main.shift_time_left = 115.0 # call-outs at ~3s, 48s, 93s
+	_net_view = {"orders": [], "results": [], "open_frames": 0, "banner_frames": 0, "text_bad": 0}
+	await _play_shift()
+	steer(Vector2.ZERO)
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	await wait(1.0)
+	_net_watch = false
+	_tag_watch = false
+	# Host bookkeeping invariants, over the whole day.
+	var per_order := {}
+	for n in _tags:
+		per_order[_tags[n]] = per_order.get(_tags[n], 0) + 1
+	var tag_ok := true
+	for id in _order_needed_seen:
+		var expect: int = _order_needed_seen[id] if main._filled_order_ids.has(id) else _order_stocked_seen.get(id, 0)
+		if per_order.get(id, 0) != expect:
+			tag_ok = false
+			print("NET  order #%d: %d tagged, expected %d" % [id, per_order.get(id, 0), expect])
+	print("NET  orders %s | tags per order %s | filled ids %s" % [str(_order_needed_seen), str(per_order), str(main._filled_order_ids.keys())])
+	check(tag_ok, "N3: every order's tag count == its stocked count (filled: == quantity) — no double counting")
+	var bonus_expected := _tag_sold.keys().filter(func(n): return main._filled_order_ids.has(_tag_sold[n])).size()
+	check(main.priority_sales_today == bonus_expected, "N3: bonus sales today %d == tagged items of filled orders that sold %d" % [main.priority_sales_today, bonus_expected])
+	check(main.orders_called_today >= 3, "N3: %d orders called in free play (+1 controlled)" % (main.orders_called_today - 1))
+	var cap: int = main.PRIORITY_ORDER_QTY_MAX + main.PRIORITY_ORDER_QTY_PER_EXTRA_PLAYER * (want - 1)
+	check(_net_view["orders"].all(func(o): return o[1] <= cap), "N3: quantities scale with %d players, capped at %d: %s" % [want, cap, str(_net_view["orders"])])
+	check(_net_view["banner_frames"] == _net_view["open_frames"] and _net_view["text_bad"] == 0, "N3 host: banner up for every open-order frame (%d/%d), text right" % [_net_view["banner_frames"], _net_view["open_frames"]])
+	print("NET  host view: %s" % str(_net_view))
+	print("REPORT  %s | %s | %s" % [main.report_today_label.text, main.report_order_label.text, main.report_pay_label.text])
+	_net_write("phase_n3.json", {"view": _net_view, "today": main.report_today_label.text, "orders": main.report_order_label.text, "pay": main.report_pay_label.text})
+	# Every client's own verdict.
+	for id in names:
+		if id == 1:
+			continue
+		var r := await _net_read("result_%d.json" % id, 60.0)
+		check(r.get("fails", -1) == 0, "net: %s's own checks passed (failures: %s)" % [names[id], str(r.get("fails", "no result"))])
+	await wait(1.0)
+	finish()
+
+## Host side of N0: puts every player on the SAME spot in the hub (two
+## players walking to the same item end up overlapping exactly like this),
+## everyone walks up-left for 1.5s — the heading the runaway was captured
+## on — then everyone lets go. Nobody should keep moving afterward, nobody
+## should end up off the map.
+func _n0_touching_players(names: Dictionary) -> void:
+	for id in main.players:
+		main.players[id].rpc("teleport_to", N0_SPOT)
+	await wait(1.0)
+	_net_write("n0_go.json", {"go": true})
+	var drift: Array = await _n0_walk_then_stop()
+	check(drift[0] < 15.0 and drift[1], "N0 host: after letting go, %s moved %.0fpx more (still inside the map: %s)" % [names[1], drift[0], drift[1]])
+	for id in main.players.keys():
+		if id == 1:
+			continue
+		var r := await _net_read("n0_%d.json" % id, 20.0)
+		check(r.get("drift", 9999.0) < 15.0 and r.get("inside", false), "N0: after letting go, %s moved %.0fpx more on its own screen (inside the map: %s)" % [names[id], r.get("drift", 9999.0), str(r.get("inside"))])
+
+## Both sides of N0: hold the movement keys toward N0_TOWARD for 3s — every
+## frame, this peer's own player must not be carried AWAY from where it's
+## steering or off the map — then release and measure how far it keeps going.
+const N0_SPOT := Vector2(1800, 565)
+const N0_TOWARD := Vector2(1636, 360)
+var n0_backwards := 0.0 # px moved against the held direction, summed
+
+func _n0_walk_then_stop() -> Array:
+	var heading := (N0_TOWARD - N0_SPOT).normalized()
+	steer(heading)
+	var prev: Vector2 = player().global_position
+	var inside := true
+	for i in 180:
+		await physics_frame
+		var q: Vector2 = player().global_position
+		n0_backwards += maxf(0.0, -(q - prev).dot(heading))
+		prev = q
+		if q.x < 0.0 or q.y < 0.0 or q.x > main.WORLD_WIDTH or q.y > main.WORLD_HEIGHT:
+			inside = false
+	steer(Vector2.ZERO)
+	await wait(0.5)
+	var at: Vector2 = player().global_position
+	for i in 180:
+		await physics_frame
+		var q: Vector2 = player().global_position
+		if q.x < 0.0 or q.y < 0.0 or q.x > main.WORLD_WIDTH or q.y > main.WORLD_HEIGHT:
+			inside = false
+	return [player().global_position.distance_to(at), inside and n0_backwards < 40.0]
+
+func _run_net_orders_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me)
+	await wait_until(func(): return main.shift_active and main.current_day == 5, 20.0)
+	check(main.current_day == 5, "%s: Day 5 (replicated)" % who)
+	# N0 (see the host side).
+	var go := await _net_read("n0_go.json", 40.0)
+	check(go.get("go", false), "%s: N0 started" % who)
+	var drift: Array = await _n0_walk_then_stop()
+	_net_write("n0_%d.json" % me, {"drift": drift[0], "inside": drift[1]})
+	check(drift[0] < 15.0 and drift[1], "%s: N0 after letting go I moved %.0fpx more (inside the map: %s)" % [who, drift[0], drift[1]])
+	_watch_orders_view()
+	# --- N1: the order arrives by replication; banner up on MY screen.
+	var got := await wait_until(func(): return main.order_section == "Dry Goods", 30.0)
+	await wait(0.1)
+	check(got and main._order_label.visible and main._order_label.text.begins_with("MANAGER: Stock ") and "in Dry Goods!" in main._order_label.text, "%s: order banner on my screen: '%s'" % [who, main._order_label.text])
+	var needed: int = main.order_needed
+	var mine: Array = await _contribute_to_order()
+	_net_write("placed_%d.json" % me, {"items": mine[0], "pressed": mine[1]})
+	check(mine[0].size() >= 1, "%s: stocked %d item(s) toward the order: %s" % [who, mine[0].size(), str(mine[0])])
+	var closed := await wait_until(func(): return main.order_section == "", 60.0)
+	await wait(0.2)
+	check(closed and _net_view["results"] == ["FILLED"], "%s: saw the FILLED result on my banner: %s" % [who, str(_net_view["results"])])
+	check(needed == PER_PLAYER * main.players.size(), "%s: order size %d == %d players x %d" % [who, needed, main.players.size(), PER_PLAYER])
+	# --- N2: my replicated counters match the host's.
+	var n2 := await _net_read("phase_n2.json", 60.0)
+	await wait(0.5)
+	check(main.priority_sales_today == n2.get("priority_sales_today", -1), "%s: bonus sales %d == host's %s" % [who, main.priority_sales_today, str(n2.get("priority_sales_today"))])
+	check(main.orders_filled_today == n2.get("orders_filled_today", -1) and main.orders_called_today == n2.get("orders_called_today", -1), "%s: orders filled/called %d/%d == host's" % [who, main.orders_filled_today, main.orders_called_today])
+	check(main._pay_today() == n2.get("pay_today", -99999), "%s: pay today %s == host's %s" % [who, main._format_money(main._pay_today()), str(n2.get("pay_today"))])
+	check(n2.get("tagged", []).all(func(n): return not main.products_root.has_node(NodePath(n))), "%s: the host's tagged items are the ones gone from my world (sold)" % who)
+	# --- N3: free play, then the report.
+	_net_view = {"orders": [], "results": [], "open_frames": 0, "banner_frames": 0, "text_bad": 0}
+	await _play_shift()
+	steer(Vector2.ZERO)
+	await wait_until(func(): return main.is_day_report_active(), 10.0)
+	await wait(1.5)
+	_net_watch = false
+	var n3 := await _net_read("phase_n3.json", 60.0)
+	var hv: Dictionary = n3.get("view", {})
+	print("NET  %s view: %s" % [who, str(_net_view)])
+	check(_net_view["banner_frames"] == _net_view["open_frames"] and _net_view["open_frames"] > 0 and _net_view["text_bad"] == 0, "%s: banner up for every open-order frame on my screen (%d/%d), text matched the replicated counters" % [who, _net_view["banner_frames"], _net_view["open_frames"]])
+	check(str(_net_view["orders"]) == str(hv.get("orders")), "%s: same free-play orders as the host: %s vs %s" % [who, str(_net_view["orders"]), str(hv.get("orders"))])
+	check(str(_net_view["results"]) == str(hv.get("results")), "%s: same FILLED/missed results as the host: %s vs %s" % [who, str(_net_view["results"]), str(hv.get("results"))])
+	check(main.report_order_label.text == n3.get("orders", "") and main.report_pay_label.text == n3.get("pay", "") and main.report_today_label.text == n3.get("today", ""), "%s: report matches the host's: '%s' | '%s'" % [who, main.report_order_label.text, main.report_pay_label.text])
+	_net_write("result_%d.json" % me, {"fails": fails})
 	finish()
