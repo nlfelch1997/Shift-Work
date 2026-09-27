@@ -359,8 +359,8 @@ func _run_interact() -> void:
 				player().teleport_to(Vector2(480, 270))
 		if absf(mgr().global_position.y - fk().home_position.y) < 40.0:
 			lane_frames += 1
-	print("PATROL  %d Meat/Deli visits, %d frames there, min manager-forklift distance %.0fpx, %d frames overlapping the forklift, %d frames standing in its lane" % [meat_visits, meat_frames, min_dist, overlap_frames, lane_frames])
-	check(meat_visits >= 2, "I3: manager visited Meat/Deli %d times while the forklift ran" % meat_visits)
+	print("PATROL  %d Produce (forklift section) visits, %d frames there, min manager-forklift distance %.0fpx, %d frames overlapping the forklift, %d frames standing in its lane" % [meat_visits, meat_frames, min_dist, overlap_frames, lane_frames])
+	check(meat_visits >= 2, "I3: manager visited Produce (the forklift section) %d times while the forklift ran" % meat_visits)
 	check(overlap_frames == 0, "I3: manager never inside the forklift's footprint (%d overlapping frames, min distance %.0fpx)" % [overlap_frames, min_dist])
 	check(lane_frames < 30, "I3: manager doesn't loiter in the forklift's lane (%d frames within 40px of its center line)" % lane_frames)
 	check(main.writeups_today == writeups_before, "I3: nobody written up during the patrol run")
@@ -933,7 +933,7 @@ func _run_orders() -> void:
 	pin_manager(spot + Vector2(-180, 0), 0.0)
 	var st: Dictionary = mgr()._player_state(1)
 	st["cooldown"] = 0.0
-	main._issue_priority_order("Meat/Deli", 3)
+	main._issue_priority_order("Produce", 3)
 	# Wait for the hot "!" stage — the longest LOOK BUSY text.
 	var both := await wait_until(func(): return main._watch_label.visible and main._order_label.visible and mgr().watch_level >= mgr().WARN_LEVEL, 6.0)
 	main._toast_label.text = "WRITTEN UP for standing around!  -$25"

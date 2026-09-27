@@ -255,7 +255,7 @@ func _run_host() -> void:
 		await physics_frame
 		track.call()
 	check(visited.has(Vector2i(1, 1)), "patrol: visited the hub")
-	check(visited.has(Vector2i(1, 0)) and visited.has(Vector2i(2, 1)), "patrol: visited both Day-4 sections (Dry Goods, Meat/Deli): %s" % str(visited.keys()))
+	check(visited.has(Vector2i(1, 0)) and visited.has(Vector2i(2, 1)), "patrol: visited both Day-4 sections (Dry Goods, Produce): %s" % str(visited.keys()))
 	check(not visited.has(Vector2i(0, 1)) and not visited.has(Vector2i(2, 0)), "patrol: never entered locked Dairy/Frozen or Bakery")
 
 	# Report.

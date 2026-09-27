@@ -66,6 +66,14 @@ func _run() -> void:
 		await shot("shelf_" + String(sec["node_name"]).to_lower() + "_zoom1")
 		cam.zoom = Vector2(1.6, 1.6)
 	cam.zoom = Vector2.ONE
+	# A priority order for the section that's sold as Produce since Week 13
+	# #4 — the banner builds its text from the section's name.
+	if main.current_day >= main.PRIORITY_ORDER_START_DAY:
+		main._issue_priority_order("Produce", 3)
+		p.teleport_to(Vector2(2400, 700))
+		await shot("order_banner_produce")
+		print("BANNER  " + main._order_label.text)
+		main._clear_priority_order()
 	# Whole store: camera limits off, zoomed out, centered on the map.
 	cam.limit_left = -10000
 	cam.limit_top = -10000

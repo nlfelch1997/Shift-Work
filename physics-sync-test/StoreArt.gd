@@ -147,11 +147,12 @@ func _add_strip(r: Rect2, tex: Texture2D, along_x: bool) -> void:
 ## - Bakery: real products (cakes, slices, loaves — 2.png).
 ## - Dairy/Frozen: cold drinks (water, juice carton, sodas — 4.png). A loose
 ##   fit: the pack has no milk/cheese/yogurt/ice cream anywhere.
-## - Meat/Deli: NOTHING genuine — every meat/fish item in the pack is baked
-##   into a refrigerated case. Kept as the placeholder (colored squares,
-##   outline slots, flat shelf) rather than forcing a mismatch.
+## - Produce (follow-up #4 — was Meat/Deli, which had NOTHING genuine: every
+##   meat/fish item in the pack is baked into a refrigerated case, so the
+##   section now sells what the packs do support): 18 real items — fruit and
+##   veg bowls, apple baskets, a greens crate, a pineapple (4.png, 2.png).
 ##
-## HOW A SLOT RENDERS (sections in SLOT_ART_SECTIONS):
+## HOW A SLOT RENDERS (every section, ART_SECTIONS):
 ## - Every slot gets one bay of the pack's EMPTY metal shelving (11.png)
 ##   under its existing accent-colored outline — the empty-shelf look, and
 ##   the outline still says which color goes there (a gameplay cue).
@@ -163,21 +164,22 @@ func _add_strip(r: Rect2, tex: Texture2D, along_x: bool) -> void:
 ##   Polygon2D stays (its color IS the item type the stock/order logic
 ##   reads) — only its fill is made invisible (self_modulate).
 ##
-## SHELF FURNITURE (the long body behind the slots) is a separate call,
-## FURNITURE_SECTIONS: the pack's shelving is front-view art. On shelves
-## that sit at 0/180 degrees (Bakery, Dairy/Frozen) it's drawn upright and
-## reads as a shelving unit. Dry Goods' shelves are turned 90 degrees to
-## face sideways, where front-view art would read as a shelf lying on its
-## side, so Dry Goods keeps the flat placeholder body (products + slot art
-## still swapped). Meat/Deli keeps it too, to match its placeholder stock.
+## SHELF FURNITURE (the long body behind the slots), follow-up #4 — one style
+## everywhere: a row of the same empty metal bays the slots use, laid along
+## the body's long axis (three per 180px shelf), each drawn UPRIGHT whatever
+## way the shelf faces. That's what lets Dry Goods' sideways shelves (turned
+## 90 degrees) share it: a stack of upright bays reads as shelving, where one
+## front-view unit rotated 90 degrees would lie on its side. The art is grey;
+## each section's color comes from the shelf body's own existing tint
+## (Main.tscn's per-section shelf modulate), untouched, so sections stay
+## color-coded exactly as before. Same body, same collision, same slots.
 
 const SHELF_SHEET := "res://assets/supermarket/11.png"
-const EMPTY_SHELF_UNIT := Rect2i(0, 390, 193, 92) # two empty metal bays
-const EMPTY_SHELF_BAY := Rect2i(0, 390, 96, 92) # one of them
+const EMPTY_SHELF_BAY := Rect2i(0, 390, 96, 92) # one empty metal bay
+const BODY_BAYS := 3 # bays along each shelf body
 const PRODUCT_SIZE := 30.0 # px, longest side — products are 28px bodies
 const SLOT_BAY_SIZE := Vector2(46, 44) # inside the 52px outline
-const SLOT_ART_SECTIONS := ["Dry Goods", "Bakery", "Dairy/Frozen"]
-const FURNITURE_SECTIONS := ["Bakery", "Dairy/Frozen"]
+const ART_SECTIONS := ["Dry Goods", "Produce", "Dairy/Frozen", "Bakery"]
 const PRODUCT_SPRITES := {
 	"Dry Goods": ["res://assets/supermarket/4.png", [
 		Rect2i(683, 3, 27, 43), Rect2i(682, 534, 29, 37), Rect2i(730, 534, 29, 37), Rect2i(680, 581, 33, 39),
@@ -196,7 +198,18 @@ const PRODUCT_SPRITES := {
 	"Dairy/Frozen": ["res://assets/supermarket/4.png", [
 		Rect2i(447, 675, 19, 43), Rect2i(495, 675, 19, 43), Rect2i(495, 722, 19, 44), Rect2i(447, 723, 19, 43),
 		Rect2i(540, 725, 25, 40)]],
+	"Produce": ["res://assets/supermarket/4.png", [
+		Rect2i(626, 388, 44, 41), Rect2i(578, 389, 44, 40), Rect2i(674, 390, 44, 39), Rect2i(722, 390, 44, 39),
+		Rect2i(579, 437, 43, 40), Rect2i(626, 437, 44, 40), Rect2i(674, 438, 44, 39), Rect2i(722, 440, 44, 37),
+		Rect2i(731, 482, 26, 44), Rect2i(578, 483, 44, 42), Rect2i(678, 483, 37, 43), Rect2i(626, 486, 44, 39),
+		Rect2i(631, 533, 36, 41), Rect2i(580, 537, 40, 36)]],
+	# (+ four baskets/crates from 2.png, merged into the same pool below)
 }
+## Produce's other four items live on a different sheet: [path, region].
+const PRODUCE_EXTRA := [
+	["res://assets/supermarket/2.png", Rect2i(529, 674, 47, 47)], ["res://assets/supermarket/2.png", Rect2i(481, 722, 47, 46)],
+	["res://assets/supermarket/2.png", Rect2i(529, 722, 47, 46)], ["res://assets/supermarket/2.png", Rect2i(433, 728, 47, 40)],
+]
 
 func _section_of_cell(cell: Vector2i) -> String:
 	for sec in main.SECTIONS:
@@ -216,19 +229,26 @@ func _dress_shelves() -> void:
 		var section := _section_of_cell(main._grid_cell_of(shelf_body.global_position))
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var upright: float = -shelf_body.global_rotation
-		if section in FURNITURE_SECTIONS:
-			# A child of the body polygon, so it keeps the wreck tilt Shelf.gd
-			# puts on that polygon; counter-rotated so it's never upside down.
+		if section in ART_SECTIONS:
+			# Children of the body polygon, so they keep the wreck tilt Shelf.gd
+			# puts on that polygon; each counter-rotated so it's never sideways
+			# or upside down. A bay's on-screen footprint is its slice of the
+			# body, rotated into world axes.
 			var polygon: Polygon2D = shelf_body.get_node("Polygon2D")
 			var bounds := Rect2(polygon.polygon[0], polygon.polygon[2] - polygon.polygon[0])
-			var unit := _region_sprite(SHELF_SHEET, EMPTY_SHELF_UNIT)
-			unit.name = "ShelfArt"
-			unit.position = bounds.get_center()
-			unit.rotation = upright
-			unit.scale = bounds.size / Vector2(EMPTY_SHELF_UNIT.size)
+			var cell := Vector2(bounds.size.x / BODY_BAYS, bounds.size.y)
+			var world_cell := cell.rotated(shelf_body.global_rotation).abs()
+			var art := Node2D.new()
+			art.name = "ShelfArt"
+			for n in BODY_BAYS:
+				var bay := _region_sprite(SHELF_SHEET, EMPTY_SHELF_BAY)
+				bay.position = Vector2(bounds.position.x + cell.x * (n + 0.5), bounds.get_center().y)
+				bay.rotation = upright
+				bay.scale = world_cell / Vector2(EMPTY_SHELF_BAY.size)
+				art.add_child(bay)
 			polygon.self_modulate.a = 0.0
-			polygon.add_child(unit)
-		if section in SLOT_ART_SECTIONS:
+			polygon.add_child(art)
+		if section in ART_SECTIONS:
 			for slot in shelf._all_slots:
 				var bay := _region_sprite(SHELF_SHEET, EMPTY_SHELF_BAY)
 				bay.name = "EmptyShelfArt"
@@ -257,10 +277,10 @@ func _dress_product(node: Node) -> void:
 			section = sec_name
 	if not PRODUCT_SPRITES.has(section):
 		return # Meat/Deli: stays the placeholder square
-	var entry: Array = PRODUCT_SPRITES[section]
-	var regions: Array = entry[1]
-	var region: Rect2i = regions[absi(String(node.name).hash()) % regions.size()]
-	var spr := _region_sprite(entry[0], region)
+	var pool := _sprite_pool(section)
+	var pick: Array = pool[absi(String(node.name).hash()) % pool.size()]
+	var region: Rect2i = pick[1]
+	var spr := _region_sprite(pick[0], region)
 	spr.name = "ProductArt"
 	spr.scale = Vector2.ONE * (PRODUCT_SIZE / float(maxi(region.size.x, region.size.y)))
 	visual.self_modulate.a = 0.0
@@ -278,10 +298,9 @@ func _dress_product(node: Node) -> void:
 ## three shelf lips, as many across as fit — and the item's own single
 ## sprite is hidden (it's represented by the facings until it leaves the
 ## slot: picked up, knocked off, bought). Every peer does this from the
-## replicated `filled` flags; which item is in a slot is exact on the host
-## (_occupant) and, on a client, the nearest product within LEAVE_RADIUS
-## (the same rule the test harness has always used there). Nothing reads
-## any of it back.
+## replicated `filled` flags; which item is in a slot comes from Shelf.gd's
+## replicated occupant_names (follow-up #4 — a client's nearest-item guess
+## could pick a neighbour). Nothing reads any of it back.
 
 ## In the bay art's own pixels (96x92, centered): the top of each shelf lip
 ## (from its luminance profile), and how tall a faced item stands on it —
@@ -317,18 +336,12 @@ func _process(_delta: float) -> void:
 			item.get_node("ProductArt").visible = true
 	_hidden_art = now_hidden
 
-func _item_in_slot(shelf: Node, i: int, slot: Node2D) -> Node2D:
-	if multiplayer.is_server():
-		var occ = shelf._occupant[i]
-		return occ if is_instance_valid(occ) else null
-	var best: Node2D = null
-	var best_d: float = shelf.LEAVE_RADIUS
-	for obj in get_tree().get_nodes_in_group("carryable"):
-		var d: float = obj.global_position.distance_to(slot.global_position)
-		if d < best_d and obj.get_node("Carryable").carrier_id == 0:
-			best_d = d
-			best = obj
-	return best
+## The item the authority counted in this slot (Shelf.gd's replicated
+## occupant_names), looked up by its spawner name — identical on every peer.
+func _item_in_slot(shelf: Node, i: int, _slot: Node2D) -> Node2D:
+	if i >= shelf.occupant_names.size() or shelf.occupant_names[i] == "":
+		return null
+	return main.products_root.get_node_or_null(NodePath(shelf.occupant_names[i]))
 
 ## (Re)builds the rows only when the product in the slot changes.
 func _show_facings(facings: Node2D, art: Sprite2D) -> void:
@@ -353,3 +366,13 @@ func _show_facings(facings: Node2D, art: Sprite2D) -> void:
 			f.scale = Vector2(k, k)
 			f.position = Vector2(-span * 0.5 + w * 0.5 + n * (w + FACING_GAP), baseline - FACING_HEIGHT * 0.5)
 			facings.add_child(f)
+
+## Every [path, region] a section's products can be drawn as.
+func _sprite_pool(section: String) -> Array:
+	var entry: Array = PRODUCT_SPRITES[section]
+	var pool := []
+	for r in entry[1]:
+		pool.append([entry[0], r])
+	if section == "Produce":
+		pool.append_array(PRODUCE_EXTRA)
+	return pool
