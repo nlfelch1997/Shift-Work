@@ -1813,6 +1813,16 @@ func _product_art_view() -> Dictionary:
 		out[String(obj.name)] = str(art.region_rect) if art else "placeholder"
 	return out
 
+## WEEK 13 #2 — every faced (stocked) slot on this peer: which product art
+## its facings show. Taken with the world frozen (end-of-day report).
+func _facings_view() -> Dictionary:
+	var out := {}
+	for entry in main.get_node("StoreArt")._faced_slots:
+		var facings: Node2D = entry[3]
+		if facings.visible:
+			out["%s/%s" % [entry[0].get_parent().get_path(), entry[2].name]] = facings.get_meta("key", "")
+	return out
+
 func _lane_for(lanes: Dictionary, id: int) -> Dictionary:
 	return lanes.get(str(id), {})
 
@@ -2156,6 +2166,8 @@ func _run_net_ambience_host() -> void:
 	check(_env_view["spills"].size() >= 3 and _env_view["lights"].size() >= 2, "E4: %d spills and %d lights events in 100s of free play" % [_env_view["spills"].size(), _env_view["lights"].size()])
 	check(_env_view["slip_writeups"].is_empty(), "E4: no write-up for a push while on a spill (%s)" % str(_env_view["slip_writeups"]))
 	check(_env_view["inside"], "E4 host: stayed on the map")
+	var host_facings := _facings_view()
+	print("NET  host: %d stocked slots showing facings" % host_facings.size())
 	_net_write("e4_host.json", {"view": _env_view, "today": main.report_today_label.text, "pay": main.report_pay_label.text})
 	for id in ids:
 		if id == 1:
@@ -2167,6 +2179,9 @@ func _run_net_ambience_host() -> void:
 		check(v.get("inside", false) and r.get("lights_back", false), "E4: %s stayed on the map, lights back on for its report" % names[id])
 		check(r.get("today", "") == main.report_today_label.text and r.get("pay", "") == main.report_pay_label.text, "E4: %s's report matches the host's: '%s' | '%s'" % [names[id], r.get("today"), r.get("pay")])
 		print("NET  %s: slipping %.1fs" % [names[id], v.get("slip_s", 0.0)])
+		var their_facings: Dictionary = r.get("facings", {})
+		var fbad := host_facings.keys().filter(func(k): return their_facings.get(k, "") != host_facings[k])
+		check(host_facings.size() >= 3 and their_facings.size() == host_facings.size() and fbad.is_empty(), "E4: %s's stocked slots show the same product facings as the host's (%d/%d slots; mismatches %s)" % [names[id], their_facings.size(), host_facings.size(), str(fbad.slice(0, 4))])
 
 	# --- E5
 	main._on_continue_pressed()
@@ -2268,7 +2283,7 @@ func _run_net_ambience_client() -> void:
 	await wait(1.5)
 	_env_watch = false
 	print("NET  %s view: spills %s | lights %s | slipping %.1fs" % [who, str(_env_view["spills"]), str(_env_view["lights"]), _env_view["slip_s"]])
-	_net_write("e4_%d.json" % me, {"view": _env_view, "today": main.report_today_label.text, "pay": main.report_pay_label.text, "lights_back": amb().brightness == 1.0 and amb()._overlay.color.a == 0.0})
+	_net_write("e4_%d.json" % me, {"facings": _facings_view(), "view": _env_view, "today": main.report_today_label.text, "pay": main.report_pay_label.text, "lights_back": amb().brightness == 1.0 and amb()._overlay.color.a == 0.0})
 	# E5
 	await wait_until(func(): return main.shift_active and main.current_day == day + 1, 60.0)
 	await wait(1.0)
