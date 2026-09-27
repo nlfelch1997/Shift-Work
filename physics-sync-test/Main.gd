@@ -296,9 +296,11 @@ extends Node2D
 ## WEEK 13 — ART PASS, FLOORS + WALLS (StoreArt.gd, built in _ready()).
 ## Pure visuals from the two RPG Maker-format packs in assets/: tiled floors
 ## for the four sections, the checkout hub and Storage, and wall art drawn
-## over the real wall collision shapes. Shelves and stock are unchanged — the
-## supermarket pack only has separable product sprites for Dry Goods and
-## Bakery (see StoreArt.gd's header), which is a decision, not a guess.
+## over the real wall collision shapes. Follow-up: shelf stocking visuals —
+## product sprites for Dry Goods, Bakery and (cold drinks) Dairy/Frozen, empty
+## shelf bays under their slots, shelving art on the 0/180-degree shelves;
+## Meat/Deli stays placeholder (the packs have no separable meat/deli items).
+## Visual only; the stock/order/carry logic never reads any of it.
 ##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
