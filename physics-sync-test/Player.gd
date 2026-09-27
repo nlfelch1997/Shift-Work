@@ -99,6 +99,23 @@ var _place_target_slot: Marker2D = null
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
+	# MULTIPLAYER BUG FIX (found by tools/hazards_test.gd --test=net-orders,
+	# scenario N0): players pass through each other. Movement is client-
+	# authoritative — each process simulates only its OWN player; every other
+	# player is a synced copy running a few frames behind. Two overlapping
+	# players each got depenetrated out of the other's LAGGING copy, which is
+	# always behind, so both were pushed the same way forever: carried
+	# backwards against their input, still sliding after letting go, and out
+	# through the perimeter wall (~900px in 3s). One player alone never
+	# showed it. Player-vs-player blocking can't be resolved consistently
+	# without one side owning both bodies, so players simply don't collide
+	# with each other; everything else (walls, shelves, stock, customers, the
+	# forklift) is unchanged. Both directions, for every pair — whoever joins
+	# later sets up the pair with everyone already here.
+	for other in get_tree().get_nodes_in_group("player"):
+		if other != self:
+			add_collision_exception_with(other)
+			other.add_collision_exception_with(self)
 	# Without this, physics interpolation (see project.godot) would try to
 	# smoothly slide this node from wherever it defaulted to (0,0) to its
 	# actual spawn position, producing a brief visible "zoom in" on spawn.
