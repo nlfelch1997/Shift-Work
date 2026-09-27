@@ -61,6 +61,10 @@ func _run() -> void:
 		print("SHELF  %s %s: slots filled %s" % [sec["name"], shelf_body.name, str(stocked)])
 		p.teleport_to(shelf_body.global_position + (shelf.slots[1].global_position - shelf_body.global_position) * 1.6)
 		await shot("shelf_" + String(sec["node_name"]).to_lower())
+		# And at the normal gameplay zoom — what a player actually sees.
+		cam.zoom = Vector2.ONE
+		await shot("shelf_" + String(sec["node_name"]).to_lower() + "_zoom1")
+		cam.zoom = Vector2(1.6, 1.6)
 	cam.zoom = Vector2.ONE
 	# Whole store: camera limits off, zoomed out, centered on the map.
 	cam.limit_left = -10000

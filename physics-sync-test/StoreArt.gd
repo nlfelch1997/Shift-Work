@@ -236,6 +236,14 @@ func _dress_shelves() -> void:
 				bay.scale = SLOT_BAY_SIZE / Vector2(EMPTY_SHELF_BAY.size)
 				slot.add_child(bay)
 				slot.move_child(bay, 0) # under the outline and the C prompt
+				var facings := Node2D.new()
+				facings.name = "Facings"
+				facings.rotation = upright
+				facings.scale = bay.scale # laid out in the bay art's own pixels
+				facings.visible = false
+				slot.add_child(facings)
+				slot.move_child(facings, 1)
+				_faced_slots.append([shelf, shelf._all_slots.find(slot), slot, facings])
 
 ## Every peer, as each product spawns (its color is set before it enters
 ## the tree — Main.gd's _spawn_product_node()).
@@ -257,3 +265,91 @@ func _dress_product(node: Node) -> void:
 	spr.scale = Vector2.ONE * (PRODUCT_SIZE / float(maxi(region.size.x, region.size.y)))
 	visual.self_modulate.a = 0.0
 	node.add_child(spr)
+
+## --- STOCKED FACINGS (Week 13 follow-up #2) ---------------------------------
+## Playtest: a stocked slot read as "one small item in an empty bay". Measured:
+## the bay is 46x44px on screen (the 96x92 art at 0.48x) and the product
+## sprite 30px on its longest side — under 30% of the bay, floating over the
+## grate instead of standing on any of its three shelves. A slot holds
+## exactly ONE item (Shelf.gd's filled[i] / _occupant[i]; the HUD's "1/3" is
+## slots filled per shelf, not a quantity), so this isn't a quantity display:
+## it's merchandising. While a slot is filled, its bay shows the item that's
+## in it FACED — a row of that same product standing on each of the bay's
+## three shelf lips, as many across as fit — and the item's own single
+## sprite is hidden (it's represented by the facings until it leaves the
+## slot: picked up, knocked off, bought). Every peer does this from the
+## replicated `filled` flags; which item is in a slot is exact on the host
+## (_occupant) and, on a client, the nearest product within LEAVE_RADIUS
+## (the same rule the test harness has always used there). Nothing reads
+## any of it back.
+
+## In the bay art's own pixels (96x92, centered): the top of each shelf lip
+## (from its luminance profile), and how tall a faced item stands on it —
+## the opening above the lip plus a little overlap onto the lip above.
+const FACING_BASELINES := [-14.0, 10.0, 32.0]
+const FACING_HEIGHT := 22.0
+const FACING_ROW_WIDTH := 88.0
+const FACING_GAP := 2.0
+const FACING_MAX_ACROSS := 5
+
+var _faced_slots: Array = [] # [shelf, slot index, slot Marker2D, Facings node]
+var _hidden_art := {} # product -> true while it's shown as facings
+
+func _process(_delta: float) -> void:
+	var now_hidden := {}
+	for entry in _faced_slots:
+		var shelf: Node = entry[0]
+		var i: int = entry[1]
+		var slot: Node2D = entry[2]
+		var facings: Node2D = entry[3]
+		var item: Node2D = null
+		if i < shelf.slots.size() and shelf._is_filled(i) and not shelf.wrecked:
+			item = _item_in_slot(shelf, i, slot)
+		var art: Sprite2D = item.get_node_or_null("ProductArt") if item else null
+		if art == null:
+			facings.visible = false
+			continue
+		_show_facings(facings, art)
+		now_hidden[item] = true
+		art.visible = false
+	for item in _hidden_art:
+		if not now_hidden.has(item) and is_instance_valid(item):
+			item.get_node("ProductArt").visible = true
+	_hidden_art = now_hidden
+
+func _item_in_slot(shelf: Node, i: int, slot: Node2D) -> Node2D:
+	if multiplayer.is_server():
+		var occ = shelf._occupant[i]
+		return occ if is_instance_valid(occ) else null
+	var best: Node2D = null
+	var best_d: float = shelf.LEAVE_RADIUS
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		var d: float = obj.global_position.distance_to(slot.global_position)
+		if d < best_d and obj.get_node("Carryable").carrier_id == 0:
+			best_d = d
+			best = obj
+	return best
+
+## (Re)builds the rows only when the product in the slot changes.
+func _show_facings(facings: Node2D, art: Sprite2D) -> void:
+	facings.visible = true
+	var key := "%s|%s" % [art.texture.resource_path, str(art.region_rect)]
+	if facings.get_meta("key", "") == key:
+		return
+	facings.set_meta("key", key)
+	for c in facings.get_children():
+		c.queue_free()
+	var region: Rect2 = art.region_rect
+	var k: float = FACING_HEIGHT / region.size.y
+	var w: float = region.size.x * k
+	var across: int = clampi(int((FACING_ROW_WIDTH + FACING_GAP) / (w + FACING_GAP)), 1, FACING_MAX_ACROSS)
+	var span: float = across * w + (across - 1) * FACING_GAP
+	for baseline in FACING_BASELINES:
+		for n in across:
+			var f := Sprite2D.new()
+			f.texture = art.texture
+			f.region_enabled = true
+			f.region_rect = region
+			f.scale = Vector2(k, k)
+			f.position = Vector2(-span * 0.5 + w * 0.5 + n * (w + FACING_GAP), baseline - FACING_HEIGHT * 0.5)
+			facings.add_child(f)
