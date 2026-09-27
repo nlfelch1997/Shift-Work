@@ -847,7 +847,10 @@ func _run_orders() -> void:
 		check(is_equal_approx(table[d][0], base + bonus) and is_equal_approx(table[d][1], sd + bonus), "G: Day %d unchanged: %.0fs grace, %.0fs clock" % [d, table[d][0], table[d][1]])
 	for d in [5, 6]:
 		check(is_equal_approx(table[d][0], base + 2 * bonus + 15.0) and is_equal_approx(table[d][1], sd + 2 * bonus + 15.0), "G: Day %d = per-section %.0fs + flat 15s: %.0fs grace, %.0fs clock" % [d, base + 2 * bonus, table[d][0], table[d][1]])
-	check(is_equal_approx(table[7][0], base + 3 * bonus + 15.0), "G: Day 7 (Bakery opens) keeps both: %.0fs grace" % table[7][0])
+	# WEEK 12: Day 7 is the finale — its clock and grace are deliberately cut
+	# (Main.gd's FINALE_CLOCK_CUT / FINALE_GRACE_CUT); Days 1-6 above are the
+	# proof nothing earlier moved.
+	check(is_equal_approx(table[7][0], base + 3 * bonus + 15.0 - main.FINALE_GRACE_CUT) and is_equal_approx(table[7][1], sd + 3 * bonus + 15.0 - main.FINALE_CLOCK_CUT), "G: Day 7 (Bakery opens, finale cut): %.0fs grace, %.0fs clock" % [table[7][0], table[7][1]])
 	check(absf(grace_now - table[5][0]) < 0.5, "G: the live Day 5 shift actually started with %.1fs of grace" % grace_now)
 	check(absf(clock_now - table[5][1]) < 0.5, "G: ...and %.1fs on the clock" % clock_now)
 
@@ -1474,7 +1477,7 @@ func park_everything() -> void:
 ## peer's own (movement is client-authoritative), so the numbers are exact.
 func slip_run(x0: float, y: float, cx: float, r: float, turn := Vector2.DOWN) -> Dictionary:
 	var p := player()
-	var m := {"dry_speed": 0.0, "in_speed_max": 0.0, "turn_slide": 0.0, "coast": 0.0, "through": false, "recovered": false, "dry_turn_slide": 0.0}
+	var m := {"dwell": 0.0, "dry_speed": 0.0, "in_speed_max": 0.0, "turn_slide": 0.0, "coast": 0.0, "through": false, "recovered": false, "dry_turn_slide": 0.0}
 	var dt := 1.0 / 60.0
 	# 1) Dry-floor turn for reference: walking right, then press down only.
 	p.teleport_to(Vector2(x0, y))
@@ -1498,6 +1501,7 @@ func slip_run(x0: float, y: float, cx: float, r: float, turn := Vector2.DOWN) ->
 	var t := 0.0
 	var turned := false
 	var inside_t := 0.0
+	var dwell_from := -1.0 # first pass through the spill, on this peer's own clock
 	while t < 5.0:
 		await physics_frame
 		t += dt
@@ -1506,6 +1510,10 @@ func slip_run(x0: float, y: float, cx: float, r: float, turn := Vector2.DOWN) ->
 		prev = q
 		var inside := q.distance_to(Vector2(cx, y)) < r
 		inside_t = inside_t + dt if inside else 0.0
+		if inside and dwell_from < 0.0:
+			dwell_from = t
+		elif not inside and dwell_from >= 0.0 and m["dwell"] == 0.0:
+			m["dwell"] = t - dwell_from
 		if q.x < cx - r - 30.0 and t > 0.25:
 			dry.append(v)
 		# Entering at full speed you skid in (low traction both ways): the cap
@@ -1823,36 +1831,38 @@ func _watch_remote_players() -> void:
 				_remote_samples[id] = []
 			_remote_samples[id].append([t, main.players[id].target_position])
 
-## From the host's samples of one remote player: [max speed over any 0.25s
-## window spent entirely inside the spill, mean speed over dry-floor windows
-## on the approach]. Teleports (big one-step jumps) break a window.
+## From the host's samples of one remote player's replicated copy: [time it
+## spent inside the spill on its first pass, its speed over a 200px stretch
+## of dry lane on the approach]. Both are long spans on purpose: replication
+## packets arrive in bunches, which makes short-window speeds meaningless,
+## but bunching can't invent time spent inside the spill.
 func _remote_speeds(samples: Array, cx: float, y: float, r: float) -> Array:
-	var in_max := 0.0
-	var dry := []
-	var j := 0
-	for i in samples.size():
-		var ti: float = samples[i][0]
-		while j < samples.size() and samples[j][0] - ti < 0.25:
-			j += 1
-		if j >= samples.size():
-			break
-		var ok := true
-		for k in range(i + 1, j + 1):
-			if samples[k][1].distance_to(samples[k - 1][1]) > 40.0:
-				ok = false
+	var x0 := cx - r - 260.0
+	var dry := 0.0
+	var t_a := -1.0
+	var i := 0
+	while i < samples.size():
+		var q: Vector2 = samples[i][1]
+		if i > 0 and q.distance_to(samples[i - 1][1]) > 40.0:
+			t_a = -1.0 # a teleport: start over
+		if absf(q.y - y) < 3.0:
+			if t_a < 0.0 and q.x >= x0 + 30.0 and q.x < x0 + 60.0:
+				t_a = samples[i][0]
+			elif t_a >= 0.0 and q.x >= x0 + 230.0:
+				dry = 200.0 / (samples[i][0] - t_a)
 				break
-		if not ok:
-			continue
-		var a: Vector2 = samples[i][1]
-		var b: Vector2 = samples[j][1]
-		var v: float = a.distance_to(b) / (samples[j][0] - ti)
-		var c := Vector2(cx, y)
-		if a.distance_to(c) < r - 4.0 and b.distance_to(c) < r - 4.0:
-			in_max = maxf(in_max, v)
-		elif a.x < cx - r - 30.0 and b.x < cx - r - 30.0 and absf(a.y - y) < 3.0 and absf(b.y - y) < 3.0 and b.x > a.x + 1.0:
-			dry.append(v)
-	# Fastest dry window: the approach includes the start from a standstill.
-	return [in_max, dry.max() if not dry.is_empty() else 0.0, dry.size()]
+		i += 1
+	var dwell := 0.0
+	var t_in := -1.0
+	while i < samples.size():
+		var inside: bool = samples[i][1].distance_to(Vector2(cx, y)) < r
+		if inside and t_in < 0.0:
+			t_in = samples[i][0]
+		elif not inside and t_in >= 0.0:
+			dwell = samples[i][0] - t_in
+			break
+		i += 1
+	return [dwell, dry]
 
 func _e1_ok(m: Dictionary) -> String:
 	var sp: float = player().SPEED
@@ -1994,6 +2004,7 @@ func _run_net_ambience_host() -> void:
 
 	# --- E1
 	var lanes := {}
+	var e1_dwell := {}
 	for k in ids.size():
 		var y: float = E_LANE_YS[k]
 		var cx: float = E_LANE_CXS[k]
@@ -2016,6 +2027,7 @@ func _run_net_ambience_host() -> void:
 		var w := _e1_ok(m)
 		check(w == "" and not m.is_empty(), "E1: %s's own slip run on its own screen %s%s" % [names[id], str(m), "" if w == "" else " — BAD: " + w])
 		check(r.get("spill_ok", false), "E1: %s's replicated spill matched the host's (id, spot, size, WET)" % names[id])
+		e1_dwell[id] = m.get("dwell", -1.0)
 	await wait(0.5)
 	_remote_watch = false
 	for id in ids:
@@ -2023,9 +2035,11 @@ func _run_net_ambience_host() -> void:
 			continue
 		var y: float = lanes[str(id)]["y"]
 		var rs := _remote_speeds(_remote_samples.get(id, []), lanes[str(id)]["cx"], y, E_LANE_R)
-		print("NET  host's view of %s: in-spill max %.0f px/s, dry %.0f px/s (%d windows)" % [names[id], rs[0], rs[1], rs[2]])
-		var top: float = player().SPEED * amb().SPILL_SPEED_FACTOR
-		check(rs[0] > 80.0 and rs[0] < top * 1.12 and rs[1] > 195.0, "E1: the host SEES %s slowed on the spill (%.0f px/s in it vs %.0f dry; cap %.0f)" % [names[id], rs[0], rs[1], top])
+		# The client already proved its own slow/slide (above); here the host's
+		# copy must show the same pass: same time inside the spill.
+		var own: float = e1_dwell.get(id, -1.0)
+		print("NET  host's view of %s: %.2fs inside the spill (its own screen: %.2fs), %.0f px/s on dry floor" % [names[id], rs[0], own, rs[1]])
+		check(absf(rs[0] - own) < 0.2 and rs[1] > 195.0 and rs[1] < 245.0, "E1: the host SEES %s's pass through the spill as it played: %.2fs inside (its own screen %.2fs), %.0f px/s on dry floor" % [names[id], rs[0], own, rs[1]])
 	for id in lanes:
 		amb().remove_spill(int(lanes[id]["id"]))
 
