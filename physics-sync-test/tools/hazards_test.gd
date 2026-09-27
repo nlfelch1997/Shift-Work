@@ -31,6 +31,14 @@ extends SceneTree
 ## goes for the called section's stock while an order is open — and reports
 ## orders filled, bonus pay, and any frame where the order banner and the
 ## LOOK BUSY warning overlapped on screen.
+## WEEK 11 (DAY 6) — flickering lights + floor spills (Ambience.gd):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --shift-seconds=400 --test=ambience
+## and the co-op pass (standing practice for every new hazard from now on):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --players=3 --test=net-ambience &
+##   (x2) godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-ambience
+## The solo sim steps around spills it can see (--careless walks straight
+## through them too) and reports spills, time spent slipping and lights
+## events per day.
 
 var main: Node
 var fails := 0
@@ -59,6 +67,13 @@ func _initialize() -> void:
 			_run_solo.call_deferred()
 		"orders":
 			_run_orders.call_deferred()
+		"ambience":
+			_run_ambience.call_deferred()
+		"net-ambience":
+			if "--client" in args:
+				_run_net_ambience_client.call_deferred()
+			else:
+				_run_net_ambience_host.call_deferred()
 		"net-orders":
 			if "--client" in args:
 				_run_net_orders_client.call_deferred()
@@ -526,7 +541,7 @@ func pick_slot(from: Vector2, obj: Node) -> Dictionary:
 				best = {"slot": shelf.slots[i], "pos": sp, "out": outward}
 	return best
 
-var stats := {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": 0.0, "grace": 0.0}
+var stats := {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": 0.0, "grace": 0.0, "slip_s": 0.0}
 var recent_drops := {} # product -> seconds left before the brain may target it again
 ## net-orders: stock ONLY for the open order (idle otherwise), and a hook
 ## called with (item, slot) on every place press.
@@ -541,19 +556,21 @@ func _run_solo() -> void:
 	var day_stats := []
 	for day in solo_days:
 		await wait_until(func(): return main.shift_active and main.current_day == day, 20.0)
-		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main._customer_grace_timer}
+		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main._customer_grace_timer, "slip_s": 0.0}
 		var start_sold: int = main._sold_at_day_start
 		print("SOLO  Day %d start — %.0fs shift, sections %s, product cap %d" % [day, main.shift_time_left, str(main._unlocked_sections().map(func(s): return s["name"])), main._product_baseline()])
 		await _play_shift()
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
 		var sold: int = main._total_sold() - main._sold_at_day_start
-		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.report_pay_label.text]
+		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, main.report_pay_label.text]
 		print(line)
 		day_stats.append(line)
 		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
 		check(day < main.PRIORITY_ORDER_START_DAY or main.orders_called_today > 0, "Day %d: priority orders called: %d" % [day, main.orders_called_today])
 		check(day >= main.PRIORITY_ORDER_START_DAY or main.orders_called_today == 0, "Day %d: no priority orders before Day %d" % [day, main.PRIORITY_ORDER_START_DAY])
+		var env_day: bool = day >= main.ambience.LIGHTS_START_DAY
+		check(env_day == (main.ambience.spills_today > 0 and main.ambience.lights_events_today > 0), "Day %d: spills %d, lights events %d (%s)" % [day, main.ambience.spills_today, main.ambience.lights_events_today, "Day 6+: both happen" if env_day else "none before Day 6"])
 		if day != solo_days[-1]:
 			main._on_continue_pressed()
 	print("SOLO SUMMARY%s" % (" (careless: never dodges the forklift)" if careless else ""))
@@ -618,6 +635,7 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 			await shot("solo_day%d_both_hazards" % main.current_day)
 
 		var dir := Vector2.ZERO
+		var goal := pos # where the brain is headed this frame (spill avoidance)
 		if my_carry:
 			if job.is_empty() or job["slot"].get_parent().get_node("Shelf").filled[job["slot"].get_parent().get_node("Shelf").slots.find(job["slot"])] or job["slot"].get_parent().get_node("Shelf").wrecked:
 				job = pick_slot(pos, my_carry)
@@ -632,6 +650,7 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 					if pos.distance_to(pre) < 12.0:
 						approach_phase = 1
 					dir = (wp - pos).normalized()
+					goal = wp
 				else:
 					if pos.distance_to(stand) > 3.0:
 						dir = (stand - pos).normalized()
@@ -671,7 +690,15 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 					await wait_until(func(): return not is_instance_valid(grabbed) or grabbed.get_node("Carryable").carrier_id != 0, 0.6)
 					obj = null
 				else:
-					dir = (waypoint(pos, target) - pos).normalized()
+					goal = waypoint(pos, target)
+					dir = (goal - pos).normalized()
+		# WEEK 11: a human steps around a spill they can see coming (forming
+		# ones too — the WET FLOOR sign is up), unless what they're after is
+		# in it. --careless walks straight through.
+		if not careless and dir != Vector2.ZERO:
+			dir = _avoid_spills(pos, dir, goal)
+		if p.is_slipping():
+			stats["slip_s"] += dt
 		# Human awareness of the forklift: if it's close and I'm in front of
 		# it, sidestep out of its path (unless simulating a careless player).
 		if not careless and fk().active and fk().visible:
@@ -707,6 +734,26 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 		last_pos = pos
 		steer(dir)
 	steer(Vector2.ZERO)
+
+## Steer around any spill ahead within reach whose edge the current heading
+## would clip — toward whichever side is already closer to clear.
+func _avoid_spills(pos: Vector2, dir: Vector2, goal: Vector2) -> Vector2:
+	for s in main.ambience.spills:
+		var c: Vector2 = s["pos"]
+		var r: float = s["r"]
+		if goal.distance_to(c) < r + 30.0:
+			continue # the thing I want is in it — go in
+		var rel := c - pos
+		if rel.length() < r:
+			continue # already in it: just keep going and get out
+		var along := rel.dot(dir)
+		if along < 0.0 or along > r + 100.0:
+			continue
+		var lateral := rel.dot(dir.orthogonal())
+		if absf(lateral) < r + 22.0:
+			var away := -signf(lateral) if lateral != 0.0 else 1.0
+			return (dir + dir.orthogonal() * away * 1.4).normalized()
+	return dir
 
 ## ---------------------------------------------------------------------------
 ## WEEK 11 — PRIORITY ORDERS + STOCKING GRACE
@@ -1384,5 +1431,702 @@ func _run_net_orders_client() -> void:
 	check(str(_net_view["orders"]) == str(hv.get("orders")), "%s: same free-play orders as the host: %s vs %s" % [who, str(_net_view["orders"]), str(hv.get("orders"))])
 	check(str(_net_view["results"]) == str(hv.get("results")), "%s: same FILLED/missed results as the host: %s vs %s" % [who, str(_net_view["results"]), str(hv.get("results"))])
 	check(main.report_order_label.text == n3.get("orders", "") and main.report_pay_label.text == n3.get("pay", "") and main.report_today_label.text == n3.get("today", ""), "%s: report matches the host's: '%s' | '%s'" % [who, main.report_order_label.text, main.report_pay_label.text])
+	_net_write("result_%d.json" % me, {"fails": fails})
+	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 11 (DAY 6) — THE ENVIRONMENTAL TWIST: flickering lights + floor spills
+## (Ambience.gd). Scripted checks, solo:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --shift-seconds=400 --test=ambience
+## (add --shots under xvfb-run, no --headless, for frames of a spill and a
+## brownout). Co-op pass, 2-4 real players over ENet — see _run_net_ambience_host().
+
+func amb() -> Node2D:
+	return main.ambience
+
+## Clears loose stock off a strip of floor so a movement measurement there
+## isn't disturbed by bumping into products.
+func clear_strip(y: float, x0: float, x1: float) -> void:
+	for obj in get_nodes_in_group("carryable"):
+		var q: Vector2 = obj.global_position
+		if q.x > x0 - 60.0 and q.x < x1 + 60.0 and absf(q.y - y) < 70.0 and obj.get_node("Carryable").carrier_id == 0 and not _is_placed(obj):
+			move_body(obj, Vector2(q.x, 200.0 if q.y < 810.0 else q.y + 200.0))
+
+func park_everything() -> void:
+	fk()._pause_timer = 1.0e9
+	pin_manager(Vector2(480, 1350), 0.0)
+	main._customer_grace_timer = 1.0e9
+	main._order_timer = 1.0e9
+	amb()._lights_timer = 1.0e9
+	amb()._spill_timer = 1.0e9
+
+## Walks this peer's own player right along y from x0, through a spill
+## centered at (cx, y) of radius r, and measures what the spill did to it:
+## dry speed, top speed inside, the sideways slide when turning inside, the
+## coast after letting go, and that it always got through. Positions are this
+## peer's own (movement is client-authoritative), so the numbers are exact.
+func slip_run(x0: float, y: float, cx: float, r: float, turn := Vector2.DOWN) -> Dictionary:
+	var p := player()
+	var m := {"dry_speed": 0.0, "in_speed_max": 0.0, "turn_slide": 0.0, "coast": 0.0, "through": false, "recovered": false, "dry_turn_slide": 0.0}
+	var dt := 1.0 / 60.0
+	# 1) Dry-floor turn for reference: walking right, then press down only.
+	p.teleport_to(Vector2(x0, y))
+	await wait(0.3)
+	steer(Vector2.RIGHT)
+	for i in 20:
+		await physics_frame
+	var x_before: float = p.global_position.x
+	steer(turn)
+	for i in 12:
+		await physics_frame
+	m["dry_turn_slide"] = p.global_position.x - x_before
+	steer(Vector2.ZERO)
+	await wait(0.2)
+	p.teleport_to(Vector2(x0, y))
+	await wait(0.3)
+	# 2) Through the spill, turning down for 0.2s at its center.
+	steer(Vector2.RIGHT)
+	var prev: Vector2 = p.global_position
+	var dry := []
+	var t := 0.0
+	var turned := false
+	var inside_t := 0.0
+	while t < 5.0:
+		await physics_frame
+		t += dt
+		var q: Vector2 = p.global_position
+		var v := (q.x - prev.x) / dt
+		prev = q
+		var inside := q.distance_to(Vector2(cx, y)) < r
+		inside_t = inside_t + dt if inside else 0.0
+		if q.x < cx - r - 30.0 and t > 0.25:
+			dry.append(v)
+		# Entering at full speed you skid in (low traction both ways): the cap
+		# is measured once the entry skid has had time to bleed off.
+		if inside_t > 0.2:
+			m["in_speed_max"] = maxf(m["in_speed_max"], absf(v))
+		if not turned and q.x >= cx - 4.0:
+			turned = true
+			var xb: float = q.x
+			steer(turn)
+			for i in 12:
+				await physics_frame
+			m["turn_slide"] = p.global_position.x - xb
+			steer(-turn) # back onto the line
+			for i in 12:
+				await physics_frame
+			steer(Vector2.RIGHT)
+			prev = p.global_position
+			t += 24 * dt
+			inside_t += 24 * dt # the whole turn happened inside it
+		if q.x > cx + r + 40.0:
+			m["through"] = true
+			break
+	# 3) Off the spill: low traction wears off within SPILL_SLIDE_OUT.
+	await wait(amb().SPILL_SLIDE_OUT + 0.15)
+	await physics_frame
+	var a0: Vector2 = p.global_position
+	await physics_frame
+	m["recovered"] = not p.is_slipping() and absf((p.global_position.x - a0.x) / dt - p.SPEED) < 3.0
+	m["recovered_v"] = (p.global_position.x - a0.x) / dt
+	steer(Vector2.ZERO)
+	m["dry_speed"] = dry.reduce(func(acc, v): return acc + v, 0.0) / maxf(1.0, dry.size())
+	# 4) Coast: walk back in, let go at the center, see how far it carries.
+	p.teleport_to(Vector2(cx - r - 60.0, y))
+	await wait(0.2)
+	steer(Vector2.RIGHT)
+	await wait_until(func(): return p.global_position.x >= cx - 10.0, 3.0)
+	steer(Vector2.ZERO)
+	var let_go: Vector2 = p.global_position
+	await wait(0.8)
+	m["coast"] = p.global_position.x - let_go.x
+	return m
+
+func _run_ambience() -> void:
+	await wait_until(func(): return main.shift_active and main.current_day == 5, 20.0)
+	var a := amb()
+	# --- A0: nothing before Day 6, even with both timers run out.
+	check(not a.active, "A0 Day 5: lights/spills inactive")
+	a._lights_timer = 0.0
+	a._spill_timer = 0.0
+	await wait(1.0)
+	check(a.spills.is_empty() and a.lights_event_id == 0 and a.brightness == 1.0 and a._overlay.color.a == 0.0 and not a.slippery_at(player().global_position), "A0 Day 5: no spill, lights normal, overlay clear (timers expired anyway)")
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and main.current_day == 6, 10.0)
+	check(a.active and a.spills.is_empty() and a.lights_event_id == 0 and a.brightness == 1.0, "A1 Day 6: active, starts clean (no spills, lights normal)")
+	check(is_equal_approx(a._lights_timer, a.LIGHTS_FIRST_DELAY) and is_equal_approx(a._spill_timer, a.SPILL_FIRST_DELAY), "A1 Day 6: first lights event in %.0fs, first spill in %.0fs" % [a._lights_timer, a._spill_timer])
+	park_everything()
+	player().teleport_to(Vector2(1440, 240)) # in Dry Goods' spawn band: spills must keep clear of me
+	await wait(0.5)
+
+	# --- A2: where spills may form. 400 picks against every rule.
+	var bad := []
+	var none := 0
+	var cells := {}
+	var fk_cell: Vector2i = main._grid_cell_of(fk().home_position)
+	for i in 400:
+		var pos = a.pick_spill_spot()
+		if pos == null:
+			none += 1
+			continue
+		var cell: Vector2i = main._grid_cell_of(pos)
+		cells[cell] = cells.get(cell, 0) + 1
+		var why := ""
+		if not main.is_unlocked_at_pos(pos):
+			why = "locked/non-section cell"
+		elif pos.distance_to(player().global_position) < a.SPILL_CLEAR_PLAYER:
+			why = "on the player"
+		elif cell == fk_cell and absf(pos.y - fk().home_position.y) < a.SPILL_RADIUS_MAX + a.SPILL_CLEAR_FORKLIFT_LANE:
+			why = "forklift lane"
+		else:
+			for sb in main.shelves:
+				for slot in sb.get_node("Shelf").slots:
+					if pos.distance_to(slot.global_position) < a.SPILL_RADIUS_MAX + a.SPILL_CLEAR_SLOT:
+						why = "in front of a slot"
+		if why != "":
+			bad.append([pos, why])
+	print("AMB  400 spill picks: per cell %s, %d rounds found no spot" % [str(cells), none])
+	check(bad.is_empty(), "A2: every spill spot is an unlocked aisle, clear of the player, the forklift lane and slots (bad: %s)" % str(bad.slice(0, 5)))
+	check(cells.size() == 3 and none < 40, "A2: spills land in all 3 open sections (%s), rarely no spot (%d/400)" % [str(cells), none])
+
+	# --- A3: forming = harmless telegraph; then wet = slide, not a wall.
+	var y := 455.0
+	clear_strip(y, 1150.0, 1750.0)
+	var cx := 1450.0
+	var r := 48.0
+	player().teleport_to(Vector2(cx - r - 110.0, y))
+	await wait(0.3)
+	var id: int = a.spawn_spill(Vector2(cx, y), r)
+	await physics_frame
+	check(a.spills.size() == 1 and a.spills[0]["phase"] == a.PHASE_FORMING and not a.slippery_at(Vector2(cx, y)), "A3: a new spill starts FORMING — not slippery yet")
+	await wait(0.2)
+	var node: Node2D = a._spill_nodes.get(id)
+	check(node != null and node.get_parent() == a._spill_root and node.get_node("Sign").z_index > a._overlay.z_index, "A3: spill drawn on the floor layer, its WET FLOOR sign above the darkness")
+	check(a._spill_root.get_index() == main.get_node("RoomBackgrounds").get_index() + 1, "A3: spills draw right after the room floors (under shelves/stock/people)")
+	# Walk into it while it's still forming: full speed.
+	steer(Vector2.RIGHT)
+	var fast := 0.0
+	var prev: Vector2 = player().global_position
+	for i in 50:
+		await physics_frame
+		var q: Vector2 = player().global_position
+		if q.distance_to(Vector2(cx, y)) < r:
+			fast = maxf(fast, (q.x - prev.x) * 60.0)
+		prev = q
+	steer(Vector2.ZERO)
+	check(fast > 210.0 and not player().is_slipping(), "A3: crossing a FORMING spill doesn't slow you (%.0f px/s)" % fast)
+	await shot("amb_spill_forming")
+	await wait_until(func(): return a.spills[0]["phase"] == a.PHASE_WET, 3.0)
+	check(a.slippery_at(Vector2(cx, y)) and not a.slippery_at(Vector2(cx + r + 5.0, y)), "A3: after %.1fs it's WET — slippery inside its radius only" % a.SPILL_FORM_TIME)
+	var m: Dictionary = await slip_run(cx - r - 260.0, y, cx, r)
+	print("AMB  slip run: %s" % str(m))
+	var top: float = player().SPEED * a.SPILL_SPEED_FACTOR
+	check(absf(m["dry_speed"] - player().SPEED) < 3.0, "A3: dry floor: %.0f px/s (normal %.0f)" % [m["dry_speed"], player().SPEED])
+	check(m["in_speed_max"] <= top + 3.0 and m["in_speed_max"] > 100.0, "A3: on the spill: top speed %.0f px/s (cap %.0f) — slower, not stuck" % [m["in_speed_max"], top])
+	check(absf(m["dry_turn_slide"]) < 1.0 and m["turn_slide"] > 12.0, "A3: turning on the spill slides you %.0fpx on (dry floor: %.0fpx)" % [m["turn_slide"], m["dry_turn_slide"]])
+	check(m["coast"] > 8.0 and m["coast"] < 60.0, "A3: letting go on the spill coasts %.0fpx, then stops" % m["coast"])
+	check(m["through"], "A3: walked all the way through — a spill never blocks")
+	check(m["recovered"], "A3: full control back within %.1fs of stepping off" % a.SPILL_SLIDE_OUT)
+	await shot("amb_spill_wet")
+
+	# --- A4: the manager excuses a slide into stock, not a deliberate throw.
+	var obj = await stock_one("Dry Goods")
+	check(obj != null, "A4: stocked an item to test against")
+	if obj != null:
+		var st: Dictionary = mgr()._player_state(1)
+		player().teleport_to(Vector2(cx + 20.0, y))
+		await wait(0.2)
+		st["last_chaos"] = -INF
+		mgr().note_push(1, obj)
+		check(st["last_chaos"] == -INF, "A4: bumping shelved stock while ON a spill isn't chaos")
+		player().teleport_to(Vector2(cx + r + 40.0, y))
+		await wait(0.2)
+		mgr().note_push(1, obj)
+		check(st["last_chaos"] == -INF, "A4: ...nor just sliding off one (within %.0fpx)" % a.SPILL_EXCUSE_MARGIN)
+		player().teleport_to(Vector2(cx - r - 200.0, y))
+		await wait(0.2)
+		mgr().note_push(1, obj)
+		check(st["last_chaos"] > -INF, "A4: the same bump on dry floor IS chaos")
+		st["last_chaos"] = -INF
+		player().teleport_to(Vector2(cx, y))
+		await wait(0.2)
+		mgr().note_chaos(1, "throwing stock")
+		check(st["last_chaos"] > -INF, "A4: a throw while on a spill still counts")
+		st["last_chaos"] = -INF
+
+	# --- A5: drying (still slippery, faded), then gone everywhere.
+	player().teleport_to(Vector2(cx - r - 200.0, y))
+	a._spill_age[id] = a.SPILL_FORM_TIME + a.SPILL_WET_TIME - 0.05
+	await wait(0.3)
+	check(a.spills[0]["phase"] == a.PHASE_DRYING and a.slippery_at(Vector2(cx, y)) and a._spill_nodes[id].modulate.a < 0.9, "A5: DRYING — faded, still slippery")
+	a._spill_age[id] = a.SPILL_FORM_TIME + a.SPILL_WET_TIME + a.SPILL_DRY_TIME - 0.05
+	await wait(0.3)
+	check(a.spills.is_empty() and not a.slippery_at(Vector2(cx, y)) and not a._spill_nodes.has(id) and a._spill_root.get_child_count() == 0, "A5: dried up — gone from the list and the floor")
+
+	# --- A6: cap.
+	for i in 12:
+		a._spill_timer = 0.0
+		await physics_frame
+	check(a.spills.size() <= a.spill_cap() and a.spills.size() >= 2, "A6: spawning every frame for 12 frames: %d on the floor (cap %d solo)" % [a.spills.size(), a.spill_cap()])
+	for s in a.spills.duplicate():
+		a.remove_spill(s["id"])
+	await physics_frame
+	check(a.spills.is_empty(), "A6: remove_spill() (the future mop hook) clears them")
+	a._spill_timer = 1.0e9
+
+	# --- A7: a lights event, frame by frame.
+	var pat_a: Array = a.build_pattern(12345)
+	check(str(pat_a) == str(a.build_pattern(12345)) and str(pat_a) != str(a.build_pattern(54321)), "A7: the flicker pattern is a pure function of its seed")
+	var fk_on: bool = fk().active
+	player().teleport_to(Vector2(2400, 640)) # Meat/Deli, forklift and manager in view
+	pin_manager(Vector2(2250, 660), 0.0)
+	await wait(0.4)
+	a.start_lights_event()
+	await physics_frame
+	var len: float = a.build_pattern(a.lights_event_seed)[-1][0]
+	var min_b := 1.0
+	var dim_s := 0.0
+	var dark_run := 0.0
+	var dark_run_max := 0.0
+	var overlay_ok := true
+	var vig_max := 0.0
+	var shot_taken := false
+	var t := 0.0
+	while t < len + 1.0:
+		await process_frame
+		var b: float = a.brightness
+		var dtp := get_root().get_process_delta_time()
+		t += dtp
+		min_b = minf(min_b, b)
+		if is_equal_approx(b, a.LIGHTS_DIM_LEVEL):
+			dim_s += dtp
+		if b < a.LIGHTS_DIM_LEVEL - 0.01:
+			dark_run += dtp
+			dark_run_max = maxf(dark_run_max, dark_run)
+		else:
+			dark_run = 0.0
+		if not is_equal_approx(a._overlay.color.a, 1.0 - b):
+			overlay_ok = false
+		vig_max = maxf(vig_max, a._vignette.modulate.a)
+		if shots and not shot_taken and dim_s > 1.0:
+			shot_taken = true
+			mgr().watch_peer = 1
+			mgr().watch_level = 0.6
+			await shot("amb_brownout_meatdeli")
+	print("AMB  lights event: %.1fs, min brightness %.2f, dim for %.1fs, longest dip below dim %.2fs, vignette max %.2f" % [len, min_b, dim_s, dark_run_max, vig_max])
+	check(min_b >= a.LIGHTS_FLICKER_LOW - 0.001, "A7: never darker than %.2f brightness (min %.2f)" % [a.LIGHTS_FLICKER_LOW, min_b])
+	check(dim_s >= a.LIGHTS_DIM_MIN - 1.2, "A7: a real brownout hold: %.1fs at %.2f" % [dim_s, a.LIGHTS_DIM_LEVEL])
+	check(dark_run_max <= 0.2, "A7: anything darker than the brownout lasts a split second at most (%.2fs)" % dark_run_max)
+	check(overlay_ok and vig_max <= a.VIGNETTE_STRENGTH + 0.001 and vig_max > 0.3, "A7: overlay tracks brightness every frame; vignette up to %.2f" % vig_max)
+	check(a.brightness == 1.0 and a._overlay.color.a == 0.0 and not a._vignette.visible and not a.event_playing(), "A7: lights fully back after %.1fs" % len)
+	var z_dark: int = a._overlay.z_index
+	var tells := [fk().get_node("Beacon"), fk().get_node("BeepAnchor"), mgr().get_node("AlertLabel"), mgr().get_node("Facing/Cone"), mgr().get_node("NameLabel")]
+	for sb in main.shelves:
+		tells.append(sb.get_node("Shelf").slots[0].get_node("Prompt"))
+	check(tells.all(func(n): return n.z_index > z_dark), "A7: every hazard tell (beacon, BEEP, manager ?/!, cone, name, C prompts) draws above the darkness")
+	check(main._watch_label.get_parent() is CanvasLayer and main._order_label.get_parent() is CanvasLayer and main.debug_label.get_parent() is CanvasLayer, "A7: HUD / LOOK BUSY / order banner are screen-space (never darkened)")
+	check(fk().active == fk_on and mgr().active, "A7: forklift and manager unaffected")
+
+	# --- A8: the day ends mid-event with spills down; next day starts clean.
+	player().teleport_to(Vector2(1440, 240))
+	await wait(0.3)
+	a.spawn_spill(Vector2(1300, 455), 45.0)
+	a.spawn_spill(Vector2(1600, 455), 45.0)
+	a.start_lights_event()
+	await wait(2.5)
+	check(a.brightness < 1.0, "A8: mid-event (brightness %.2f)" % a.brightness)
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	await wait(0.1)
+	check(a.brightness == 1.0 and a._overlay.color.a == 0.0 and a.lights_event_id == 0, "A8: end-of-day report: lights back on")
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and main.current_day == 7, 10.0)
+	await wait(0.2)
+	check(a.active and a.spills.is_empty() and a._spill_root.get_child_count() == 0 and a.brightness == 1.0, "A8: Day 7 starts with no spills, lights on, still active")
+	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 11 (DAY 6) — CO-OP PASS. Standing practice from this week on: every
+## new hazard gets a real multiplayer bot pass, not just the solo one (last
+## week's player-drag bug only existed over the network). Host + N-1 clients
+## over ENet, every peer driving its own player through its real keyboard
+## actions, coordinating through files (NET_DIR) like net-orders:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --players=3 --test=net-ambience &
+##   (x2) godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-ambience
+## - E1: each player walks through its own spill. Every peer measures ITS OWN
+##   player (client-authoritative movement — this is where the slip actually
+##   runs): dry speed, capped speed on the spill, the slide on a turn, the
+##   coast, always gets through, control back after. The host also measures
+##   every remote player's replicated copy: the others SEE you slow down.
+##   And each client's replicated spill matches the host's (id, spot, size).
+## - E2: every player in the SAME spill at once, spreading out, then all
+##   walking the same way — last week's drag bug, re-checked on the new
+##   momentum-carrying movement: nobody pushed backwards, nobody runs away.
+## - E3: one lights event: every peer plays the identical flicker pattern,
+##   starting within a fraction of a second of the host, back to full after.
+## - E4: free play, everything live (spills and lights on their own cadence,
+##   customers, forklift, manager, orders): every peer saw the same spills
+##   and lights events as the host; no write-up for a push while slipping;
+##   everyone's report matches.
+## - E5: the next day starts clean on every peer.
+
+## One lane per player across the hub; spills staggered in x so neighbouring
+## lanes' spills never touch (and turns go UP, away from the registers).
+const E_LANE_YS := [600.0, 680.0, 760.0, 840.0]
+const E_LANE_CXS := [1350.0, 1600.0, 1350.0, 1600.0]
+const E_LANE_R := 48.0
+const E2_SPOT := Vector2(1440, 690)
+const E2_R := 54.0
+
+func _lane_for(lanes: Dictionary, id: int) -> Dictionary:
+	return lanes.get(str(id), {})
+
+func _spill_matches(sid: int, pos: Vector2, r: float, phase: int) -> bool:
+	for s in amb().spills:
+		if int(s["id"]) == sid:
+			return s["pos"].distance_to(pos) < 0.01 and absf(s["r"] - r) < 0.01 and int(s["phase"]) == phase
+	return false
+
+## Host-side: the replicated copy of each REMOTE player, sampled every
+## physics frame while E1 runs.
+var _remote_samples := {} # peer id -> [[t, Vector2], ...]
+var _remote_watch := false
+
+func _watch_remote_players() -> void:
+	_remote_watch = true
+	var t := 0.0
+	while _remote_watch:
+		await physics_frame
+		t += 1.0 / 60.0
+		for id in main.players:
+			if id == me:
+				continue
+			if not _remote_samples.has(id):
+				_remote_samples[id] = []
+			_remote_samples[id].append([t, main.players[id].target_position])
+
+## From the host's samples of one remote player: [max speed over any 0.25s
+## window spent entirely inside the spill, mean speed over dry-floor windows
+## on the approach]. Teleports (big one-step jumps) break a window.
+func _remote_speeds(samples: Array, cx: float, y: float, r: float) -> Array:
+	var in_max := 0.0
+	var dry := []
+	var j := 0
+	for i in samples.size():
+		var ti: float = samples[i][0]
+		while j < samples.size() and samples[j][0] - ti < 0.25:
+			j += 1
+		if j >= samples.size():
+			break
+		var ok := true
+		for k in range(i + 1, j + 1):
+			if samples[k][1].distance_to(samples[k - 1][1]) > 40.0:
+				ok = false
+				break
+		if not ok:
+			continue
+		var a: Vector2 = samples[i][1]
+		var b: Vector2 = samples[j][1]
+		var v: float = a.distance_to(b) / (samples[j][0] - ti)
+		var c := Vector2(cx, y)
+		if a.distance_to(c) < r - 4.0 and b.distance_to(c) < r - 4.0:
+			in_max = maxf(in_max, v)
+		elif a.x < cx - r - 30.0 and b.x < cx - r - 30.0 and absf(a.y - y) < 3.0 and absf(b.y - y) < 3.0 and b.x > a.x + 1.0:
+			dry.append(v)
+	# Fastest dry window: the approach includes the start from a standstill.
+	return [in_max, dry.max() if not dry.is_empty() else 0.0, dry.size()]
+
+func _e1_ok(m: Dictionary) -> String:
+	var sp: float = player().SPEED
+	var top: float = sp * amb().SPILL_SPEED_FACTOR
+	var bad := []
+	if absf(m.get("dry_speed", 0.0) - sp) > 3.0: bad.append("dry speed")
+	if m.get("in_speed_max", 999.0) > top + 3.0 or m.get("in_speed_max", 0.0) < 100.0: bad.append("spill speed")
+	if m.get("turn_slide", 0.0) < 12.0 or absf(m.get("dry_turn_slide", 99.0)) > 1.0: bad.append("slide")
+	if m.get("coast", 0.0) < 8.0 or m.get("coast", 99.0) > 60.0: bad.append("coast")
+	if not m.get("through", false): bad.append("blocked")
+	if not m.get("recovered", false): bad.append("recovery")
+	return ", ".join(bad)
+
+## Both sides of E2. Everyone starts on the same spot in one spill; part 1:
+## each walks out its own way for 0.3s and lets go (still on the spill — the
+## coast); part 2: back to the spot, everyone holds the same heading for 1.5s
+## (out of the spill, like N0), lets go.
+func _e2_peer(k: int) -> Dictionary:
+	var p := player()
+	var res := {"backwards": 0.0, "coast": 0.0, "coast_settled": true, "drift": 0.0, "inside": true}
+	for part in 2:
+		p.teleport_to(E2_SPOT)
+		await wait(1.0)
+		var heading := Vector2.RIGHT.rotated(k * TAU / 4.0 + 0.3) if part == 0 else (N0_TOWARD - N0_SPOT).normalized()
+		steer(heading)
+		var prev: Vector2 = p.global_position
+		for i in (18 if part == 0 else 90):
+			await physics_frame
+			var q: Vector2 = p.global_position
+			res["backwards"] += maxf(0.0, -(q - prev).dot(heading))
+			prev = q
+		steer(Vector2.ZERO)
+		var at: Vector2 = p.global_position
+		await wait(0.8)
+		var settled: Vector2 = p.global_position
+		await wait(0.5)
+		var q2: Vector2 = p.global_position
+		if q2.x < 0.0 or q2.y < 0.0 or q2.x > main.WORLD_WIDTH or q2.y > main.WORLD_HEIGHT:
+			res["inside"] = false
+		if part == 0:
+			res["coast"] = settled.distance_to(at)
+			res["coast_settled"] = q2.distance_to(settled) < 1.0
+		else:
+			res["drift"] = q2.distance_to(at)
+	return res
+
+func _e2_ok(r: Dictionary) -> bool:
+	return r.get("backwards", 99.0) < 10.0 and r.get("coast", 99.0) < 45.0 and r.get("coast_settled", false) and r.get("drift", 99.0) < 15.0 and r.get("inside", false)
+
+var _e3_result = null
+
+func _e3_bg(timeout: float) -> void:
+	_e3_result = await _e3_watch(timeout)
+
+## Every peer, E3: waits for the next lights event and records it.
+func _e3_watch(timeout: float) -> Dictionary:
+	var a := amb()
+	var start_id: int = a.lights_event_id
+	var ok := await wait_until(func(): return a.lights_event_id != start_id and a.lights_event_id != 0, timeout)
+	if not ok:
+		return {}
+	await process_frame
+	var out := {"start": Time.get_unix_time_from_system(), "id": a.lights_event_id, "pattern": JSON.stringify(a._pattern), "min": 1.0, "overlay_ok": true, "back": false}
+	var len: float = a._pattern[-1][0]
+	var t := 0.0
+	while t < len + 1.0:
+		await process_frame
+		t += get_root().get_process_delta_time()
+		out["min"] = minf(out["min"], a.brightness)
+		if not is_equal_approx(a._overlay.color.a, 1.0 - a.brightness):
+			out["overlay_ok"] = false
+	out["back"] = a.brightness == 1.0 and a._overlay.color.a == 0.0
+	out["len"] = len
+	return out
+
+## Every peer, E4: which spills and lights events it saw, its own slip time,
+## and (host) any write-up that landed while that player was on a spill.
+var _env_view := {"spills": {}, "lights": [], "slip_s": 0.0, "inside": true, "slip_writeups": []}
+var _env_watch := false
+
+func _watch_env_view() -> void:
+	_env_watch = true
+	var prev_w: int = main.writeups_today
+	while _env_watch:
+		await physics_frame
+		for s in amb().spills:
+			var key := str(int(s["id"]))
+			if not _env_view["spills"].has(key):
+				_env_view["spills"][key] = [roundi(s["pos"].x), roundi(s["pos"].y), roundi(s["r"])]
+		var lid: int = amb().lights_event_id
+		if lid != 0 and not (lid in _env_view["lights"]):
+			_env_view["lights"].append(lid)
+		if player().is_slipping():
+			_env_view["slip_s"] += 1.0 / 60.0
+		var q: Vector2 = player().global_position
+		if q.x < 0.0 or q.y < 0.0 or q.x > main.WORLD_WIDTH or q.y > main.WORLD_HEIGHT:
+			_env_view["inside"] = false
+		if main.multiplayer.is_server() and main.writeups_today > prev_w:
+			prev_w = main.writeups_today
+			for id in main.players:
+				var st: Dictionary = mgr()._player_state(id)
+				if mgr().watch_peer == 0 and amb().slippery_at(main.players[id].global_position, amb().SPILL_EXCUSE_MARGIN) and "knocking" in String(st["reason"]):
+					_env_view["slip_writeups"].append([id, st["reason"]])
+
+func _run_net_ambience_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	var d := DirAccess.open("user://")
+	if d and d.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
+	var names := {}
+	for id in main.players:
+		names[id] = main.player_display_name(id)
+	check(main.players.size() == want, "net: %d players connected (%s)" % [main.players.size(), str(names.values())])
+	check(main.current_day == 6 and amb().active, "net: Day 6, lights/spills active")
+	park_everything()
+	await wait(2.0)
+	var ids: Array = main.players.keys()
+	ids.sort()
+
+	# --- E1
+	var lanes := {}
+	for k in ids.size():
+		var y: float = E_LANE_YS[k]
+		var cx: float = E_LANE_CXS[k]
+		clear_strip(y, cx - E_LANE_R - 300.0, cx + E_LANE_R + 200.0)
+		var sid: int = amb().spawn_spill(Vector2(cx, y), E_LANE_R)
+		lanes[str(ids[k])] = {"y": y, "cx": cx, "id": sid}
+		main.players[ids[k]].rpc("teleport_to", Vector2(cx - E_LANE_R - 260.0, y))
+	await wait(amb().SPILL_FORM_TIME + 0.4)
+	_net_write("e1_go.json", {"lanes": lanes})
+	_watch_remote_players()
+	var mcx: float = lanes[str(me)]["cx"]
+	var mine: Dictionary = await slip_run(mcx - E_LANE_R - 260.0, lanes[str(me)]["y"], mcx, E_LANE_R, Vector2.UP)
+	var why := _e1_ok(mine)
+	check(why == "", "E1 host: my own slip run %s%s" % [str(mine), "" if why == "" else " — BAD: " + why])
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("e1_%d.json" % id, 60.0)
+		var m: Dictionary = r.get("m", {})
+		var w := _e1_ok(m)
+		check(w == "" and not m.is_empty(), "E1: %s's own slip run on its own screen %s%s" % [names[id], str(m), "" if w == "" else " — BAD: " + w])
+		check(r.get("spill_ok", false), "E1: %s's replicated spill matched the host's (id, spot, size, WET)" % names[id])
+	await wait(0.5)
+	_remote_watch = false
+	for id in ids:
+		if id == 1:
+			continue
+		var y: float = lanes[str(id)]["y"]
+		var rs := _remote_speeds(_remote_samples.get(id, []), lanes[str(id)]["cx"], y, E_LANE_R)
+		print("NET  host's view of %s: in-spill max %.0f px/s, dry %.0f px/s (%d windows)" % [names[id], rs[0], rs[1], rs[2]])
+		var top: float = player().SPEED * amb().SPILL_SPEED_FACTOR
+		check(rs[0] > 80.0 and rs[0] < top * 1.12 and rs[1] > 195.0, "E1: the host SEES %s slowed on the spill (%.0f px/s in it vs %.0f dry; cap %.0f)" % [names[id], rs[0], rs[1], top])
+	for id in lanes:
+		amb().remove_spill(int(lanes[id]["id"]))
+
+	# --- E2
+	var sid2: int = amb().spawn_spill(E2_SPOT, E2_R)
+	for id in ids:
+		main.players[id].rpc("teleport_to", E2_SPOT)
+	await wait(amb().SPILL_FORM_TIME + 0.4)
+	_net_write("e2_go.json", {"id": sid2})
+	var e2: Dictionary = await _e2_peer(ids.find(me))
+	check(_e2_ok(e2), "E2 host: all players in one spill — %s" % str(e2))
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("e2_%d.json" % id, 40.0)
+		check(_e2_ok(r), "E2: %s on its own screen — %s" % [names[id], str(r)])
+	amb().remove_spill(sid2)
+
+	# --- E3
+	_net_write("e3_go.json", {"go": true})
+	await wait(1.5)
+	_e3_result = null
+	_e3_bg(10.0)
+	await physics_frame
+	amb().start_lights_event()
+	await wait_until(func(): return _e3_result != null, 30.0)
+	var e3h: Dictionary = _e3_result if _e3_result != null else {}
+	check(not e3h.is_empty() and e3h["back"] and e3h["overlay_ok"] and e3h["min"] >= amb().LIGHTS_FLICKER_LOW - 0.001, "E3 host: event #%s played %.1fs, min %.2f, back to full" % [str(e3h.get("id")), e3h.get("len", 0.0), e3h.get("min", 0.0)])
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("e3_%d.json" % id, 40.0)
+		check(r.get("pattern", "") == e3h.get("pattern", "x") and int(r.get("id", 0)) == int(e3h.get("id", -1)), "E3: %s played the identical flicker pattern (event #%s)" % [names[id], str(r.get("id"))])
+		var lag: float = r.get("start", 0.0) - e3h.get("start", 0.0)
+		check(absf(lag) < 0.5, "E3: %s's lights went at the same moment as the host's (%+.3fs)" % [names[id], lag])
+		check(r.get("back", false) and r.get("overlay_ok", false) and r.get("min", 0.0) >= amb().LIGHTS_FLICKER_LOW - 0.001, "E3: %s: min %.2f, back to full after" % [names[id], r.get("min", 0.0)])
+
+	# --- E4: free play.
+	release_manager()
+	fk()._pause_timer = 0.0
+	main._customer_grace_timer = 0.0
+	main._order_timer = 3.0
+	amb()._lights_timer = 4.0
+	amb()._spill_timer = 0.5
+	main.shift_time_left = 100.0
+	_env_view = {"spills": {}, "lights": [], "slip_s": 0.0, "inside": true, "slip_writeups": []}
+	_watch_env_view()
+	_net_write("e4_go.json", {"go": true})
+	await _play_shift()
+	steer(Vector2.ZERO)
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	await wait(1.0)
+	_env_watch = false
+	check(main.is_day_report_active() and amb().brightness == 1.0, "E4 host: report up, lights back on")
+	print("NET  host view: spills %s | lights %s | slipping %.1fs | write-ups %d %s" % [str(_env_view["spills"]), str(_env_view["lights"]), _env_view["slip_s"], main.writeups_today, str(main.writeups_by_peer)])
+	print("REPORT  %s | %s | %s" % [main.report_today_label.text, main.report_order_label.text, main.report_pay_label.text])
+	check(_env_view["spills"].size() >= 3 and _env_view["lights"].size() >= 2, "E4: %d spills and %d lights events in 100s of free play" % [_env_view["spills"].size(), _env_view["lights"].size()])
+	check(_env_view["slip_writeups"].is_empty(), "E4: no write-up for a push while on a spill (%s)" % str(_env_view["slip_writeups"]))
+	check(_env_view["inside"], "E4 host: stayed on the map")
+	_net_write("e4_host.json", {"view": _env_view, "today": main.report_today_label.text, "pay": main.report_pay_label.text})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("e4_%d.json" % id, 60.0)
+		var v: Dictionary = r.get("view", {})
+		check(str(v.get("spills")) == str(_env_view["spills"]), "E4: %s saw the same spills (id, spot, size): %d vs host %d" % [names[id], v.get("spills", {}).size(), _env_view["spills"].size()])
+		check(str(v.get("lights")) == str(_env_view["lights"]), "E4: %s saw the same lights events %s" % [names[id], str(v.get("lights"))])
+		check(v.get("inside", false) and r.get("lights_back", false), "E4: %s stayed on the map, lights back on for its report" % names[id])
+		check(r.get("today", "") == main.report_today_label.text and r.get("pay", "") == main.report_pay_label.text, "E4: %s's report matches the host's: '%s' | '%s'" % [names[id], r.get("today"), r.get("pay")])
+		print("NET  %s: slipping %.1fs" % [names[id], v.get("slip_s", 0.0)])
+
+	# --- E5
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and main.current_day == 7, 10.0)
+	await wait(1.0)
+	check(amb().spills.is_empty() and amb()._spill_root.get_child_count() == 0 and amb().brightness == 1.0 and amb().active, "E5 host: Day 7 starts clean (no spills, lights on)")
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("result_%d.json" % id, 60.0)
+		check(r.get("fails", -1) == 0, "net: %s's own checks passed (failures: %s)" % [names[id], str(r.get("fails", "no result"))])
+	await wait(1.0)
+	finish()
+
+func _run_net_ambience_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me)
+	await wait_until(func(): return main.shift_active and main.current_day == 6, 20.0)
+	check(main.current_day == 6 and amb().active, "%s: Day 6 (replicated), lights/spills active" % who)
+	# E1
+	var go := await _net_read("e1_go.json", 60.0)
+	var lane: Dictionary = _lane_for(go.get("lanes", {}), me)
+	check(not lane.is_empty(), "%s: E1 got my lane" % who)
+	var y: float = lane.get("y", 600.0)
+	var cx: float = lane.get("cx", 1350.0)
+	await wait_until(func(): return _spill_matches(int(lane.get("id", -1)), Vector2(cx, y), E_LANE_R, amb().PHASE_WET), 3.0)
+	var spill_ok := _spill_matches(int(lane.get("id", -1)), Vector2(cx, y), E_LANE_R, amb().PHASE_WET)
+	check(spill_ok and amb()._spill_nodes.size() == amb().spills.size(), "%s: E1 my replicated spill list matches the host's, all drawn (%d)" % [who, amb().spills.size()])
+	await wait_until(func(): return player().global_position.distance_to(Vector2(cx - E_LANE_R - 260.0, y)) < 2.0, 3.0)
+	var m: Dictionary = await slip_run(cx - E_LANE_R - 260.0, y, cx, E_LANE_R, Vector2.UP)
+	_net_write("e1_%d.json" % me, {"m": m, "spill_ok": spill_ok})
+	var why := _e1_ok(m)
+	check(why == "", "%s: E1 my slip run %s%s" % [who, str(m), "" if why == "" else " — BAD: " + why])
+	# E2
+	var g2 := await _net_read("e2_go.json", 60.0)
+	check(g2.has("id"), "%s: E2 started" % who)
+	var ids: Array = main.players.keys()
+	ids.sort()
+	var e2: Dictionary = await _e2_peer(ids.find(me))
+	_net_write("e2_%d.json" % me, e2)
+	check(_e2_ok(e2), "%s: E2 all in one spill, on my screen — %s" % [who, str(e2)])
+	# E3
+	await _net_read("e3_go.json", 60.0)
+	var e3: Dictionary = await _e3_watch(20.0)
+	_net_write("e3_%d.json" % me, e3)
+	check(not e3.is_empty() and e3.get("back", false), "%s: E3 saw the lights event and the lights came back" % who)
+	# E4
+	await _net_read("e4_go.json", 60.0)
+	_env_view = {"spills": {}, "lights": [], "slip_s": 0.0, "inside": true, "slip_writeups": []}
+	_watch_env_view()
+	await _play_shift()
+	steer(Vector2.ZERO)
+	await wait_until(func(): return main.is_day_report_active(), 10.0)
+	await wait(1.5)
+	_env_watch = false
+	print("NET  %s view: spills %s | lights %s | slipping %.1fs" % [who, str(_env_view["spills"]), str(_env_view["lights"]), _env_view["slip_s"]])
+	_net_write("e4_%d.json" % me, {"view": _env_view, "today": main.report_today_label.text, "pay": main.report_pay_label.text, "lights_back": amb().brightness == 1.0 and amb()._overlay.color.a == 0.0})
+	# E5
+	await wait_until(func(): return main.shift_active and main.current_day == 7, 60.0)
+	await wait(1.0)
+	check(main.current_day == 7 and amb().spills.is_empty() and amb()._spill_root.get_child_count() == 0 and amb().brightness == 1.0, "%s: E5 Day 7 starts clean on my screen" % who)
 	_net_write("result_%d.json" % me, {"fails": fails})
 	finish()
