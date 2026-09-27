@@ -103,6 +103,13 @@ var _occupant: Array = []
 ## Replicated (added to the same Sync as `filled`) so every peer draws the
 ## wrecked art; the countdown itself is authority-only.
 var wrecked := false
+## WEEK 13 #4 — display only: the node name of the item in each slot ("" =
+## none), so every peer's shelf art (StoreArt.gd's facings) shows the item
+## the authority actually counted, instead of a client guessing by distance
+## (the guess picked a neighbour when a second item rested beside a stocked
+## slot — found by the co-op pass). Written by the authority from
+## _occupant, replicated next to `filled`; no stock logic reads it.
+var occupant_names: Array = []
 var _wreck_timer := 0.0
 var _polygon_rotation := 0.0
 var _polygon_color := Color.WHITE
@@ -151,7 +158,7 @@ func _ready() -> void:
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	for prop in [".:filled", ".:wrecked"]:
+	for prop in [".:filled", ".:wrecked", ".:occupant_names"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -198,6 +205,12 @@ func _process(_delta: float) -> void:
 		return
 	for i in slots.size():
 		slots[i].get_node("Indicator").visible = not _is_filled(i) and not wrecked
+	if is_multiplayer_authority():
+		var names := []
+		for occ in _occupant:
+			names.append(String(occ.name) if is_instance_valid(occ) else "")
+		if names != occupant_names:
+			occupant_names = names # reassigned, so the synchronizer sees a new value
 	var polygon: Polygon2D = body.get_node("Polygon2D")
 	polygon.rotation = _polygon_rotation + (WRECK_TILT if wrecked else 0.0)
 	polygon.color = _polygon_color * Color(0.55, 0.5, 0.5, 1) if wrecked else _polygon_color

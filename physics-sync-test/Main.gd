@@ -116,7 +116,7 @@ extends Node2D
 ## git history), so this map is deliberately kept in ONE place (here) rather
 ## than re-derived per file:
 ##   (0,0) Break Room   (1,0) Dry Goods (Day 1)   (2,0) Bakery (Day 7)
-##   (0,1) Dairy/Frozen (1,1) CHECKOUT HUB         (2,1) Meat/Deli (Day 3)
+##   (0,1) Dairy/Frozen (1,1) CHECKOUT HUB         (2,1) Produce (Day 3; was Meat/Deli)
 ##   (0,2) [reserved]   (1,2) Sidewalk (entrance)  (2,2) Storage (Day 1)
 ## The hub (Checkout, CentralCheckout in Main.tscn) sits dead center with
 ## every spoke touching it or one hop off it — Dry Goods, Meat/Deli, Dairy/
@@ -526,7 +526,12 @@ const STORAGE_GRID_POS := Vector2i(2, 2)
 ## physical doors can't quietly drift apart from each other.
 const SECTIONS := [
 	{"name": "Dry Goods", "node_name": "DryGoods", "grid_pos": Vector2i(1, 0), "required_day": 1},
-	{"name": "Meat/Deli", "node_name": "MeatDeli", "grid_pos": Vector2i(2, 1), "required_day": 3},
+	# WEEK 13 #4: sold as PRODUCE now (was Meat/Deli — the art packs have no
+	# separable meat/deli items, and a full produce range). Only the displayed
+	# name changed; node_name and every "MeatDeli" node path stay as they were
+	# (internal, never shown), as do its cell, gate, Day 3 unlock and the
+	# forklift lane — "Meat/Deli" in older comments means this section.
+	{"name": "Produce", "node_name": "MeatDeli", "grid_pos": Vector2i(2, 1), "required_day": 3},
 	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "grid_pos": Vector2i(0, 1), "required_day": 5},
 	{"name": "Bakery", "node_name": "Bakery", "grid_pos": Vector2i(2, 0), "required_day": 7},
 ]
@@ -540,7 +545,7 @@ const SECTIONS := [
 ## and a product's color was always arbitrary.
 const SECTION_COLORS := {
 	"Dry Goods": Color(1, 0.9, 0.3, 1),
-	"Meat/Deli": Color(0.85, 0.25, 0.25, 1),
+	"Produce": Color(0.85, 0.25, 0.25, 1),
 	"Dairy/Frozen": Color(0.35, 0.6, 0.9, 1),
 	"Bakery": Color(0.85, 0.6, 0.25, 1),
 }
@@ -851,6 +856,14 @@ func _current_customer_grace_period() -> float:
 ## actually gets loaded into shift_time_left at the start of every shift.
 func _current_shift_duration() -> float:
 	return shift_duration + _extra_day_time() - (FINALE_CLOCK_CUT if is_finale() else 0.0)
+
+## The display name of the section a point is in ("" outside the sections).
+func _section_name_at(world_pos: Vector2) -> String:
+	var cell := _grid_cell_of(world_pos)
+	for section in SECTIONS:
+		if section["grid_pos"] == cell:
+			return section["name"]
+	return ""
 
 ## WEEK 12 — true on the finale day (and any day after it).
 func is_finale() -> bool:
@@ -2262,7 +2275,7 @@ func _process(delta: float) -> void:
 	if forklift.active:
 		# rams_today isn't replicated (diagnostic only), so only the host's
 		# count is meaningful — clients just see that it's live.
-		lines.append("FORKLIFT active in Meat/Deli" + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
+		lines.append("FORKLIFT active in %s" % _section_name_at(forklift.home_position) + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
 	if manager.active:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
 	if ambience.active:
