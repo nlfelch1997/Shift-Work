@@ -263,6 +263,16 @@ extends Node2D
 ##   — the existing Pay Today math, plus one term. The banner is a third row
 ##   of the LOOK BUSY alert layer (_build_alert_layer()).
 ##
+## WEEK 11 (DAY 6) — THE ENVIRONMENTAL TWIST (Ambience.gd, built in code in
+## _ready()). Not a new NPC: flickering lights (a brownout every 20-40s,
+## drawn as a world-space darkness overlay + a vignette on your own camera,
+## with every hazard tell kept above the dark) and floor spills (random
+## leaks in an open aisle that you slide on). Both Day 6+, host-driven,
+## replicated, day-gated through _configure_hazards() like the forklift and
+## manager, reset in _start_shift(). Full design + reasoning (why spills are
+## passive this week, why not from toppled displays, where they can't form)
+## in Ambience.gd's header.
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -301,6 +311,24 @@ extends Node2D
 ##     PAY_PER_SALE                       $10
 ##     WRITEUP_PENALTY                    $25
 ##     PRIORITY_ORDER_MULTIPLIER           1.5 x  (order items pay $15)
+##
+##   DAY 6 ENVIRONMENT — Ambience.gd (slip reaction in Player.gd)
+##     LIGHTS_START_DAY / SPILLS_START_DAY 6 / 6
+##     LIGHTS_FIRST_DELAY                 14.0 s  into the shift
+##     LIGHTS_INTERVAL_MIN / _MAX         18 / 30 s  of normal light between events
+##     LIGHTS_FLICKER_IN / DIM / FLICKER_OUT  1.2-2.0 / 5-9 / 0.6-1.0 s
+##     LIGHTS_DIM_LEVEL                    0.55   brownout brightness (1 = normal)
+##     LIGHTS_BUZZ_LEVEL / FLICKER_LOW     0.42 / 0.3  momentary dips only
+##     VIGNETTE_STRENGTH                   0.6    edge darkening at full brownout
+##     SPILL_FIRST_DELAY                   8.0 s
+##     SPILL_INTERVAL_MIN / _MAX          16 / 26 s  between spawn attempts
+##     SPILL_MAX (+ _PER_EXTRA_PLAYER)     3 (+1)  on the floor at once
+##     SPILL_RADIUS_MIN / _MAX            38 / 54 px
+##     SPILL_FORM / WET / DRY_TIME         1.5 / 34 / 6 s  (forming = harmless telegraph)
+##     SPILL_SPEED_FACTOR                  0.7 x  top speed on a spill
+##     SPILL_TRACTION                    420 px/s^2  (off a spill: instant)
+##     SPILL_SLIDE_OUT                     0.3 s  low traction after stepping off
+##     SPILL_EXCUSE_MARGIN                70 px   Manager.gd: pushes near a spill aren't chaos
 ##
 ##   PRIORITY ORDERS — Main.gd
 ##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
@@ -386,6 +414,7 @@ const SPAWN_ATTEMPTS := 10
 const WORLD_EDGE_MARGIN := 20.0
 
 const PlayerScene := preload("res://Player.tscn")
+const AmbienceScript := preload("res://Ambience.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
 ## Break room center — grid (0,0) (see the GRID MAP comment above), so this
@@ -786,6 +815,8 @@ const UI_LAYER_REPORT := 4
 @onready var manager: Node2D = $Manager
 @onready var report_writeup_label: Label = $ReportLayer/Panel/WriteupLabel
 @onready var report_pay_label: Label = $ReportLayer/Panel/PayLabel
+## WEEK 11 — Day 6+ lights and spills (see Ambience.gd), created in _ready().
+var ambience: Node2D
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -846,6 +877,11 @@ func _ready() -> void:
 	displays = get_tree().get_nodes_in_group("display")
 	_apply_section_accent_colors()
 	_cache_original_colors()
+	# Explicit name, identical on every peer: its synchronizer's path has to
+	# match across peers (see Player.gd's note on auto-generated names).
+	ambience = AmbienceScript.new()
+	ambience.name = "Ambience"
+	add_child(ambience)
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
@@ -955,6 +991,7 @@ func _configure_shelf_stacks() -> void:
 func _configure_hazards() -> void:
 	forklift.configure(is_unlocked_at_pos(forklift.home_position))
 	manager.configure(current_day >= MANAGER_START_DAY)
+	ambience.configure(current_day)
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
@@ -1206,6 +1243,7 @@ func _start_shift() -> void:
 	# day inherits yesterday's wreckage (same reasoning as the shelf reset).
 	forklift.reset_for_new_day()
 	manager.reset_for_new_day()
+	ambience.reset_for_new_day()
 	writeups_today = 0
 	writeups_by_peer = {}
 	_clear_priority_order()
@@ -1288,6 +1326,7 @@ func _end_shift() -> void:
 	# An order still open when the clock runs out simply lapses (no bonus,
 	# no penalty) — nothing it tagged can sell from here anyway.
 	_clear_priority_order()
+	ambience.end_shift()
 	print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d  |  Write-ups today: %d  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, _format_money(_pay_today())])
 
 ## Any peer's Continue click routes here. Only the host actually drives the
@@ -2058,6 +2097,7 @@ func _process(delta: float) -> void:
 			if _customer_grace_timer <= 0.0:
 				_restock_customers()
 		_tick_priority_orders(delta)
+		ambience.tick_host(delta)
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist
 	# (so the day advancing past it mid-session doesn't need new scene
@@ -2093,6 +2133,8 @@ func _process(delta: float) -> void:
 		lines.append("FORKLIFT active in Meat/Deli" + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
 	if manager.active:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
+	if ambience.active:
+		lines.append("LIGHTS %s  |  SPILLS on the floor: %d" % ["FLICKERING (%.0f%%)" % (ambience.brightness * 100.0) if ambience.brightness < 1.0 or ambience.event_playing() else "ok", ambience.spills.size()])
 	if order_section != "":
 		lines.append("PRIORITY ORDER: %d/%d in %s, %.0fs left" % [order_stocked, order_needed, order_section, order_time_left])
 	# No fixed completion state as of Week 5B — stock demand is continuous

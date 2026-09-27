@@ -213,6 +213,16 @@ func note_forklift_hit(peer_id: int) -> void:
 	if peer_id > 0:
 		_player_state(peer_id)["forklift_until"] = _now() + FORKLIFT_EXCUSE
 
+## WEEK 11 (Day 6+): a player on (or just sliding off) a floor spill has
+## reduced control (Player.gd's _apply_move_input()), so bumping stock or a
+## display there is the spill's doing, same idea as FORKLIFT_EXCUSE. Only
+## pushes — a deliberate throw on a spill still counts. Host-side, from the
+## player's synced position against the replicated spill list.
+func _slipping(peer_id: int) -> bool:
+	var main := get_tree().current_scene
+	var p = main.players.get(peer_id)
+	return p != null and is_instance_valid(p) and main.ambience.slippery_at(p.global_position, main.ambience.SPILL_EXCUSE_MARGIN)
+
 func _excused(peer_id: int) -> bool:
 	return _now() < _player_state(peer_id)["forklift_until"]
 
@@ -220,7 +230,7 @@ func _excused(peer_id: int) -> bool:
 ## request_push() for remote players or directly for the host's own). Only
 ## counts as chaos if the thing was stock sitting on a shelf, or a display.
 func note_push(peer_id: int, body: Node) -> void:
-	if peer_id <= 0 or body == null or _excused(peer_id):
+	if peer_id <= 0 or body == null or _excused(peer_id) or _slipping(peer_id):
 		return
 	if body.is_in_group("display"):
 		note_chaos(peer_id, "knocking over a display")

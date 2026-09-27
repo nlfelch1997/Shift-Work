@@ -96,6 +96,7 @@ var _knockback_velocity := Vector2.ZERO
 ## for the human-controlled local player only; bots don't use it, they
 ## still call try_drop()/try_throw() directly exactly as before.
 var _place_target_slot: Marker2D = null
+var _slip_timer := 0.0 # see _apply_move_input()
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
@@ -229,10 +230,35 @@ func _physics_process(delta: float) -> void:
 	if defend_pressed and _defend_cooldown <= 0.0:
 		_try_defend()
 		_defend_cooldown = DEFEND_COOLDOWN
-	velocity = dir * SPEED
+	_apply_move_input(dir, delta)
 	move_and_slide()
 	_push_rigid_bodies(delta)
 	target_position = position
+
+## WEEK 11 (Day 6+) — floor spills (Ambience.gd). On dry floor velocity is the
+## input, instantly, exactly as before. On a wet spill, and for
+## SPILL_SLIDE_OUT after stepping off one, it only EASES toward the input at
+## SPILL_TRACTION, so you slide on turns and stops, and the top speed is
+## SPILL_SPEED_FACTOR of normal while you're on it. Never zero: a spill
+## slows and slides you, it doesn't hold you. Runs on the owning peer only
+## (movement is client-authoritative), against the replicated spill list.
+func _apply_move_input(dir: Vector2, delta: float) -> void:
+	var ambience: Node = get_tree().current_scene.ambience
+	var on_spill: bool = ambience.slippery_at(global_position)
+	if on_spill:
+		_slip_timer = ambience.SPILL_SLIDE_OUT
+	if _slip_timer > 0.0:
+		if not on_spill:
+			_slip_timer -= delta
+		var top: float = SPEED * (ambience.SPILL_SPEED_FACTOR if on_spill else 1.0)
+		velocity = velocity.move_toward(dir * top, ambience.SPILL_TRACTION * delta)
+	else:
+		velocity = dir * SPEED
+
+## True while this player's movement is on low traction (on a spill or just
+## off one) — read by the test harness.
+func is_slipping() -> bool:
+	return _slip_timer > 0.0
 
 ## Runs in _process (tied to actual render rate) rather than
 ## _physics_process (fixed 60Hz) — see the matching comment in Carryable.gd.
@@ -647,6 +673,8 @@ func teleport_to(pos: Vector2) -> void:
 		return
 	position = pos
 	target_position = pos
+	velocity = Vector2.ZERO # no spill slide carried through a teleport
+	_slip_timer = 0.0
 	reset_physics_interpolation()
 
 ## WEEK 8 — the forklift (Forklift.gd, host-only) drove into this player.
