@@ -1804,6 +1804,15 @@ const E_LANE_R := 48.0
 const E2_SPOT := Vector2(1440, 690)
 const E2_R := 54.0
 
+## WEEK 13 — what this peer draws for each product: its sprite region (or
+## "placeholder" for sections with no product art). Must match on every peer.
+func _product_art_view() -> Dictionary:
+	var out := {}
+	for obj in get_nodes_in_group("carryable"):
+		var art: Node = obj.get_node_or_null("ProductArt")
+		out[String(obj.name)] = str(art.region_rect) if art else "placeholder"
+	return out
+
 func _lane_for(lanes: Dictionary, id: int) -> Dictionary:
 	return lanes.get(str(id), {})
 
@@ -2027,6 +2036,11 @@ func _run_net_ambience_host() -> void:
 		var w := _e1_ok(m)
 		check(w == "" and not m.is_empty(), "E1: %s's own slip run on its own screen %s%s" % [names[id], str(m), "" if w == "" else " — BAD: " + w])
 		check(r.get("spill_ok", false), "E1: %s's replicated spill matched the host's (id, spot, size, WET)" % names[id])
+		var mine_art := _product_art_view()
+		var theirs: Dictionary = r.get("art", {})
+		var shared := theirs.keys().filter(func(n): return mine_art.has(n))
+		var art_bad := shared.filter(func(n): return mine_art[n] != theirs[n])
+		check(shared.size() >= 20 and art_bad.is_empty(), "E1: %s draws the same product art as the host for all %d shared products (mismatches: %s)" % [names[id], shared.size(), str(art_bad.slice(0, 5))])
 		e1_dwell[id] = m.get("dwell", -1.0)
 	await wait(0.5)
 	_remote_watch = false
@@ -2206,7 +2220,7 @@ func _run_net_ambience_client() -> void:
 	check(spill_ok and amb()._spill_nodes.size() == amb().spills.size(), "%s: E1 my replicated spill list matches the host's, all drawn (%d)" % [who, amb().spills.size()])
 	await wait_until(func(): return player().global_position.distance_to(Vector2(cx - E_LANE_R - 260.0, y)) < 2.0, 3.0)
 	var m: Dictionary = await slip_run(cx - E_LANE_R - 260.0, y, cx, E_LANE_R, Vector2.UP)
-	_net_write("e1_%d.json" % me, {"m": m, "spill_ok": spill_ok})
+	_net_write("e1_%d.json" % me, {"m": m, "spill_ok": spill_ok, "art": _product_art_view()})
 	var why := _e1_ok(m)
 	check(why == "", "%s: E1 my slip run %s%s" % [who, str(m), "" if why == "" else " — BAD: " + why])
 	# E2

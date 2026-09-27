@@ -37,6 +37,31 @@ func _run() -> void:
 	for zone in spots:
 		p.teleport_to(spots[zone])
 		await shot(zone)
+	# Shelf close-ups: in every section, stock two slots of one shelf
+	# through the real settle check (placed exactly on the slot), leave the
+	# rest empty, and frame it zoomed in.
+	cam.zoom = Vector2(1.6, 1.6)
+	for sec in main.SECTIONS:
+		var color: Color = main.SECTION_COLORS[sec["name"]]
+		var sec_shelves: Array = main.shelves.filter(func(sb): return main._grid_cell_of(sb.global_position) == sec["grid_pos"])
+		sec_shelves.sort_custom(func(a, b): return String(a.name) < String(b.name))
+		var shelf_body: Node2D = sec_shelves[0]
+		var shelf: Node = shelf_body.get_node("Shelf")
+		var loose: Array = get_nodes_in_group("carryable").filter(func(o): return o.get_node("Polygon2D").color.is_equal_approx(color) and not main.shelves.any(func(sb): return sb.get_node("Shelf").contains(o)))
+		for i in mini(2, loose.size()):
+			var obj: RigidBody2D = loose[i]
+			var at: Vector2 = shelf.slots[i].global_position
+			PhysicsServer2D.body_set_state(obj.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D(0.0, at))
+			PhysicsServer2D.body_set_state(obj.get_rid(), PhysicsServer2D.BODY_STATE_LINEAR_VELOCITY, Vector2.ZERO)
+			obj.global_position = at
+		await create_timer(0.8).timeout
+		var stocked := []
+		for i in shelf.slots.size():
+			stocked.append(shelf.filled[i])
+		print("SHELF  %s %s: slots filled %s" % [sec["name"], shelf_body.name, str(stocked)])
+		p.teleport_to(shelf_body.global_position + (shelf.slots[1].global_position - shelf_body.global_position) * 1.6)
+		await shot("shelf_" + String(sec["node_name"]).to_lower())
+	cam.zoom = Vector2.ONE
 	# Whole store: camera limits off, zoomed out, centered on the map.
 	cam.limit_left = -10000
 	cam.limit_top = -10000
