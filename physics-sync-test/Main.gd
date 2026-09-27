@@ -293,6 +293,13 @@ extends Node2D
 ## Day 7 also opens Bakery (the 4th section, top density tier) — that was
 ## already scheduled in SECTIONS, not part of this escalation.
 ##
+## WEEK 13 — ART PASS, FLOORS + WALLS (StoreArt.gd, built in _ready()).
+## Pure visuals from the two RPG Maker-format packs in assets/: tiled floors
+## for the four sections, the checkout hub and Storage, and wall art drawn
+## over the real wall collision shapes. Shelves and stock are unchanged — the
+## supermarket pack only has separable product sprites for Dry Goods and
+## Bakery (see StoreArt.gd's header), which is a decision, not a guess.
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -470,6 +477,7 @@ const WORLD_EDGE_MARGIN := 20.0
 
 const PlayerScene := preload("res://Player.tscn")
 const AmbienceScript := preload("res://Ambience.gd")
+const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
 ## Break room center — grid (0,0) (see the GRID MAP comment above), so this
@@ -943,6 +951,13 @@ func _ready() -> void:
 	shelves = get_tree().get_nodes_in_group("shelf")
 	cashiers = get_tree().get_nodes_in_group("cashier")
 	displays = get_tree().get_nodes_in_group("display")
+	# WEEK 13 — floor/wall art (StoreArt.gd), purely visual. First, so the
+	# color cache below sees the new (white, textured) floors, and right
+	# after the floors in draw order, under everything else.
+	var store_art := StoreArtScript.new()
+	store_art.name = "StoreArt"
+	add_child(store_art)
+	move_child(store_art, $RoomBackgrounds.get_index() + 1)
 	_apply_section_accent_colors()
 	_cache_original_colors()
 	# Explicit name, identical on every peer: its synchronizer's path has to
