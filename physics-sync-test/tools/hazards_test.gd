@@ -39,6 +39,11 @@ extends SceneTree
 ## The solo sim steps around spills it can see (--careless walks straight
 ## through them too) and reports spills, time spent slipping and lights
 ## events per day.
+## WEEK 12 (DAY 7) — the finale: every system escalated, the tighter clock,
+## the FINAL SHIFT banner (run under xvfb-run for the banner layout checks):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --shift-seconds=400 --test=finale
+## Co-op on the finale: the net-ambience pass above with --day=7 on the host.
+## Solo Day 6 vs Day 7: --test=solo --day=6 --days=6,7
 
 var main: Node
 var fails := 0
@@ -67,6 +72,8 @@ func _initialize() -> void:
 			_run_solo.call_deferred()
 		"orders":
 			_run_orders.call_deferred()
+		"finale":
+			_run_finale.call_deferred()
 		"ambience":
 			_run_ambience.call_deferred()
 		"net-ambience":
@@ -1771,6 +1778,15 @@ func _run_ambience() -> void:
 ##   and lights events as the host; no write-up for a push while slipping;
 ##   everyone's report matches.
 ## - E5: the next day starts clean on every peer.
+## WEEK 12 — the same pass runs on the Day 7 finale (--day=7 on the host;
+## clients follow the replicated day), plus, on either day:
+## - E0: every peer agrees whether it's the finale, and on Day 7 every
+##   client saw the FINAL SHIFT banner on its own screen.
+## - E6: spills spawned as fast as possible — every peer sees exactly the
+##   cap (Day 7: +1, plus +1 per extra player), never one more.
+## - E7: a CLIENT stands idle in front of the manager: the time from its own
+##   LOOK BUSY warning to its own write-up toast matches today's fuse
+##   (2.5s, 2.0s on the finale) — the shorter fuse holds over the network.
 
 ## One lane per player across the hub; spills staggered in x so neighbouring
 ## lanes' spills never touch (and turns go UP, away from the registers).
@@ -1941,6 +1957,19 @@ func _watch_env_view() -> void:
 				if mgr().watch_peer == 0 and amb().slippery_at(main.players[id].global_position, amb().SPILL_EXCUSE_MARGIN) and "knocking" in String(st["reason"]):
 					_env_view["slip_writeups"].append([id, st["reason"]])
 
+## Entry by entry: a view that went through JSON has its keys re-sorted as
+## strings ("10" before "9") and its numbers as floats.
+func _same_spills(a: Dictionary, b: Dictionary) -> bool:
+	if a.size() != b.size():
+		return false
+	for k in b:
+		if not a.has(k) or a[k].size() != b[k].size():
+			return false
+		for i in b[k].size():
+			if absf(float(a[k][i]) - float(b[k][i])) > 0.5:
+				return false
+	return true
+
 func _run_net_ambience_host() -> void:
 	var want := 2
 	for a in OS.get_cmdline_user_args():
@@ -1955,7 +1984,9 @@ func _run_net_ambience_host() -> void:
 	for id in main.players:
 		names[id] = main.player_display_name(id)
 	check(main.players.size() == want, "net: %d players connected (%s)" % [main.players.size(), str(names.values())])
-	check(main.current_day == 6 and amb().active, "net: Day 6, lights/spills active")
+	var day: int = main.current_day
+	check(day >= 6 and amb().active, "net: Day %d, lights/spills active" % day)
+	check(main.is_finale() == (day >= main.FINALE_START_DAY) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "E0 host: finale %s on every system" % ("ON" if main.is_finale() else "off"))
 	park_everything()
 	await wait(2.0)
 	var ids: Array = main.players.keys()
@@ -2032,6 +2063,49 @@ func _run_net_ambience_host() -> void:
 		check(absf(lag) < 0.5, "E3: %s's lights went at the same moment as the host's (%+.3fs)" % [names[id], lag])
 		check(r.get("back", false) and r.get("overlay_ok", false) and r.get("min", 0.0) >= amb().LIGHTS_FLICKER_LOW - 0.001, "E3: %s: min %.2f, back to full after" % [names[id], r.get("min", 0.0)])
 
+	# --- E6: spill cap under a flood.
+	for id in ids:
+		main.players[id].rpc("teleport_to", Vector2(480 + 60 * ids.find(id), 300)) # break room: out of every spill spot
+	await wait(0.8)
+	_net_write("e6_go.json", {"go": true})
+	var cap: int = amb().spill_cap()
+	var max_seen := 0
+	for i in 150:
+		amb()._spill_timer = 0.0
+		await process_frame
+		max_seen = maxi(max_seen, amb().spills.size())
+	await wait(1.0)
+	var at_cap: int = amb().spills.size()
+	_net_write("e6_host.json", {"cap": cap, "count": at_cap})
+	var expect_cap: int = amb().SPILL_MAX + (amb().FINALE_SPILL_MAX_BONUS if main.is_finale() else 0) + (want - 1)
+	check(cap == expect_cap and at_cap == cap and max_seen == cap, "E6 host: spill flood — %d on the floor, never more than the cap %d (%d players%s)" % [at_cap, cap, want, ", finale +1" if main.is_finale() else ""])
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("e6_%d.json" % id, 30.0)
+		check(int(r.get("max", -1)) == cap and int(r.get("count", -1)) == cap and r.get("drawn", false), "E6: %s saw %s spills at most, %s at the end, all drawn (cap %d)" % [names[id], str(r.get("max")), str(r.get("count")), cap])
+	for sp in amb().spills.duplicate():
+		amb().remove_spill(sp["id"])
+	amb()._spill_timer = 1.0e9
+
+	# --- E7: the manager's fuse, timed on a client's own screen.
+	var target: int = ids[1]
+	var spot := Vector2(1440, 700)
+	main.players[target].rpc("teleport_to", spot)
+	await wait(1.0)
+	mgr()._state.clear()
+	_net_write("e7_go.json", {"target": target})
+	await wait(0.5)
+	pin_manager(spot + Vector2(150, 0), PI)
+	var w0: int = main.writeups_today
+	await wait_until(func(): return main.writeups_today > w0, 10.0)
+	var r7 := await _net_read("e7_%d.json" % target, 30.0)
+	var fuse: float = mgr().catch_time()
+	check(main.writeups_by_peer.get(target, 0) >= 1 and absf(r7.get("fuse", -1.0) - fuse) < 0.35, "E7: %s's own LOOK BUSY -> write-up toast took %.2fs on its screen (today's fuse %.1fs)" % [names[target], r7.get("fuse", -1.0), fuse])
+	pin_manager(Vector2(480, 1350), 0.0)
+	mgr()._state.clear()
+	await wait(1.0)
+
 	# --- E4: free play.
 	release_manager()
 	fk()._pause_timer = 0.0
@@ -2060,7 +2134,7 @@ func _run_net_ambience_host() -> void:
 			continue
 		var r := await _net_read("e4_%d.json" % id, 60.0)
 		var v: Dictionary = r.get("view", {})
-		check(str(v.get("spills")) == str(_env_view["spills"]), "E4: %s saw the same spills (id, spot, size): %d vs host %d" % [names[id], v.get("spills", {}).size(), _env_view["spills"].size()])
+		check(_same_spills(v.get("spills", {}), _env_view["spills"]), "E4: %s saw the same spills (id, spot, size): %d vs host %d" % [names[id], v.get("spills", {}).size(), _env_view["spills"].size()])
 		check(str(v.get("lights")) == str(_env_view["lights"]), "E4: %s saw the same lights events %s" % [names[id], str(v.get("lights"))])
 		check(v.get("inside", false) and r.get("lights_back", false), "E4: %s stayed on the map, lights back on for its report" % names[id])
 		check(r.get("today", "") == main.report_today_label.text and r.get("pay", "") == main.report_pay_label.text, "E4: %s's report matches the host's: '%s' | '%s'" % [names[id], r.get("today"), r.get("pay")])
@@ -2068,9 +2142,9 @@ func _run_net_ambience_host() -> void:
 
 	# --- E5
 	main._on_continue_pressed()
-	await wait_until(func(): return main.shift_active and main.current_day == 7, 10.0)
+	await wait_until(func(): return main.shift_active and main.current_day == day + 1, 10.0)
 	await wait(1.0)
-	check(amb().spills.is_empty() and amb()._spill_root.get_child_count() == 0 and amb().brightness == 1.0 and amb().active, "E5 host: Day 7 starts clean (no spills, lights on)")
+	check(amb().spills.is_empty() and amb()._spill_root.get_child_count() == 0 and amb().brightness == 1.0 and amb().active, "E5 host: Day %d starts clean (no spills, lights on)" % (day + 1))
 	for id in ids:
 		if id == 1:
 			continue
@@ -2079,13 +2153,34 @@ func _run_net_ambience_host() -> void:
 	await wait(1.0)
 	finish()
 
+var _banner_seen := false
+var _banner_text := ""
+
+## Client, from connect: did the FINAL SHIFT banner ever show on this screen.
+func _watch_finale_banner() -> void:
+	var t := 0.0
+	while t < 40.0 and not _banner_seen:
+		await process_frame
+		t += get_root().get_process_delta_time()
+		if main._finale_banner != null and main._finale_banner.visible:
+			_banner_seen = true
+			_banner_text = main._finale_banner.get_child(0).text
+
 func _run_net_ambience_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
 	act = "client_"
 	var who: String = main.player_display_name(me)
-	await wait_until(func(): return main.shift_active and main.current_day == 6, 20.0)
-	check(main.current_day == 6 and amb().active, "%s: Day 6 (replicated), lights/spills active" % who)
+	_watch_finale_banner()
+	await wait_until(func(): return main.shift_active and main.current_day >= 6, 20.0)
+	var day: int = main.current_day
+	check(day >= 6 and amb().active, "%s: Day %d (replicated), lights/spills active" % [who, day])
+	await wait(0.5)
+	check(main.is_finale() == (day >= main.FINALE_START_DAY) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "%s: E0 finale %s on every system, on my side" % [who, "ON" if main.is_finale() else "off"])
+	if day == main.FINALE_START_DAY:
+		check(_banner_seen and _banner_text == "FINAL SHIFT", "%s: E0 saw the FINAL SHIFT banner on my own screen" % who)
+	else:
+		check(not _banner_seen, "%s: E0 no finale banner on Day %d" % [who, day])
 	# E1
 	var go := await _net_read("e1_go.json", 60.0)
 	var lane: Dictionary = _lane_for(go.get("lanes", {}), me)
@@ -2113,6 +2208,28 @@ func _run_net_ambience_client() -> void:
 	var e3: Dictionary = await _e3_watch(20.0)
 	_net_write("e3_%d.json" % me, e3)
 	check(not e3.is_empty() and e3.get("back", false), "%s: E3 saw the lights event and the lights came back" % who)
+	# E6
+	await _net_read("e6_go.json", 60.0)
+	var max_seen := 0
+	var t6 := 0.0
+	while t6 < 3.0:
+		await process_frame
+		t6 += get_root().get_process_delta_time()
+		max_seen = maxi(max_seen, amb().spills.size())
+	var h6 := await _net_read("e6_host.json", 30.0)
+	await wait(0.3)
+	_net_write("e6_%d.json" % me, {"max": max_seen, "count": amb().spills.size(), "drawn": amb()._spill_nodes.size() == amb().spills.size()})
+	check(max_seen == int(h6.get("cap", -1)) and amb().spills.size() == int(h6.get("count", -2)), "%s: E6 spill flood — at most %d on my screen, cap %s" % [who, max_seen, str(h6.get("cap"))])
+	# E7 — only the target stands and times it; everyone else is out of the way.
+	var g7 := await _net_read("e7_go.json", 60.0)
+	if int(g7.get("target", 0)) == me:
+		steer(Vector2.ZERO)
+		var seen := await wait_until(func(): return main._watch_label.visible, 10.0)
+		var t0 := Time.get_ticks_msec()
+		var hit := await wait_until(func(): return main._toast_label.visible and main._toast_label.text.begins_with("WRITTEN UP"), 10.0)
+		var fuse := (Time.get_ticks_msec() - t0) / 1000.0
+		_net_write("e7_%d.json" % me, {"fuse": fuse if seen and hit else -1.0})
+		check(seen and hit and absf(fuse - mgr().catch_time()) < 0.35, "%s: E7 LOOK BUSY -> WRITTEN UP on my screen in %.2fs (fuse %.1fs)" % [who, fuse, mgr().catch_time()])
 	# E4
 	await _net_read("e4_go.json", 60.0)
 	_env_view = {"spills": {}, "lights": [], "slip_s": 0.0, "inside": true, "slip_writeups": []}
@@ -2125,8 +2242,207 @@ func _run_net_ambience_client() -> void:
 	print("NET  %s view: spills %s | lights %s | slipping %.1fs" % [who, str(_env_view["spills"]), str(_env_view["lights"]), _env_view["slip_s"]])
 	_net_write("e4_%d.json" % me, {"view": _env_view, "today": main.report_today_label.text, "pay": main.report_pay_label.text, "lights_back": amb().brightness == 1.0 and amb()._overlay.color.a == 0.0})
 	# E5
-	await wait_until(func(): return main.shift_active and main.current_day == 7, 60.0)
+	await wait_until(func(): return main.shift_active and main.current_day == day + 1, 60.0)
 	await wait(1.0)
-	check(main.current_day == 7 and amb().spills.is_empty() and amb()._spill_root.get_child_count() == 0 and amb().brightness == 1.0, "%s: E5 Day 7 starts clean on my screen" % who)
+	check(main.current_day == day + 1 and amb().spills.is_empty() and amb()._spill_root.get_child_count() == 0 and amb().brightness == 1.0, "%s: E5 Day %d starts clean on my screen" % [who, day + 1])
 	_net_write("result_%d.json" % me, {"fails": fails})
+	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 12 (DAY 7) — THE FINALE: no new hazard, everything escalated, a
+## tighter clock and a FINAL SHIFT banner. Scripted checks, solo, starting on
+## Day 6 so both sides of the gate are measured in one process:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --shift-seconds=400 --test=finale
+## (add --shots under xvfb-run, no --headless, for frames of the banner with
+## every alert row up at once). Co-op: --test=net-ambience with --day=7.
+
+## One lap's worth of forklift legs, built fresh with today's pacing (the
+## live lap is put back untouched).
+func forklift_lap_pauses() -> Dictionary:
+	var saved: Array = fk()._legs.duplicate()
+	fk()._legs.clear()
+	fk()._build_lap()
+	var out := {"stops": [], "telegraph": 0}
+	for leg in fk()._legs:
+		if leg.has("pause"):
+			out["stops"].append(leg["pause"])
+		if leg.get("telegraph", false):
+			out["telegraph"] += 1
+	fk()._legs = saved
+	return out
+
+## Real forklift laps for `seconds`: a lap is rebuilt each time the last one
+## runs out, so count rebuilds (with nobody in Meat/Deli to get in its way).
+func forklift_laps(seconds: float) -> Array:
+	fk()._pause_timer = 0.0
+	var laps := []
+	var prev_n: int = fk()._legs.size()
+	var t := 0.0
+	var last := -1.0
+	var rams0: int = fk().rams_today
+	while t < seconds:
+		await physics_frame
+		t += 1.0 / 60.0
+		var n: int = fk()._legs.size()
+		if n > prev_n + 3: # a fresh lap was just built
+			if last >= 0.0:
+				laps.append(t - last)
+			last = t
+		prev_n = n
+	return [laps, fk().rams_today - rams0]
+
+## Seconds from the manager first starting to watch an idle player (the "?"
+## appears) to the write-up, measured on the real detection loop.
+func time_to_writeup() -> float:
+	var spot := Vector2(1440, 700)
+	player().teleport_to(spot)
+	steer(Vector2.ZERO)
+	pin_manager(spot + Vector2(150, 0), PI)
+	mgr()._state.clear()
+	var w0: int = main.writeups_today
+	await wait_until(func(): return mgr().watch_peer == 1 and mgr().watch_level > 0.0, 6.0)
+	var t0 := Time.get_ticks_msec()
+	await wait_until(func(): return main.writeups_today > w0, 8.0)
+	var dt := (Time.get_ticks_msec() - t0) / 1000.0
+	pin_manager(Vector2(480, 1350), 0.0)
+	mgr()._state.clear()
+	return dt
+
+func _alert_rows_rects() -> Array:
+	return [main._watch_label.get_global_rect(), main._toast_label.get_global_rect(), main._order_label.get_global_rect()]
+
+func _run_finale() -> void:
+	await wait_until(func(): return main.shift_active and main.current_day == 6, 20.0)
+	var a := amb()
+	var base_shift: float = main.shift_duration
+	# --- F0: Day 6 is exactly Week 11's Day 6, and so is every earlier day.
+	check(not main.is_finale() and not fk().finale and not mgr().finale and not a.finale, "F0 Day 6: finale off everywhere")
+	var day_numbers_ok := true
+	var real_day: int = main.current_day
+	for d in [1, 2, 3, 4, 5, 6]:
+		main.current_day = d
+		var expect_clock: float = base_shift + main._extra_day_time()
+		var expect_grace: float = main.CUSTOMER_GRACE_PERIOD + main._extra_day_time()
+		if main._current_shift_duration() != expect_clock or main._current_customer_grace_period() != expect_grace or main._priority_order_interval() != main.PRIORITY_ORDER_INTERVAL:
+			day_numbers_ok = false
+	main.current_day = real_day
+	check(day_numbers_ok, "F0 Days 1-6: clock, grace and order cadence are the pre-finale numbers")
+	check(is_equal_approx(main.shift_time_left + 0.0, main.shift_time_left) and main._current_shift_duration() == base_shift + 35.0 and main._current_customer_grace_period() == 44.0, "F0 Day 6: %.0fs clock, %.0fs grace" % [main._current_shift_duration(), main._current_customer_grace_period()])
+	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main.PRIORITY_ORDER_INTERVAL and main._order_timer > main.PRIORITY_ORDER_INTERVAL - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main.PRIORITY_ORDER_INTERVAL])
+	check(not main._finale_banner.visible and main.finale_banner_left == 0.0, "F0 Day 6: no FINAL SHIFT banner")
+	park_everything()
+	var lap6 := forklift_lap_pauses()
+	var catch6 := await time_to_writeup()
+	player().teleport_to(Vector2(1440, 240)) # out of Meat/Deli
+	var laps6: Array = await forklift_laps(60.0)
+	fk()._pause_timer = 1.0e9
+	var spill_iv6 := []
+	var light_iv6 := []
+	for i in 20:
+		a._spill_timer = 0.0
+		await process_frame # the host tick runs in Main._process()
+		await process_frame
+		spill_iv6.append(a._spill_timer)
+		a.start_lights_event()
+		light_iv6.append(a._lights_timer - a.build_pattern(a.lights_event_seed)[-1][0])
+	for sp in a.spills.duplicate():
+		a.remove_spill(sp["id"])
+	a._spill_timer = 1.0e9
+	a._lights_timer = 1.0e9
+
+	# --- F1: into the finale.
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	main._on_continue_pressed()
+	var saw_banner_at_start := false
+	await wait_until(func(): return main.current_day == 7, 5.0)
+	saw_banner_at_start = await wait_until(func(): return main._finale_banner.visible, 1.0)
+	var banner_start := Time.get_ticks_msec()
+	check(main.shift_active and main.is_finale() and fk().finale and mgr().finale and a.finale, "F1 Day 7: finale on for forklift, manager, spills/lights")
+	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "FINAL SHIFT", "F1 Day 7: FINAL SHIFT banner up as the shift starts")
+	check(main._current_shift_duration() == base_shift + 45.0 - main.FINALE_CLOCK_CUT and main._current_customer_grace_period() == main.CUSTOMER_GRACE_PERIOD + 45.0 - main.FINALE_GRACE_CUT, "F1 Day 7: clock %.0fs (uncut %.0f), grace %.0fs (uncut %.0f)" % [main._current_shift_duration(), base_shift + 45.0, main._current_customer_grace_period(), main.CUSTOMER_GRACE_PERIOD + 45.0])
+	check(main._current_shift_duration() < base_shift + 35.0 and main._current_shift_duration() - main._current_customer_grace_period() < (base_shift + 35.0) - 44.0, "F1 Day 7: tighter than Day 6 — clock %.0f < %.0f, selling window %.0fs < %.0fs" % [main._current_shift_duration(), base_shift + 35.0, main._current_shift_duration() - main._current_customer_grace_period(), base_shift + 35.0 - 44.0])
+	check(main._order_timer > main.FINALE_PRIORITY_ORDER_INTERVAL - 1.0 and main._order_timer <= main.FINALE_PRIORITY_ORDER_INTERVAL, "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main.FINALE_PRIORITY_ORDER_INTERVAL, main._order_timer])
+	check(main.FINALE_PRIORITY_ORDER_INTERVAL > main.PRIORITY_ORDER_WINDOW + 5.0, "F1: an order is always closed before the next is due (%.0f > %.0f)" % [main.FINALE_PRIORITY_ORDER_INTERVAL, main.PRIORITY_ORDER_WINDOW])
+	# Banner vs every alert row, with all of them up at once.
+	main._watch_label.text = "MANAGER IS WATCHING — LOOK BUSY!  [|||||.....]"
+	main._watch_label.visible = true
+	main._toast_label.text = "WRITTEN UP for standing around!  -$25"
+	main._toast_timer = 3.0
+	main._order_result_timer = 3.0
+	main._order_result_text = "ORDER FILLED — those 5 Bakery items pay 1.5x!"
+	main._order_result_filled = true
+	# Staged: his live detection loop would clear a watch nobody earned.
+	mgr().set_physics_process(false)
+	mgr().watch_peer = 1
+	mgr().watch_level = 0.7
+	await process_frame
+	await process_frame
+	# Screen rects only mean something with a real window: headless runs a
+	# 64px-tall viewport. Run this test under xvfb-run for the layout check.
+	var br: Rect2 = main._finale_banner.get_global_rect()
+	var view: Vector2 = main.get_viewport().get_visible_rect().size
+	check(main._finale_banner.visible and main._watch_label.visible and main._toast_label.visible and main._order_label.visible, "F1: banner up together with LOOK BUSY, the write-up toast and the order banner")
+	if DisplayServer.get_name() != "headless":
+		var clash := _alert_rows_rects().filter(func(r): return r.intersects(br))
+		check(clash.is_empty(), "F1: FINAL SHIFT banner %s clear of LOOK BUSY / toast / order rows %s (view %s)" % [str(br), str(_alert_rows_rects()), str(view)])
+		check(br.position.y >= 0.0 and br.end.y <= view.y and br.size.y > 40.0, "F1: banner fully on screen")
+	else:
+		print("FIN  (headless: banner layout checks skipped — run under xvfb-run)")
+	await shot("finale_banner_with_every_alert_row")
+	mgr().set_physics_process(true)
+	mgr().watch_peer = 0
+	mgr().watch_level = 0.0
+	main._toast_timer = 0.0
+	main._order_result_timer = 0.0
+	await wait_until(func(): return (Time.get_ticks_msec() - banner_start) / 1000.0 > main.FINALE_BANNER_SECONDS - 0.7, 6.0)
+	check(main._finale_banner.visible and main._finale_banner.modulate.a < 1.0, "F1: banner fading in its last second (alpha %.2f)" % main._finale_banner.modulate.a)
+	await wait_until(func(): return not main._finale_banner.visible, 3.0)
+	var shown_for := (Time.get_ticks_msec() - banner_start) / 1000.0
+	check(not main._finale_banner.visible and absf(shown_for - main.FINALE_BANNER_SECONDS) < 0.5, "F1: banner gone after %.1fs" % shown_for)
+
+	# --- F2: each system escalated, measured.
+	park_everything()
+	var lap7 := forklift_lap_pauses()
+	print("FIN  forklift stops per lap: Day 6 %s | Day 7 %s" % [str(lap6["stops"]), str(lap7["stops"])])
+	var sum6: float = lap6["stops"].reduce(func(x, y): return x + y, 0.0)
+	var sum7: float = lap7["stops"].reduce(func(x, y): return x + y, 0.0)
+	check(sum7 < sum6 and lap7["stops"].size() == lap6["stops"].size() and lap7["telegraph"] == lap6["telegraph"] and lap7["telegraph"] == fk().RAMS_PER_LAP, "F2 forklift: %.1fs of stops per lap (Day 6 %.1fs), same %d telegraphed ram(s)" % [sum7, sum6, lap7["telegraph"]])
+	check(fk().TELEGRAPH_TIME == 0.9 and fk().DRIVE_SPEED < player().SPEED and fk().RAM_SPEED < player().SPEED, "F2 forklift: telegraph %.1fs and speeds unchanged (still outrunnable)" % fk().TELEGRAPH_TIME)
+	player().teleport_to(Vector2(1440, 240))
+	var laps7: Array = await forklift_laps(60.0)
+	fk()._pause_timer = 1.0e9
+	var mean := func(xs: Array) -> float: return xs.reduce(func(x, y): return x + y, 0.0) / maxf(1.0, xs.size())
+	print("FIN  forklift in 60s: Day 6 laps %s rams %d | Day 7 laps %s rams %d" % [str(laps6[0]), laps6[1], str(laps7[0]), laps7[1]])
+	check(not laps7[0].is_empty() and not laps6[0].is_empty() and mean.call(laps7[0]) < mean.call(laps6[0]), "F2 forklift: a lap every %.1fs (Day 6 %.1fs) — rams in 60s: %d vs %d" % [mean.call(laps7[0]), mean.call(laps6[0]), laps7[1], laps6[1]])
+	var catch7 := await time_to_writeup()
+	print("FIN  manager: '?' to write-up Day 6 %.2fs, Day 7 %.2fs" % [catch6, catch7])
+	check(absf(catch6 - mgr().CATCH_TIME) < 0.25 and absf(catch7 - mgr().FINALE_CATCH_TIME) < 0.25, "F2 manager: '?' to write-up %.2fs (Day 6 %.2fs)" % [catch7, catch6])
+	check(mgr().FINALE_CATCH_TIME > mgr().CHAOS_MEMORY, "F2 manager: one throw still can't write you up alone (%.1f > %.1f)" % [mgr().FINALE_CATCH_TIME, mgr().CHAOS_MEMORY])
+	var spill_iv7 := []
+	var light_iv7 := []
+	player().teleport_to(Vector2(480, 270)) # break room: out of every spill spot's way
+	await wait(0.3)
+	for i in 20:
+		a._spill_timer = 0.0
+		await process_frame # the host tick runs in Main._process()
+		await process_frame
+		spill_iv7.append(a._spill_timer)
+		a.start_lights_event()
+		light_iv7.append(a._lights_timer - a.build_pattern(a.lights_event_seed)[-1][0])
+	print("FIN  spill gaps Day 6 %.1f-%.1f, Day 7 %.1f-%.1f | lights gaps Day 6 %.1f-%.1f, Day 7 %.1f-%.1f" % [spill_iv6.min(), spill_iv6.max(), spill_iv7.min(), spill_iv7.max(), light_iv6.min(), light_iv6.max(), light_iv7.min(), light_iv7.max()])
+	check(spill_iv6.min() >= a.SPILL_INTERVAL_MIN and spill_iv6.max() <= a.SPILL_INTERVAL_MAX and spill_iv7.min() >= a.FINALE_SPILL_INTERVAL_MIN and spill_iv7.max() <= a.FINALE_SPILL_INTERVAL_MAX, "F2 spills: gaps %.0f-%.0fs (Day 6 %.0f-%.0fs)" % [a.FINALE_SPILL_INTERVAL_MIN, a.FINALE_SPILL_INTERVAL_MAX, a.SPILL_INTERVAL_MIN, a.SPILL_INTERVAL_MAX])
+	check(a.spills.size() == a.spill_cap() and a.spill_cap() == a.SPILL_MAX + 1, "F2 spills: cap %d solo (Day 6 %d) — %d on the floor after 20 forced spawns" % [a.spill_cap(), a.SPILL_MAX, a.spills.size()])
+	check(light_iv6.min() >= a.LIGHTS_INTERVAL_MIN and light_iv6.max() <= a.LIGHTS_INTERVAL_MAX and light_iv7.min() >= a.FINALE_LIGHTS_INTERVAL_MIN and light_iv7.max() <= a.FINALE_LIGHTS_INTERVAL_MAX, "F2 lights: gaps %.0f-%.0fs (Day 6 %.0f-%.0fs)" % [a.FINALE_LIGHTS_INTERVAL_MIN, a.FINALE_LIGHTS_INTERVAL_MAX, a.LIGHTS_INTERVAL_MIN, a.LIGHTS_INTERVAL_MAX])
+	check(str(a.build_pattern(777)) == str(a.build_pattern(777)) and a.LIGHTS_DIM_LEVEL == 0.55, "F2 lights: the event itself (depth, length, pattern) is unchanged")
+	for sp in a.spills.duplicate():
+		a.remove_spill(sp["id"])
+
+	# --- F3: the banner is once, not every day after.
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	main._on_continue_pressed()
+	await wait_until(func(): return main.current_day == 8 and main.shift_active, 5.0)
+	var again := await wait_until(func(): return main._finale_banner.visible, 1.5)
+	check(not again and main.is_finale(), "F3 Day 8: still at finale intensity, no second banner")
 	finish()

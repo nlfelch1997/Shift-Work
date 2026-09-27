@@ -273,6 +273,26 @@ extends Node2D
 ## passive this week, why not from toppled displays, where they can't form)
 ## in Ambience.gd's header.
 ##
+## WEEK 12 (DAY 7) — THE FINALE. The last day of the core week adds NO new
+## hazard or system (the Overcooked-finale principle: everything you already
+## know, all at once, under more pressure). Gated like every hazard before it
+## by one constant, FINALE_START_DAY, passed to the forklift, manager and
+## ambience through _configure_hazards(); each reads its finale numbers
+## through its own getter, so Days 1-6 run the exact same values as before:
+## - Forklift: shorter stops (FINALE_LOAD/END_PAUSE) -> passes come around
+##   faster. Ram telegraph and speeds unchanged.
+## - Manager: shorter fuse (FINALE_CATCH_TIME) and priority orders every
+##   FINALE_PRIORITY_ORDER_INTERVAL instead of 45s (same 15s window).
+## - Spills: cap +1 (FINALE_SPILL_MAX_BONUS, the per-extra-player +1 still on
+##   top) and a faster spawn cadence, without which the cap never binds.
+## - Lights: shorter gaps between events; the event itself is unchanged.
+## - Clock: the one deliberate exception to "flat shift length" — see
+##   FINALE_CLOCK_CUT / FINALE_GRACE_CUT for the numbers and reasoning.
+## - "FINAL SHIFT" banner once as Day 7 starts (finale_banner_left, replicated), in its
+##   own band of the alert layer, with a placeholder sound hook.
+## Day 7 also opens Bakery (the 4th section, top density tier) — that was
+## already scheduled in SECTIONS, not part of this escalation.
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -330,6 +350,17 @@ extends Node2D
 ##     SPILL_SLIDE_OUT                     0.3 s  low traction after stepping off
 ##     SPILL_EXCUSE_MARGIN                70 px   Manager.gd: pushes near a spill aren't chaos
 ##
+##   DAY 7 FINALE — FINALE_START_DAY 7 (Main.gd); every value is Day 7+ only
+##     FINALE_CLOCK_CUT / FINALE_GRACE_CUT  20 / 5 s  -> Day 7 clock 145s, grace 49s
+##                                         (Day 6: 155 / 44; uncut Day 7 would be 165 / 54)
+##     FINALE_PRIORITY_ORDER_INTERVAL     32 s   (vs 45)
+##     Forklift FINALE_LOAD / END_PAUSE    0.7 / 0.8 s  (vs 1.2 / 1.6)
+##     Manager FINALE_CATCH_TIME           2.0 s  (vs 2.5; still > CHAOS_MEMORY 1.5)
+##     Ambience FINALE_SPILL_MAX_BONUS     +1     (cap 4 solo, +1 per extra player)
+##     Ambience FINALE_SPILL_INTERVAL      12-20 s (vs 16-26)
+##     Ambience FINALE_LIGHTS_INTERVAL     12-22 s (vs 18-30)
+##     FINALE_BANNER_SECONDS               4.5 s
+##
 ##   PRIORITY ORDERS — Main.gd
 ##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
 ##     PRIORITY_ORDER_WINDOW              15.0 s  to fill one
@@ -375,6 +406,30 @@ extends Node2D
 
 ## Day the manager starts his rounds — see the WEEK 9 note above.
 const MANAGER_START_DAY := 4
+## WEEK 12 — the finale (see the WEEK 12 header note). Everything below is a
+## FLAGGED placeholder, tuned against the bot sims, not a human playtest.
+const FINALE_START_DAY := 7
+## The shift clock. Uncut, Day 7 would be the LONGEST day (165s clock, 54s
+## grace — Bakery opening adds SECTION_TIME_BONUS to both). The finale cuts
+## 20s off the clock and 5s off the grace: 145s / 49s. The grace keeps most
+## of Bakery's extra stocking time (49s vs Day 6's 44s, for one more section
+## to fill — cutting it harder makes the opening a scramble before anyone has
+## seen a customer, which reads as unfair rather than tense), so the cut
+## lands on the selling window: 96s vs Day 6's 111s (-14%), with the biggest
+## crowd of the week (CUSTOMER_CAP_BY_TIER's top tier). Both are cuts to the
+## normal math, so --shift-seconds= still scales it.
+const FINALE_CLOCK_CUT := 20.0
+const FINALE_GRACE_CUT := 5.0
+## Priority orders every 32s instead of 45 — about 3 call-outs in the
+## selling window instead of 2. The window to fill one (15s) is unchanged,
+## and still well under the interval, so one is always closed before the
+## next is due.
+const FINALE_PRIORITY_ORDER_INTERVAL := 32.0
+## The "FINAL SHIFT" banner (finale_banner_left): on screen this long, the
+## last second fading. Optional sound at FINALE_STING_PATH if it exists —
+## there are no audio assets in the project yet, so it's silent for now.
+const FINALE_BANNER_SECONDS := 4.5
+const FINALE_STING_PATH := "res://audio/final_shift.ogg"
 ## FLAGGED PLACEHOLDER ECONOMY — the first money numbers in the project,
 ## picked so one write-up clearly hurts (2.5 sales' worth) without one bad
 ## moment erasing a whole shift. Tune freely.
@@ -587,6 +642,12 @@ var _watch_label: Label
 var _toast_label: Label
 var _toast_timer := 0.0
 var _order_label: Label
+var _finale_banner: VBoxContainer
+## Host-written, replicated (DaySync): seconds the FINAL SHIFT banner has
+## left. State, not a one-shot RPC, so a player whose connection lands a
+## moment after the shift starts still sees it (found by the co-op pass).
+var finale_banner_left := 0.0
+var _finale_sting: AudioStreamPlayer
 var _order_result_text := ""
 var _order_result_timer := 0.0
 var _order_result_filled := false
@@ -773,13 +834,20 @@ func _extra_day_time() -> float:
 	return extra
 
 func _current_customer_grace_period() -> float:
-	return CUSTOMER_GRACE_PERIOD + _extra_day_time()
+	return CUSTOMER_GRACE_PERIOD + _extra_day_time() - (FINALE_GRACE_CUT if is_finale() else 0.0)
 
 ## See SECTION_TIME_BONUS above. shift_duration is still the Day-1/single-
 ## section BASE (and still overridable via --shift-seconds=) — this is what
 ## actually gets loaded into shift_time_left at the start of every shift.
 func _current_shift_duration() -> float:
-	return shift_duration + _extra_day_time()
+	return shift_duration + _extra_day_time() - (FINALE_CLOCK_CUT if is_finale() else 0.0)
+
+## WEEK 12 — true on the finale day (and any day after it).
+func is_finale() -> bool:
+	return current_day >= FINALE_START_DAY
+
+func _priority_order_interval() -> float:
+	return FINALE_PRIORITY_ORDER_INTERVAL if is_finale() else PRIORITY_ORDER_INTERVAL
 
 ## Screen-space draw order, bottom to top. PLAYTEST BUG FIX (debug HUD
 ## drawn behind the write-up toast and, from Day 5, the priority order
@@ -904,7 +972,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -989,9 +1057,9 @@ func _configure_shelf_stacks() -> void:
 		shelf_body.get_node("Shelf").set_stack_rows(STACK_ROWS_BY_TIER[tier])
 
 func _configure_hazards() -> void:
-	forklift.configure(is_unlocked_at_pos(forklift.home_position))
-	manager.configure(current_day >= MANAGER_START_DAY)
-	ambience.configure(current_day)
+	forklift.configure(is_unlocked_at_pos(forklift.home_position), is_finale())
+	manager.configure(current_day >= MANAGER_START_DAY, is_finale())
+	ambience.configure(current_day, is_finale())
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
@@ -1250,7 +1318,7 @@ func _start_shift() -> void:
 	orders_called_today = 0
 	orders_filled_today = 0
 	priority_sales_today = 0
-	_order_timer = PRIORITY_ORDER_INTERVAL
+	_order_timer = _priority_order_interval()
 	for display_body in displays:
 		display_body.get_node("Display").reset_to_home()
 	var grace := _current_customer_grace_period()
@@ -1261,6 +1329,9 @@ func _start_shift() -> void:
 	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, %.0fs customer grace period, no fixed stock target" % [current_day, players.size(), duration, grace])
 	_restock_products()
 	shift_time_left = duration
+	# Once, as the finale day starts (not on any later day).
+	if current_day == FINALE_START_DAY:
+		finale_banner_left = FINALE_BANNER_SECONDS
 
 ## PLAYTEST ROOT-CAUSE FIX (see _start_shift()'s call site): forces every
 ## currently-existing customer to leave immediately, the same cleanup
@@ -1440,7 +1511,7 @@ func _tick_priority_orders(delta: float) -> void:
 			_close_priority_order(false)
 	_order_timer -= delta
 	if _order_timer <= 0.0:
-		_order_timer = PRIORITY_ORDER_INTERVAL
+		_order_timer = _priority_order_interval()
 		# Don't call one out that the shift clock would cut short.
 		if _order_id == 0 and shift_time_left > PRIORITY_ORDER_WINDOW:
 			_issue_priority_order()
@@ -1561,6 +1632,18 @@ func _clear_priority_order() -> void:
 	order_stocked = 0
 	order_time_left = 0.0
 
+## WEEK 12 — every peer, the moment its FINAL SHIFT banner comes up (from
+## _update_alert_layer()): the sting, if a sound file exists yet. Cosmetic
+## only — nothing waits on it.
+func _play_finale_sting() -> void:
+	print("[Main] FINAL SHIFT")
+	if ResourceLoader.exists(FINALE_STING_PATH):
+		if _finale_sting == null:
+			_finale_sting = AudioStreamPlayer.new()
+			_finale_sting.stream = load(FINALE_STING_PATH)
+			add_child(_finale_sting)
+		_finale_sting.play()
+
 ## Every peer: the few seconds of "filled"/"missed" feedback on the banner,
 ## same moment-of-impact role as _announce_writeup()'s toast.
 @rpc("authority", "call_local", "reliable")
@@ -1603,6 +1686,31 @@ func _build_alert_layer() -> void:
 	_toast_label = layer.get_child(1)
 	_toast_label.add_theme_color_override("font_color", Color(1, 0.35, 0.25))
 	_order_label = layer.get_child(2)
+	# WEEK 12 — the FINAL SHIFT banner: its own band in the upper third,
+	# clear of the three alert rows along the bottom. Only up for a few
+	# seconds at shift start, while everyone's still in the break room. Same
+	# layer as the other alerts, so the debug HUD still draws over it.
+	_finale_banner = VBoxContainer.new()
+	_finale_banner.name = "FinaleBanner"
+	_finale_banner.anchor_left = 0.0
+	_finale_banner.anchor_right = 1.0
+	_finale_banner.anchor_top = 0.14
+	_finale_banner.anchor_bottom = 0.14
+	_finale_banner.offset_bottom = 110.0
+	_finale_banner.alignment = BoxContainer.ALIGNMENT_CENTER
+	_finale_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_finale_banner.visible = false
+	for spec in [["FINAL SHIFT", 52, Color(1, 0.8, 0.2)], ["Day 7 — everything's on. Make it count.", 22, Color(1, 1, 1)]]:
+		var l := Label.new()
+		l.text = spec[0]
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.add_theme_font_size_override("font_size", spec[1])
+		l.add_theme_color_override("font_color", spec[2])
+		l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
+		l.add_theme_constant_override("shadow_offset_x", 3)
+		l.add_theme_constant_override("shadow_offset_y", 3)
+		_finale_banner.add_child(l)
+	layer.add_child(_finale_banner)
 	# End-of-day report line for the orders, built in code like the rest of
 	# this layer (nothing new goes into a .tscn — see the header note on
 	# .tscn comments), placed just above the Pay line it feeds.
@@ -1639,6 +1747,13 @@ func _update_alert_layer(delta: float) -> void:
 		_order_label.text = _order_result_text
 		_order_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5) if _order_result_filled else Color(0.75, 0.75, 0.75))
 	_order_label.visible = (order_section != "" or _order_result_timer > 0.0) and not _day_report_active
+	if multiplayer.is_server():
+		finale_banner_left = maxf(0.0, finale_banner_left - delta)
+	var show_finale := finale_banner_left > 0.0 and not _day_report_active
+	if show_finale and not _finale_banner.visible:
+		_play_finale_sting()
+	_finale_banner.visible = show_finale
+	_finale_banner.modulate.a = clampf(finale_banner_left, 0.0, 1.0) # fades over the last second
 
 ## Cumulative total across every cashier, for as long as the session has
 ## run — never reset, unlike _sold_at_day_start (see the score-continuity
