@@ -89,6 +89,11 @@ const DETECT_HALF_ANGLE := deg_to_rad(65.0) # 130° cone
 ## Very close = seen regardless of which way he's facing (he'd hear you).
 const DETECT_NEAR_RANGE := 70.0
 const CATCH_TIME := 2.5 # seconds of continuous suspicion-in-sight to get written up
+## WEEK 12 — Day 7 finale: a shorter fuse from "?" to write-up (the "!" still
+## comes at WARN_LEVEL, i.e. halfway). Kept above CHAOS_MEMORY on purpose,
+## same invariant as CATCH_TIME: one throw in full view still can't write you
+## up on its own. FLAGGED placeholder.
+const FINALE_CATCH_TIME := 2.0
 const DECAY_RATE := 0.6 # meter units per second while not suspicious / out of sight
 const WARN_LEVEL := 0.5 # "?" -> "!" threshold
 const CAUGHT_COOLDOWN := 10.0 # per player — no chain write-ups for one mistake
@@ -163,7 +168,14 @@ func _ready() -> void:
 
 ## Called by Main.gd's _configure_hazards() on EVERY peer whenever
 ## current_day changes — same shape as Forklift.gd's configure().
-func configure(is_active: bool) -> void:
+var finale := false
+
+## Seconds of suspicion-in-sight to a write-up today.
+func catch_time() -> float:
+	return FINALE_CATCH_TIME if finale else CATCH_TIME
+
+func configure(is_active: bool, is_finale := false) -> void:
+	finale = is_finale
 	active = is_active
 	visible = is_active
 	if not is_active:
@@ -451,7 +463,7 @@ func _update_detection(delta: float, main) -> void:
 		var reason := _suspicion(peer_id, p, s, delta, main)
 		var seen: bool = reason != "" and s["cooldown"] <= 0.0 and _can_see(p)
 		if seen:
-			s["meter"] = minf(1.0, s["meter"] + delta / CATCH_TIME)
+			s["meter"] = minf(1.0, s["meter"] + delta / catch_time())
 			s["reason"] = reason
 		else:
 			s["meter"] = maxf(0.0, s["meter"] - DECAY_RATE * delta)

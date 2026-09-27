@@ -86,6 +86,17 @@ const SPILL_FIRST_DELAY := 8.0
 const SPILL_INTERVAL_MIN := 16.0
 const SPILL_INTERVAL_MAX := 26.0
 const SPILL_MAX := 3
+## WEEK 12 — Day 7 finale (configure()'s is_finale): one more spill allowed
+## at once (on top of the per-extra-player +1), and they come a bit faster —
+## at the Day 6 cadence (one every ~21s, each ~41s long) the cap of 3 almost
+## never binds, so raising it alone would change nothing. Lights: the same
+## event (depth and length are the readability-tuned part), shorter gaps.
+## FLAGGED placeholders.
+const FINALE_SPILL_MAX_BONUS := 1
+const FINALE_SPILL_INTERVAL_MIN := 12.0
+const FINALE_SPILL_INTERVAL_MAX := 20.0
+const FINALE_LIGHTS_INTERVAL_MIN := 12.0
+const FINALE_LIGHTS_INTERVAL_MAX := 22.0
 const SPILL_MAX_PER_EXTRA_PLAYER := 1
 const SPILL_RADIUS_MIN := 38.0
 const SPILL_RADIUS_MAX := 54.0
@@ -112,6 +123,7 @@ const PHASE_DRYING := 2
 ## Every peer, from configure(): is today a Day 6+ day. Not replicated —
 ## each peer derives it from the replicated current_day, like the forklift.
 var active := false
+var finale := false
 
 ## Host-written, replicated (see _ready()).
 var lights_event_id := 0 # 0 = no event (lights normal)
@@ -207,7 +219,8 @@ func _mark_emissive() -> void:
 			if prompt:
 				prompt.z_index = Z_EMISSIVE
 
-func configure(day: int) -> void:
+func configure(day: int, is_finale := false) -> void:
+	finale = is_finale
 	active = day >= LIGHTS_START_DAY or day >= SPILLS_START_DAY
 	if not active:
 		_clear_local()
@@ -266,7 +279,7 @@ func start_lights_event() -> void:
 	lights_events_today += 1
 	var pattern := build_pattern(lights_event_seed)
 	_lights_clear_timer = pattern[-1][0] + 0.5
-	_lights_timer = pattern[-1][0] + randf_range(LIGHTS_INTERVAL_MIN, LIGHTS_INTERVAL_MAX)
+	_lights_timer = pattern[-1][0] + (randf_range(FINALE_LIGHTS_INTERVAL_MIN, FINALE_LIGHTS_INTERVAL_MAX) if finale else randf_range(LIGHTS_INTERVAL_MIN, LIGHTS_INTERVAL_MAX))
 	print("[Ambience] Lights event #%d (%.1fs)" % [lights_event_id, pattern[-1][0]])
 
 ## Deterministic from the seed alone, so every peer builds the same one.
@@ -313,7 +326,7 @@ func event_playing() -> bool:
 ## --- Spills ------------------------------------------------------------------
 
 func spill_cap() -> int:
-	return SPILL_MAX + SPILL_MAX_PER_EXTRA_PLAYER * maxi(0, main.players.size() - 1)
+	return SPILL_MAX + (FINALE_SPILL_MAX_BONUS if finale else 0) + SPILL_MAX_PER_EXTRA_PLAYER * maxi(0, main.players.size() - 1)
 
 func _tick_spills(delta: float) -> void:
 	var changed := false
@@ -340,7 +353,7 @@ func _tick_spills(delta: float) -> void:
 		spills = keep
 	_spill_timer -= delta
 	if _spill_timer <= 0.0:
-		_spill_timer = randf_range(SPILL_INTERVAL_MIN, SPILL_INTERVAL_MAX)
+		_spill_timer = randf_range(FINALE_SPILL_INTERVAL_MIN, FINALE_SPILL_INTERVAL_MAX) if finale else randf_range(SPILL_INTERVAL_MIN, SPILL_INTERVAL_MAX)
 		if spills.size() < spill_cap():
 			var pos = pick_spill_spot()
 			if pos != null:

@@ -76,6 +76,12 @@ const END_PAUSE := 1.6 # stopped at each end of the lane
 const TELEGRAPH_TIME := 0.9 # stopped, facing the shelf, beacon flashing, before a ram
 const RAMS_PER_LAP := 1
 const START_PAUSE := 4.0 # after every day's reset, before the first move
+## WEEK 12 — Day 7 finale (Main.gd's FINALE_START_DAY): the same lap with the
+## stops cut short, so passes come around faster. The TELEGRAPH_TIME before a
+## ram and every speed are deliberately untouched — the warning and
+## "outrunnable" are what keep it fair. FLAGGED placeholders.
+const FINALE_LOAD_PAUSE := 0.7
+const FINALE_END_PAUSE := 0.8
 ## Leg skipped if distance-to-target hasn't improved for this long while
 ## actively driving — something (a pinned display, a player deliberately
 ## body-blocking) is in the way and isn't moving. No navmesh here either
@@ -156,7 +162,12 @@ func _ready() -> void:
 ## configure(). Collision is toggled with set_deferred(): this can run from
 ## a Continue-button RPC mid-frame, and flipping a shape's disabled flag
 ## while the physics server is flushing queries is an engine error.
-func configure(is_active: bool) -> void:
+## Finale pacing on/off — host-side only matters (it builds the laps), but
+## set on every peer from the replicated day like `active`.
+var finale := false
+
+func configure(is_active: bool, is_finale := false) -> void:
+	finale = is_finale
 	active = is_active
 	visible = is_active
 	$CollisionShape2D.set_deferred("disabled", not is_active)
@@ -392,7 +403,7 @@ func _build_lap() -> void:
 	for i in visits.size():
 		var v: Dictionary = visits[i]
 		if v.has("end"):
-			_legs.append({"pos": Vector2(v["end"], lane_y), "mode": "drive", "pause": END_PAUSE})
+			_legs.append({"pos": Vector2(v["end"], lane_y), "mode": "drive", "pause": FINALE_END_PAUSE if finale else END_PAUSE})
 			continue
 		var station := Vector2(float(v["x"]), lane_y)
 		_legs.append({"pos": station, "mode": "drive"})
@@ -408,7 +419,7 @@ func _build_lap() -> void:
 			var slot_y: float = shelf_body.to_global(Vector2(0, -shelf_body.get_node("Shelf").outermost_slot_offset())).y
 			var toward_lane := signf(lane_y - slot_y)
 			var stop_y := slot_y + toward_lane * (PRODUCT_HALF_SIZE + NEAR_MISS_CLEARANCE + FRONT_REACH)
-			_legs.append({"pos": Vector2(station.x, stop_y), "mode": "drive", "pause": LOAD_PAUSE})
+			_legs.append({"pos": Vector2(station.x, stop_y), "mode": "drive", "pause": FINALE_LOAD_PAUSE if finale else LOAD_PAUSE})
 		_legs.append({"pos": station, "mode": "reverse"})
 
 ## Every peer: client-side smoothing (host already sits at the real pose)
