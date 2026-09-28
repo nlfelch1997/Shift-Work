@@ -207,9 +207,10 @@ func _ready() -> void:
 ## The warning tells stay readable in the dark (see the header's FAIRNESS
 ## note). z_index is relative to the parent, and every parent here is at 0.
 func _mark_emissive() -> void:
-	var fk: Node = main.forklift
-	for n in ["Beacon", "BeepAnchor"]:
-		fk.get_node(n).z_index = Z_EMISSIVE
+	# WEEK 15: the Storage delivery forklift's tells too.
+	for fk in [main.forklift, main.delivery_forklift]:
+		for n in ["Beacon", "BeepAnchor"]:
+			fk.get_node(n).z_index = Z_EMISSIVE
 	var mgr: Node = main.manager
 	for n in ["AlertLabel", "NameLabel", "Facing/Cone"]:
 		mgr.get_node(n).z_index = Z_EMISSIVE

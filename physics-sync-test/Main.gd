@@ -302,6 +302,39 @@ extends Node2D
 ## Meat/Deli stays placeholder (the packs have no separable meat/deli items).
 ## Visual only; the stock/order/carry logic never reads any of it.
 ##
+## WEEK 15 — STORAGE DELIVERIES (Delivery.gd, DeliveryForklift.gd, both built
+## in _ready()). Stock no longer appears from nothing. A box truck backs up to
+## a loading dock in Storage's east wall on a schedule; a second, dedicated
+## forklift unloads it pallet by pallet into a RECEIVING row; a player carries
+## a box onto the UNPACK PAD; the box becomes BACKSTOCK for its section; and
+## _restock_products() sends backstock out to that section's floor — same
+## spawn band, same floor cap as before — as sales make room. No box run, no
+## refill. Full design in Delivery.gd's header. What lives HERE:
+## - _restock_products() draws from backstock (and skips delivery boxes when
+##   counting stock); _spawn_product_for() replaces the random-section spawn.
+## - OPENING: each day still opens with the floor at cap — _opening_backstock()
+##   puts exactly that much in backstock at _start_shift() and the same
+##   restock lays it out. So the tuned Day 1-7 openings (grace periods were
+##   tuned around "stock is on the floor when you clock in") are untouched;
+##   everything after the opening arrives by truck. FLAGGED design call.
+## - Delivery boxes ride the ProductSpawner (spawn data carries the section —
+##   host-rolled, peers copy), so they're replicated and cleared each morning
+##   like stock; a stray one is rescued back to receiving, not to a section.
+## - WHY A SECOND FORKLIFT, not the Produce one on a separate schedule:
+##   Storage is open from Day 1 and Produce (the hazard forklift's home) not
+##   until Day 3; the only way between the two cells is through the hub and
+##   the Sidewalk (a wall seals Produce/Storage), so a shared forklift would
+##   drive through the customers' entrance — the exact thing Storage is placed
+##   to avoid; and the Produce forklift's Day 7 finale pacing and ram schedule
+##   would have to share time with deliveries. A second instance of the same
+##   driver (DeliveryForklift.gd extends Forklift.gd) costs nothing and keeps
+##   both jobs independent.
+## - Two Carryable.gd changes the co-op delivery test forced (details there):
+##   carry_distance, so a 44px box isn't set down overlapping its carrier and
+##   thrown clear by the physics engine; and a client-smoothing fix — a
+##   client's copy of any loose item the host pushed used to settle short of
+##   where the host had it (pre-existing, reproduced on the Week 14 code).
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -369,6 +402,19 @@ extends Node2D
 ##     Ambience FINALE_SPILL_INTERVAL      12-20 s (vs 16-26)
 ##     Ambience FINALE_LIGHTS_INTERVAL     12-22 s (vs 18-30)
 ##     FINALE_BANNER_SECONDS               4.5 s
+##
+##   STORAGE DELIVERIES — Delivery.gd (forklift driving: DeliveryForklift.gd)
+##     DELIVERY_START_DAY                  1      (Storage is open from Day 1)
+##     TRUCK_FIRST_DELAY                   8.0 s  into the shift
+##     TRUCK_INTERVAL_MIN / _MAX          24 / 32 s  arrival to arrival (never two at once)
+##     TRUCK_ARRIVE / DEPART / LINGER      2.5 / 2.0 / 1.0 s
+##     BOXES_PER_TRUCK_BY_TIER            [2, 3, 4, 5]  (each open section gets one first)
+##     BOXES_PER_EXTRA_PLAYER              1
+##     UNITS_PER_BOX                       6      backstock per unpacked box
+##     PAD_SETTLE_TIME / PAD_REST_SPEED    0.3 s / 150 px/s
+##     UNPACK_TO_SECTION                   true   (false: units spawn loose at the pad)
+##     Delivery forklift: Forklift.gd's speeds and LOAD_PAUSE; SET_DOWN_PAUSE 0.6 s
+##     OPENING_STOCK_FRACTION (Main.gd)    1.0    of the floor cap out at opening (as before)
 ##
 ##   PRIORITY ORDERS — Main.gd
 ##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
@@ -479,6 +525,9 @@ const WORLD_EDGE_MARGIN := 20.0
 
 const PlayerScene := preload("res://Player.tscn")
 const AmbienceScript := preload("res://Ambience.gd")
+const DeliveryScript := preload("res://Delivery.gd")
+const DeliveryForkliftScript := preload("res://DeliveryForklift.gd")
+const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
@@ -782,6 +831,13 @@ const ITEMS_TARGET_BY_TIER := [1, 2, 2, 3]
 ##   now-doubled slot count so a solo crew can't simply run out of shelf.
 const STACK_ROWS_BY_TIER := [1, 1, 2, 2]
 const PRODUCT_DENSITY_BY_TIER := [1.0, 1.0, 1.5, 1.5]
+## WEEK 15 — how much of the floor cap is already out when the day opens
+## (_opening_backstock()); everything after it arrives by truck. 1.0 keeps
+## every tuned opening exactly as it was. FLAGGED: the sims found that from
+## Day 5 on a solo crew doesn't sell through the opening floor in one shift,
+## so solo players rarely *need* a box run on those days (true of the old
+## restock too). Lower this to make deliveries matter from the first minute.
+const OPENING_STOCK_FRACTION := 1.0
 const CUSTOMER_PER_EXTRA_PLAYER := 2
 ## Week 6: restored to 0.35 now that the spacebar defend/shove action
 ## (Player.gd's _try_defend(), Customer.gd's request_shove()) gives players
@@ -908,6 +964,10 @@ const UI_LAYER_REPORT := 4
 @onready var report_pay_label: Label = $ReportLayer/Panel/PayLabel
 ## WEEK 11 — Day 6+ lights and spills (see Ambience.gd), created in _ready().
 var ambience: Node2D
+## WEEK 15 — Storage deliveries (Delivery.gd) and the delivery forklift
+## (DeliveryForklift.gd), both built in _ready().
+var delivery: Node2D
+var delivery_forklift: CharacterBody2D
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -975,6 +1035,21 @@ func _ready() -> void:
 	move_child(store_art, $RoomBackgrounds.get_index() + 1)
 	_apply_section_accent_colors()
 	_cache_original_colors()
+	# WEEK 15 — explicit names, identical on every peer (synchronizer paths).
+	# The delivery forklift is Forklift.tscn with DeliveryForklift.gd swapped
+	# in before it enters the tree; drawn with the room's other furniture,
+	# before Players/Products so they draw over it like the Produce forklift.
+	delivery = DeliveryScript.new()
+	delivery.name = "Delivery"
+	add_child(delivery)
+	move_child(delivery, $Players.get_index())
+	delivery_forklift = ForkliftScene.instantiate()
+	delivery_forklift.set_script(DeliveryForkliftScript)
+	delivery_forklift.name = "DeliveryForklift"
+	delivery_forklift.position = DeliveryScript.FORKLIFT_HOME
+	delivery_forklift.home_rotation = 0.0 # facing the dock
+	add_child(delivery_forklift)
+	move_child(delivery_forklift, $Players.get_index())
 	# Explicit name, identical on every peer: its synchronizer's path has to
 	# match across peers (see Player.gd's note on auto-generated names).
 	ambience = AmbienceScript.new()
@@ -1090,6 +1165,8 @@ func _configure_hazards() -> void:
 	forklift.configure(is_unlocked_at_pos(forklift.home_position), is_finale())
 	manager.configure(current_day >= MANAGER_START_DAY, is_finale())
 	ambience.configure(current_day, is_finale())
+	delivery.configure(current_day, is_finale())
+	delivery_forklift.configure(current_day >= DeliveryScript.DELIVERY_START_DAY)
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
@@ -1340,8 +1417,13 @@ func _start_shift() -> void:
 	# the forklift and displays go back to their starting spots too, so no
 	# day inherits yesterday's wreckage (same reasoning as the shelf reset).
 	forklift.reset_for_new_day()
+	delivery_forklift.reset_for_new_day()
 	manager.reset_for_new_day()
 	ambience.reset_for_new_day()
+	# WEEK 15: the day opens with one floor's worth in backstock, which
+	# _restock_products() below lays out exactly as the opening floor always
+	# was; everything after that arrives by truck.
+	delivery.reset_for_new_day(_opening_backstock())
 	writeups_today = 0
 	writeups_by_peer = {}
 	_clear_priority_order()
@@ -1811,16 +1893,58 @@ func _total_sold() -> int:
 ## up anywhere a player would think to look. _rescue_stranded_products()
 ## below is the other half of this fix — it actively returns a stranded
 ## item to play rather than just no longer miscounting it.
+##
+## WEEK 15 — the floor no longer refills from nothing: every unit comes out of
+## Delivery.gd's backstock (boxes unpacked on the Storage pad, plus the day's
+## opening stock). Same cap, same count, same spawn band; when the floor is
+## short, the section with the least stock out (among those with backstock)
+## gets the next unit. No backstock = no refill — that's the delivery job.
+## Delivery boxes are carryables too, but they aren't stock: never counted.
 func _restock_products() -> void:
-	var cap: int = _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	var cap := _product_cap()
 	var current := 0
+	var per_section := {}
 	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.is_in_group("delivery_box") or obj.is_queued_for_deletion():
+			continue
 		if not is_break_room_at_pos(obj.global_position) and not _is_out_of_bounds(obj.global_position):
 			current += 1
+			var sec := _section_of_color(obj.get_node("Polygon2D").color)
+			per_section[sec] = per_section.get(sec, 0) + 1
 	while current < cap:
-		_spawn_product(_product_spawn_index)
-		_product_spawn_index += 1
+		var pick := ""
+		for section in _unlocked_sections():
+			var name_: String = section["name"]
+			if delivery.backstock.get(name_, 0) > 0 and (pick == "" or per_section.get(name_, 0) < per_section.get(pick, 0)):
+				pick = name_
+		if pick == "" or not delivery.take_backstock(pick):
+			return
+		_spawn_product_for(pick)
+		per_section[pick] = per_section.get(pick, 0) + 1
 		current += 1
+
+func _product_cap() -> int:
+	return _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+
+## WEEK 15 — the day's opening floor, as backstock: the old opening top-up
+## (the floor cap, spread over the unlocked sections by random pick) made
+## even, with any remainder to random sections. Host-only (randi).
+func _opening_backstock() -> Dictionary:
+	var names: Array = _unlocked_sections().map(func(s): return s["name"])
+	var out := {}
+	var cap := roundi(_product_cap() * OPENING_STOCK_FRACTION)
+	for i in names.size():
+		out[names[i]] = cap / names.size()
+	for i in cap % names.size():
+		var n: String = names[randi() % names.size()]
+		out[n] += 1
+	return out
+
+func _section_of_color(color: Color) -> String:
+	for sec_name in SECTION_COLORS:
+		if color.is_equal_approx(SECTION_COLORS[sec_name]):
+			return sec_name
+	return ""
 
 ## PLAYTEST ROOT-CAUSE FIX, companion to _restock_products()'s cap-count
 ## exclusion above: actively returns any FREE (uncarried) product currently
@@ -1844,7 +1968,12 @@ func _rescue_stranded_products() -> void:
 		var c: Node = obj.get_node("Carryable")
 		if c.carrier_id != 0:
 			continue
-		obj.global_position = _spawn_pos_in_section(_pick_unlocked_section())
+		# WEEK 15: a stray delivery box goes back to receiving, not a section.
+		if obj.is_in_group("delivery_box"):
+			var spot = delivery.free_receiving_spot()
+			obj.global_position = spot if spot != null else DeliveryScript.RECEIVING_SPOTS[0]
+		else:
+			obj.global_position = _spawn_pos_in_section(_pick_unlocked_section())
 		obj.linear_velocity = Vector2.ZERO
 	# WEEK 8: a display knocked clean off the map (see the header's forklift
 	# edge-case list) just goes home — it isn't stock, so there's no
@@ -1948,6 +2077,8 @@ func is_unlocked_at_pos(world_pos: Vector2) -> bool:
 func is_break_room_at_pos(world_pos: Vector2) -> bool:
 	return _grid_cell_of(world_pos) == BREAK_ROOM_GRID_POS
 
+## WEEK 15: still true now that Storage has the loading dock, receiving and
+## the unpack pad in it — it's the crew's back room, customers stay out.
 ## PLAYTEST BUG FIX ("customers can enter Storage"): same exclusion-zone
 ## approach as is_break_room_at_pos() above, applied to Storage
 ## (STORAGE_GRID_POS) — Storage is a real, physically open, ungated cell
@@ -2044,8 +2175,9 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	return pos
 
 func _spawn_pos_is_clear(pos: Vector2) -> bool:
-	if forklift.active and pos.distance_to(forklift.global_position) < SPAWN_CLEARANCE_FORKLIFT:
-		return false
+	for f in [forklift, delivery_forklift]:
+		if f.active and pos.distance_to(f.global_position) < SPAWN_CLEARANCE_FORKLIFT:
+			return false
 	for display_body in displays:
 		if pos.distance_to(display_body.global_position) < SPAWN_CLEARANCE_DISPLAY:
 			return false
@@ -2119,15 +2251,29 @@ func _store_entrance_pos() -> Vector2:
 ## there" by proximity. Shelf.gd still doesn't know anything about
 ## "sections" as a concept, just colors, matching how this project's
 ## components generally stay ignorant of concerns outside their own job.
-func _spawn_product(index: int) -> void:
-	var section := _pick_unlocked_section()
-	product_spawner.spawn({
-		"index": index,
-		"pos": _spawn_pos_in_section(section),
-		"color": SECTION_COLORS[section["name"]],
-	})
+## WEEK 15: called per unit of backstock (_restock_products()), for a named
+## section, instead of for a random unlocked one.
+func _spawn_product_for(section_name: String) -> void:
+	for section in SECTIONS:
+		if section["name"] == section_name:
+			spawn_product_at(section_name, _spawn_pos_in_section(section))
+			return
 
+## Host-only. Public for Delivery.gd's unpack-at-the-pad mode.
+func spawn_product_at(section_name: String, pos: Vector2) -> void:
+	product_spawner.spawn({
+		"index": _product_spawn_index,
+		"pos": pos,
+		"color": SECTION_COLORS[section_name],
+	})
+	_product_spawn_index += 1
+
+## Every peer. WEEK 15: the same spawner also carries delivery boxes (so
+## they're under Products, replicated and cleared at day start like stock);
+## Delivery.gd builds those.
 func _spawn_product_node(data: Dictionary) -> Node:
+	if data.get("kind", "") == "box":
+		return delivery.build_box(data)
 	var p := ProductScene.instantiate()
 	p.name = "Product%d" % data["index"]
 	p.position = data["pos"]
@@ -2243,6 +2389,7 @@ func _process(delta: float) -> void:
 				_restock_customers()
 		_tick_priority_orders(delta)
 		ambience.tick_host(delta)
+		delivery.tick_host(delta)
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist
 	# (so the day advancing past it mid-session doesn't need new scene
@@ -2278,6 +2425,8 @@ func _process(delta: float) -> void:
 		lines.append("FORKLIFT active in %s" % _section_name_at(forklift.home_position) + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
 	if manager.active:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
+	if delivery.active:
+		lines.append("DELIVERY truck %s (%d on it) | boxes out %d | unpacked today %d | backstock %d" % ["at the dock" if delivery.truck_parked() else ("away" if delivery.truck_offset >= delivery.TRUCK_AWAY_OFFSET else "moving"), delivery.truck_load.size(), delivery.boxes_waiting(), delivery.boxes_unpacked_today, delivery.backstock_total()])
 	if ambience.active:
 		lines.append("LIGHTS %s  |  SPILLS on the floor: %d" % ["FLICKERING (%.0f%%)" % (ambience.brightness * 100.0) if ambience.brightness < 1.0 or ambience.event_playing() else "ok", ambience.spills.size()])
 	if order_section != "":

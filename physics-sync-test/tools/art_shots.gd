@@ -74,6 +74,10 @@ func _run() -> void:
 		await shot("order_banner_produce")
 		print("BANNER  " + main._order_label.text)
 		main._clear_priority_order()
+	# WEEK 15 — Storage deliveries: the truck at the dock, the delivery
+	# forklift (side view loaded, front view setting down), receiving, the
+	# pad mid-unpack. Frames where they happen, at gameplay zoom.
+	await _delivery_shots(p, cam)
 	# Whole store: camera limits off, zoomed out, centered on the map.
 	cam.limit_left = -10000
 	cam.limit_top = -10000
@@ -83,3 +87,50 @@ func _run() -> void:
 	p.teleport_to(Vector2(1440, 810))
 	await shot("overview")
 	quit(0)
+
+func _until(cond: Callable, timeout: float) -> void:
+	var t := 0.0
+	while not cond.call() and t < timeout:
+		await physics_frame
+		t += 1.0 / 60.0
+
+func _delivery_shots(p: Node2D, cam: Camera2D) -> void:
+	var d: Node = main.delivery
+	var f: Node = main.delivery_forklift
+	main._customer_grace_timer = 1.0e9
+	p.teleport_to(Vector2(2520, 1120))
+	if not d.truck_parked():
+		d._truck_state = d.TRUCK_AWAY
+		d.start_delivery()
+	await _until(func(): return d.truck_offset > 60.0 and d.truck_offset < 250.0, 6.0)
+	await shot("storage_truck_backing_in")
+	await _until(func(): return d.truck_parked(), 6.0)
+	await shot("storage_truck_at_dock")
+	await _until(func(): return f.carrying != "", 20.0)
+	await create_timer(1.0).timeout
+	await shot("storage_forklift_loaded")
+	cam.zoom = Vector2(1.8, 1.8)
+	p.teleport_to(f.global_position + Vector2(0, -100))
+	await shot("storage_forklift_loaded_closeup")
+	await _until(func(): return f.carrying != "" and f.rotation > 1.3, 12.0)
+	p.teleport_to(f.global_position + Vector2(0, -60))
+	await create_timer(0.4).timeout
+	await shot("storage_forklift_front_view_closeup")
+	cam.zoom = Vector2.ONE
+	await _until(func(): return d.truck_load.is_empty() and f.carrying == "", 60.0)
+	p.teleport_to(Vector2(2400, 1330))
+	await shot("storage_receiving")
+	var boxes: Array = get_nodes_in_group("delivery_box")
+	if not boxes.is_empty():
+		var b = boxes[0] # untyped: checked with is_instance_valid() after it is freed
+		PhysicsServer2D.body_set_state(b.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D(0.0, d.PAD_CENTER))
+		b.global_position = d.PAD_CENTER
+		p.teleport_to(d.PAD_CENTER + Vector2(120, -40))
+		await create_timer(0.2).timeout
+		await shot("storage_box_on_pad")
+		await _until(func(): return not is_instance_valid(b), 2.0)
+		await create_timer(0.3).timeout
+		await shot("storage_unpacked")
+		cam.zoom = Vector2(1.6, 1.6)
+		await shot("storage_pad_closeup")
+		cam.zoom = Vector2.ONE

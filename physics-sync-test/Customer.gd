@@ -645,9 +645,9 @@ func _pick_browse_target() -> Vector2:
 ##
 ## GENERALIZED this session (PLAYTEST BUG FIX "customers can enter
 ## Storage") from a break-room-only check to a shared helper covering every
-## AI-excluded zone: Storage is player-only for now (no forklift/delivery
-## system exists yet for a customer to plausibly interact with anything in
-## there), same "exclusion zone, not a physical door" treatment the break
+## AI-excluded zone: Storage is player-only (WEEK 15: it's the crew's back
+## room — loading dock, delivery forklift, receiving, unpack pad — nothing
+## there for a customer), same "exclusion zone, not a physical door" treatment the break
 ## room already established, so it plugs into the exact same nudge rather
 ## than needing its own parallel copy of this logic.
 func _keep_outside_excluded_zones(pos: Vector2) -> Vector2:

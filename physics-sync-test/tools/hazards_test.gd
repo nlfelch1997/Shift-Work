@@ -81,6 +81,18 @@ func _initialize() -> void:
 				_run_net_ambience_client.call_deferred()
 			else:
 				_run_net_ambience_host.call_deferred()
+		"delivery":
+			_run_delivery.call_deferred()
+		"net-delivery":
+			if "--client" in args:
+				_run_net_delivery_client.call_deferred()
+			else:
+				_run_net_delivery_host.call_deferred()
+		"net-boxsync":
+			if "--client" in args:
+				_run_boxsync_client.call_deferred()
+			else:
+				_run_boxsync_host.call_deferred()
 		"net-orders":
 			if "--client" in args:
 				_run_net_orders_client.call_deferred()
@@ -456,6 +468,16 @@ func route_next(from_cell: Vector2i, to_cell: Vector2i) -> Vector2i:
 	if from_cell == to_cell:
 		return to_cell
 	var hub := Vector2i(1, 1)
+	# WEEK 15: Storage (2,2) hangs off the Sidewalk cell (1,2), which opens
+	# onto the hub.
+	var storage := Vector2i(2, 2)
+	var south := Vector2i(1, 2)
+	if from_cell == storage:
+		return south
+	if from_cell == south:
+		return storage if to_cell == storage else hub
+	if to_cell == storage and from_cell == hub:
+		return south
 	var dry := Vector2i(1, 0)
 	var off_dry := [Vector2i(0, 0), Vector2i(2, 0)]
 	if from_cell in off_dry:
@@ -512,7 +534,8 @@ func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 			continue
 		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or recent_drops.has(obj):
 			continue
-		if not main.is_unlocked_at_pos(obj.global_position) and main._grid_cell_of(obj.global_position) != Vector2i(1, 1):
+		# (Storage too: stock unpacked at the pad with UNPACK_TO_SECTION off.)
+		if not main.is_unlocked_at_pos(obj.global_position) and not main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
 			continue
 		if pick_slot(obj.global_position, obj).is_empty():
 			continue
@@ -570,7 +593,7 @@ func _run_solo() -> void:
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
 		var sold: int = main._total_sold() - main._sold_at_day_start
-		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, main.report_pay_label.text]
+		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | trucks %d, boxes unpacked %d, backstock left %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, dl().deliveries_today, dl().boxes_unpacked_today, dl().backstock_total(), main.report_pay_label.text]
 		print(line)
 		day_stats.append(line)
 		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
@@ -643,7 +666,29 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 
 		var dir := Vector2.ZERO
 		var goal := pos # where the brain is headed this frame (spill avoidance)
-		if my_carry:
+		_trace_t -= dt
+		if trace and _trace_t <= 0.0:
+			_trace_t = 1.0
+			print("TRACE t=%.0f pos=%s carry=%s obj=%s phase=%d loose=%d boxes=%d backstock=%s floor=%d" % [stats["shift_len"] - main.shift_time_left, str(pos.round()), my_carry.name if my_carry else "-", obj.name if obj and is_instance_valid(obj) else "-", box_phase, _loose_stockable(), boxes().size(), str(dl().backstock), floor_total()])
+		if my_carry and my_carry.is_in_group("delivery_box"):
+			# WEEK 15: carrying a box -> onto the pad, set it down with E. From
+			# the receiving side (east), so walking back doesn't cross it.
+			var stand_at: Vector2 = dl().PAD_CENTER + Vector2(58, 0)
+			if pos.distance_to(stand_at) > 6.0:
+				goal = waypoint(pos, stand_at)
+				dir = (goal - pos).normalized() * (0.5 if pos.distance_to(stand_at) < 30.0 else 1.0)
+			else:
+				steer(Vector2.LEFT)
+				await physics_frame
+				await physics_frame
+				steer(Vector2.ZERO)
+				await wait(0.15)
+				await tap(act + "interact")
+				var set_down := my_carry
+				await wait_until(func(): return not is_instance_valid(set_down) or set_down.get_node("Carryable").carrier_id != me, 0.6)
+				stats["boxes"] = stats.get("boxes", 0) + 1
+				box_phase = 0
+		elif my_carry:
 			if job.is_empty() or job["slot"].get_parent().get_node("Shelf").filled[job["slot"].get_parent().get_node("Shelf").slots.find(job["slot"])] or job["slot"].get_parent().get_node("Shelf").wrecked:
 				job = pick_slot(pos, my_carry)
 				approach_phase = 0
@@ -685,9 +730,33 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 						approach_phase = 0 # re-approach
 		else:
 			job = {}
-			if obj == null or not is_instance_valid(obj) or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj):
+			if obj == null or not is_instance_valid(obj) or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or (obj.is_in_group("delivery_box") and dl().on_pad(obj.global_position)):
 				obj = pick_product(p)
-			if obj != null:
+				box_phase = 0
+				# WEEK 15: little loose stock left to shelve and a box waiting
+				# in Storage -> go unpack it.
+				if (obj == null or _loose_stockable() < BOX_RUN_BELOW) and not order_only:
+					var bx := _pick_box(p)
+					if bx != null:
+						obj = bx
+			if obj != null and obj.is_in_group("delivery_box"):
+				# Come at it from the north and stop short (walking into it shoves it).
+				var pre: Vector2 = obj.global_position + Vector2(0, -110)
+				var at: Vector2 = obj.global_position + Vector2(0, -50)
+				if box_phase == 0 and pos.distance_to(pre) < 14.0:
+					box_phase = 1
+				var tgt := pre if box_phase == 0 else at
+				if box_phase == 1 and pos.distance_to(at) < 5.0:
+					steer(Vector2.ZERO)
+					await tap(act + "interact")
+					var grabbed_box := obj
+					await wait_until(func(): return not is_instance_valid(grabbed_box) or grabbed_box.get_node("Carryable").carrier_id != 0, 0.6)
+					obj = null
+					box_phase = 0
+				else:
+					goal = waypoint(pos, tgt)
+					dir = (goal - pos).normalized() * (0.5 if box_phase == 1 else 1.0)
+			elif obj != null:
 				var target: Vector2 = obj.global_position
 				if pos.distance_to(target) < 40.0:
 					await tap(act + "interact")
@@ -708,14 +777,16 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 			stats["slip_s"] += dt
 		# Human awareness of the forklift: if it's close and I'm in front of
 		# it, sidestep out of its path (unless simulating a careless player).
-		if not careless and fk().active and fk().visible:
-			var rel: Vector2 = pos - fk().global_position
-			var heading := Vector2.RIGHT.rotated(fk().rotation)
-			if fk().reversing:
+		for f in [fk(), dfk()]:
+			if careless or not f.active or not f.visible:
+				continue
+			var rel: Vector2 = pos - f.global_position
+			var heading := Vector2.RIGHT.rotated(f.rotation)
+			if f.reversing:
 				heading = -heading
 			var ahead := rel.dot(heading)
 			var side := rel.dot(heading.orthogonal())
-			if rel.length() < 150.0 and ahead > -20.0 and absf(side) < 60.0:
+			if rel.length() < 150.0 and ahead > -20.0 and absf(side) < 60.0 and f.velocity.length() > 1.0:
 				dir = (heading.orthogonal() * (1.0 if side >= 0.0 else -1.0) + dir * 0.3).normalized()
 		# Idle with the banner up: a human keeps moving.
 		if dir == Vector2.ZERO and watched:
@@ -741,6 +812,34 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 		last_pos = pos
 		steer(dir)
 	steer(Vector2.ZERO)
+
+## WEEK 15 — the solo brain's delivery job.
+var trace := "--trace" in OS.get_cmdline_user_args()
+var _trace_t := 0.0
+const BOX_RUN_BELOW := 3 # loose stock (free, shelvable) under this -> unpack a box
+var box_phase := 0
+
+func _loose_stockable() -> int:
+	var n := 0
+	for obj in get_nodes_in_group("carryable"):
+		if obj.is_in_group("delivery_box") or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or _at_a_slot(obj):
+			continue
+		if main.is_unlocked_at_pos(obj.global_position) or main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
+			n += 1
+	return n
+
+## Nearest free box that isn't on the pad already.
+func _pick_box(p: Node2D) -> Node2D:
+	var best: Node2D = null
+	var best_d := INF
+	for b in get_nodes_in_group("delivery_box"):
+		if b.is_queued_for_deletion() or b.get_node("Carryable").carrier_id != 0 or dl().on_pad(b.global_position):
+			continue
+		var d := p.global_position.distance_to(b.global_position)
+		if d < best_d:
+			best_d = d
+			best = b
+	return best
 
 ## Steer around any spill ahead within reach whose edge the current heading
 ## would clip — toward whichever side is already closer to clear.
@@ -2488,4 +2587,526 @@ func _run_finale() -> void:
 	await wait_until(func(): return main.current_day == 8 and main.shift_active, 5.0)
 	var again := await wait_until(func(): return main._finale_banner.visible, 1.5)
 	check(not again and main.is_finale(), "F3 Day 8: still at finale intensity, no second banner")
+	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 15 — STORAGE DELIVERIES (Delivery.gd, DeliveryForklift.gd)
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=3 --shift-seconds=600 --test=delivery
+## Co-op (host + N-1 clients, each driving its own player by its own keys):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=3 --shift-seconds=600 --players=3 --test=net-delivery &
+##   (x2) godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-delivery
+## The solo sim (--test=solo) plays the delivery job too: when the loose
+## stock runs low and a box is waiting in receiving, it goes and unpacks it.
+
+func dl() -> Node2D:
+	return main.delivery
+
+func dfk() -> CharacterBody2D:
+	return main.delivery_forklift
+
+func boxes() -> Array:
+	return get_nodes_in_group("delivery_box").filter(func(b): return not b.is_queued_for_deletion())
+
+## Floor stock (products, not boxes) — what _restock_products() counts.
+func floor_stock() -> Dictionary:
+	var out := {}
+	for obj in get_nodes_in_group("carryable"):
+		if obj.is_in_group("delivery_box") or obj.is_queued_for_deletion():
+			continue
+		var s: String = main._section_of_color(obj.get_node("Polygon2D").color)
+		out[s] = out.get(s, 0) + 1
+	return out
+
+func floor_total() -> int:
+	var n := 0
+	var fs := floor_stock()
+	for s in fs:
+		n += fs[s]
+	return n
+
+## Walks this peer's own player to `goal` through its real move actions,
+## routing cell to cell like the solo brain. True if it got there.
+func walk_to(goal: Vector2, tol := 10.0, timeout := 20.0) -> bool:
+	var p := player()
+	var t := 0.0
+	var stuck := 0.0
+	var last := p.global_position
+	var jig := 0.0
+	var jig_dir := Vector2.ZERO
+	while t < timeout:
+		var pos := p.global_position
+		if pos.distance_to(goal) <= tol:
+			steer(Vector2.ZERO)
+			return true
+		var wp := waypoint(pos, goal)
+		var dir := (wp - pos).normalized()
+		if pos.distance_to(goal) < 40.0:
+			dir *= 0.5
+		if jig > 0.0:
+			jig -= 1.0 / 60.0
+			dir = jig_dir
+		elif pos.distance_to(last) < 0.3:
+			stuck += 1.0 / 60.0
+			if stuck > 1.0:
+				stuck = 0.0
+				jig = 0.4
+				jig_dir = dir.rotated(PI * 0.5 * (1.0 if randf() < 0.5 else -1.0))
+		else:
+			stuck = 0.0
+		last = pos
+		steer(dir)
+		await physics_frame
+		t += 1.0 / 60.0
+	steer(Vector2.ZERO)
+	return p.global_position.distance_to(goal) <= tol
+
+## Picks a box up with E and carries it onto the pad, sets it down with E —
+## the real keys, the real Carryable round trip. True once it's on the pad.
+func haul_box(box: Node2D) -> bool:
+	# Come in from the north (the forklift lane side, open floor) and stop
+	# short: walking into a box shoves it.
+	await walk_to(box.global_position + Vector2(0, -110), 12.0, 25.0)
+	await walk_to(box.global_position + Vector2(0, -50), 4.0, 5.0)
+	await tap(act + "interact")
+	var got := await wait_until(func(): return is_instance_valid(box) and box.get_node("Carryable").carrier_id == me, 1.0)
+	if not got:
+		return false
+	# Drop point is CARRY_OFFSET in front of the player: stand west of the
+	# pad center facing east.
+	await walk_to(dl().PAD_CENTER + Vector2(-60, 0), 6.0, 25.0)
+	steer(Vector2.RIGHT)
+	await physics_frame
+	await physics_frame
+	steer(Vector2.ZERO)
+	await wait(0.15)
+	await tap(act + "interact")
+	await wait_until(func(): return not is_instance_valid(box) or box.get_node("Carryable").carrier_id != me, 1.0)
+	return not is_instance_valid(box) or dl().on_pad(box.global_position)
+
+func _run_delivery() -> void:
+	await wait_until(func(): return main.shift_active and main.current_day >= 3, 20.0)
+	await wait(0.5)
+	var d := dl()
+	var cap: int = main._product_cap()
+	var names: Array = main._unlocked_sections().map(func(s): return s["name"])
+	# --- D1: the opening floor is the old one: cap-full, from backstock.
+	var fs := floor_stock()
+	print("DLV  opening floor %s, backstock %s, cap %d" % [str(fs), str(d.backstock), cap])
+	check(floor_total() == cap and d.backstock_total() == 0, "D1: day opens with the floor at cap (%d/%d) and backstock used up (%d)" % [floor_total(), cap, d.backstock_total()])
+	check(names.all(func(n): return absi(fs.get(n, 0) - cap / names.size()) <= 1), "D1: opening floor spread evenly over %s: %s" % [str(names), str(fs)])
+	check(boxes().is_empty() and not d.truck_parked(), "D1: no boxes, no truck at opening")
+	check(dfk().active and dfk().visible and not dfk().is_in_group("forklift") and main.manager.get_tree().get_first_node_in_group("forklift") == fk(), "D1: delivery forklift live; the manager's 'forklift' is still the Produce one")
+	# Quiet store for the mechanics checks.
+	main._customer_grace_timer = 1.0e9
+	main._order_timer = 1.0e9
+	fk()._pause_timer = 1.0e9
+	pin_manager(Vector2(480, 1350), 0.0)
+
+	# --- D2: the truck, on its own schedule.
+	var t0 := Time.get_ticks_msec()
+	await wait_until(func(): return d.truck_parked(), d.TRUCK_FIRST_DELAY + d.TRUCK_ARRIVE_TIME + 3.0)
+	var first_at := (Time.get_ticks_msec() - t0) / 1000.0 + 0.5
+	var cargo: Array = d.truck_load.duplicate()
+	print("DLV  truck #%d parked %.1fs into the shift with %s" % [d.deliveries_today, first_at, str(cargo)])
+	check(d.truck_parked() and absf(first_at - (d.TRUCK_FIRST_DELAY + d.TRUCK_ARRIVE_TIME)) < 1.5, "D2: first truck parked at the dock ~%.0fs in (%.1fs)" % [d.TRUCK_FIRST_DELAY + d.TRUCK_ARRIVE_TIME, first_at])
+	check(cargo.size() == d.boxes_per_truck() and names.all(func(n): return n in cargo) and cargo.all(func(c): return c in names), "D2: %d boxes (tier table), every open section at least once, nothing for a locked one: %s" % [d.boxes_per_truck(), str(cargo)])
+	var intervals := []
+	for i in 40:
+		intervals.append(d.truck_interval())
+	check(intervals.min() >= d.TRUCK_INTERVAL_MIN and intervals.max() <= d.TRUCK_INTERVAL_MAX, "D2: truck gap rolls within %.0f-%.0fs" % [d.TRUCK_INTERVAL_MIN, d.TRUCK_INTERVAL_MAX])
+	d._truck_timer = 1.0e9 # no second truck while the first one's checked
+
+	# --- D3: the forklift unloads every box into receiving, then the truck leaves.
+	var t1 := Time.get_ticks_msec()
+	if shots:
+		player().teleport_to(Vector2(2500, 1140))
+		await wait(0.3)
+		await shot("d2_truck_at_dock")
+		await wait_until(func(): return dfk().carrying != "", 15.0)
+		await wait(1.2)
+		await shot("d3_forklift_loaded")
+		await wait_until(func(): return dfk().rotation > 1.2 and dfk().carrying != "", 10.0)
+		await shot("d3_forklift_setting_down")
+	await wait_until(func(): return boxes().size() == cargo.size() and dfk().carrying == "", 25.0 * cargo.size())
+	var unload_s := (Time.get_ticks_msec() - t1) / 1000.0
+	var box_secs := boxes().map(func(b): return b.get_meta("section"))
+	box_secs.sort()
+	var want := cargo.duplicate()
+	want.sort()
+	check(box_secs == want, "D3: forklift unloaded all %d boxes in %.1fs (%.1fs each), contents as loaded: %s" % [cargo.size(), unload_s, unload_s / maxf(1, cargo.size()), str(box_secs)])
+	check(boxes().all(func(b): return d.RECEIVING_SPOTS.any(func(s): return b.global_position.distance_to(s) < 20.0)), "D3: every box sits on a receiving spot: %s" % str(boxes().map(func(b): return b.global_position.round())))
+	await wait_until(func(): return d.truck_offset >= d.TRUCK_AWAY_OFFSET, d.TRUCK_LINGER + d.TRUCK_DEPART_TIME + 2.0)
+	check(d.truck_offset >= d.TRUCK_AWAY_OFFSET and not d._truck.visible, "D3: empty truck pulled out and is gone")
+	check(dfk().drops_today == cargo.size() and dfk().rams_today == 0, "D3: %d set-downs, no rams" % dfk().drops_today)
+	player().teleport_to(Vector2(2450, 1330))
+	await wait(0.4)
+	await shot("d3_receiving")
+
+	# --- D4: a box can't be shelved.
+	var b0: RigidBody2D = boxes()[0]
+	var slot: Marker2D = empty_slot_in(names[0])
+	if slot == null:
+		for s in main.shelves:
+			if main._grid_cell_of(s.global_position) == section_by_name(names[0])["grid_pos"]:
+				var sh: Node = s.get_node("Shelf")
+				var o = sh._occupant[0]
+				if o != null:
+					move_body(o, o.global_position + Vector2(0, 150).rotated(s.global_rotation))
+				await wait(0.3)
+				slot = sh.slots[0]
+				break
+	var home0 := b0.global_position
+	move_body(b0, slot.global_position)
+	await wait(1.0)
+	check(not _is_placed(b0), "D4: a delivery box set on a %s slot never counts as stocked" % names[0])
+	move_body(b0, home0)
+	await wait(0.3)
+
+	# --- D5: carry one onto the pad with the real keys: it unpacks into
+	# backstock, and backstock goes out to that section's floor as sales make
+	# room — and only then.
+	var sec: String = b0.get_meta("section")
+	var st0: int = floor_stock().get(sec, 0)
+	var bk0: int = d.backstock.get(sec, 0)
+	var unpacked0: int = d.boxes_unpacked_today
+	var hauled := await haul_box(b0)
+	await wait_until(func(): return d.boxes_unpacked_today > unpacked0, 2.0)
+	check(hauled and d.boxes_unpacked_today == unpacked0 + 1 and not is_instance_valid(b0), "D5: box carried onto the pad with E/E and unpacked (%d today)" % d.boxes_unpacked_today)
+	await wait(0.3)
+	var fs5 := floor_stock()
+	print("DLV  after unpack: floor %s (was %d %s), backstock %s" % [str(fs5), st0, sec, str(d.backstock)])
+	check(d.backstock.get(sec, 0) == bk0 + d.UNITS_PER_BOX and floor_total() == cap, "D5: floor was full, so all %d went to %s backstock (%d)" % [d.UNITS_PER_BOX, sec, d.backstock.get(sec, 0)])
+	await wait(0.1)
+	check(("%s: %d" % [sec, d.backstock.get(sec, 0)]) in d._stock_label.text, "D5: the pad's BACKSTOCK sign says so: '%s'" % d._stock_label.text.replace("\n", " | "))
+	# Sell 3 of that section's products: the next restock pulls 3 from its backstock.
+	var sold := 0
+	for obj in get_nodes_in_group("carryable"):
+		if sold >= 3 or obj.is_in_group("delivery_box"):
+			continue
+		if main._section_of_color(obj.get_node("Polygon2D").color) == sec:
+			main.cashiers[0].get_node("Cashier")._complete_purchase(obj, -99999)
+			sold += 1
+	await physics_frame
+	main._restock_products()
+	await wait(0.2)
+	check(floor_stock().get(sec, 0) == fs5.get(sec, 0) and d.backstock.get(sec, 0) == bk0 + d.UNITS_PER_BOX - 3, "D5: 3 sold -> 3 out of %s backstock onto its floor (backstock now %d)" % [sec, d.backstock.get(sec, 0)])
+	# Drain: with no backstock left, sales are NOT replaced.
+	d.backstock = {}
+	var before := floor_total()
+	sold = 0
+	for obj in get_nodes_in_group("carryable"):
+		if sold < 2 and not obj.is_in_group("delivery_box"):
+			main.cashiers[0].get_node("Cashier")._complete_purchase(obj, -99999)
+			sold += 1
+	await physics_frame
+	main._restock_products()
+	await wait(0.2)
+	check(floor_total() == before - 2, "D5: no backstock -> nothing refills (floor %d -> %d)" % [before, floor_total()])
+	await shot("d5_pad")
+
+	# --- D6: a box thrown across the pad doesn't unpack (it has to be set down).
+	var b1: RigidBody2D = boxes()[0]
+	var n6: int = d.boxes_unpacked_today
+	player().teleport_to(d.PAD_CENTER + Vector2(0, -160)) # out of the box's path
+	await wait(0.2)
+	move_body(b1, d.PAD_CENTER + Vector2(-d.PAD_HALF - 40, 0))
+	await physics_frame
+	PhysicsServer2D.body_set_state(b1.get_rid(), PhysicsServer2D.BODY_STATE_LINEAR_VELOCITY, Vector2(750, 0))
+	await wait(1.5)
+	var end_x: float = b1.global_position.x if is_instance_valid(b1) else -1.0
+	check(end_x > d.PAD_CENTER.x + d.PAD_HALF and d.boxes_unpacked_today == n6, "D6: a box sliding across the pad at speed doesn't unpack (came to rest at x=%.0f, past the pad's edge %.0f)" % [end_x, d.PAD_CENTER.x + d.PAD_HALF])
+
+	# --- D7: stray box rescue: knocked into the break room -> back to receiving.
+	if boxes().size() > 0:
+		var b2: RigidBody2D = boxes()[0]
+		move_body(b2, Vector2(480, 300))
+		main._rescue_stranded_products()
+		await wait(0.2)
+		check(main._grid_cell_of(b2.global_position) == main.STORAGE_GRID_POS, "D7: a box in the break room is sent back to receiving (%s)" % str(b2.global_position.round()))
+
+	# --- D8: the forklift works around a full receiving row and people.
+	for b in boxes():
+		b.queue_free()
+	await physics_frame
+	# Occupy every spot but the last with a parked player-sized blocker: a spare product.
+	d.truck_load = []
+	d._truck_state = d.TRUCK_AWAY
+	d.truck_offset = d.TRUCK_AWAY_OFFSET
+	await wait(0.2)
+	d.start_delivery()
+	await wait_until(func(): return d.truck_parked(), 5.0)
+	player().teleport_to(d.RECEIVING_SPOTS[0])
+	await wait_until(func(): return boxes().size() >= 1, 30.0)
+	check(boxes().size() >= 1 and boxes().all(func(b): return b.global_position.distance_to(d.RECEIVING_SPOTS[0]) > 30.0), "D8: the first box went to the next spot, not the one a player is standing on (%s)" % str(boxes().map(func(b): return b.global_position.round())))
+	player().teleport_to(Vector2(2100, 1150))
+
+	# --- D9: next day: boxes and truck gone, opening floor back, forklift home.
+	await wait(0.5)
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active, 5.0)
+	await wait(0.5)
+	check(boxes().is_empty() and d.truck_load.is_empty() and d.truck_offset >= d.TRUCK_AWAY_OFFSET and dfk().carrying == "", "D9: new day: no boxes, no truck, empty forks")
+	check(floor_total() == main._product_cap() and d.deliveries_today == 0 and d.boxes_unpacked_today == 0, "D9: opening floor back at cap (%d), counters reset" % floor_total())
+	check(dfk().global_position.distance_to(dfk().home_position) < 2.0, "D9: delivery forklift back home")
+	finish()
+
+## Pad sides for simultaneous hauls, one per player, so a 4-crew doesn't all
+## queue at one edge: [stand offset from the pad center, facing to drop].
+const PAD_SIDES := [[Vector2(-58, 0), Vector2.RIGHT], [Vector2(0, -58), Vector2.DOWN], [Vector2(58, 0), Vector2.LEFT], [Vector2(0, 58), Vector2.UP]]
+
+func haul_box_side(box: Node2D, side: int) -> bool:
+	await walk_to(box.global_position + Vector2(0, -110), 12.0, 25.0)
+	await walk_to(box.global_position + Vector2(0, -50), 4.0, 5.0)
+	await tap(act + "interact")
+	var got := await wait_until(func(): return is_instance_valid(box) and box.get_node("Carryable").carrier_id == me, 1.5)
+	if not got:
+		return false
+	var off: Vector2 = PAD_SIDES[side][0]
+	var face: Vector2 = PAD_SIDES[side][1]
+	# Round the pad's corners rather than walk across it (and shove a box
+	# someone else just set down there off it): from receiving, in by the
+	# south-east corner, then round to this side.
+	var c: Vector2 = dl().PAD_CENTER
+	var corners := {0: [Vector2(130, 130), Vector2(-130, 130)], 1: [Vector2(130, 130), Vector2(130, -130)], 2: [Vector2(130, 130)], 3: [Vector2(130, 130)]}
+	for k in corners[side]:
+		await walk_to(c + k, 14.0, 20.0)
+	await walk_to(dl().PAD_CENTER + off * 2.2, 12.0, 25.0)
+	await walk_to(dl().PAD_CENTER + off, 5.0, 8.0)
+	steer(face)
+	await physics_frame
+	await physics_frame
+	steer(Vector2.ZERO)
+	await wait(0.25) # a client's drop happens at the host's copy of it: let it catch up
+	await tap(act + "interact")
+	await wait_until(func(): return not is_instance_valid(box) or box.get_node("Carryable").carrier_id != me, 1.5)
+	await wait(0.2)
+	# Set down on the pad (or already unpacked) — not fumbled somewhere else.
+	return not is_instance_valid(box) or (box.get_node("Carryable").carrier_id == 0 and dl().on_pad(box.global_position))
+
+func _box_view() -> Dictionary:
+	var out := {}
+	for b in boxes():
+		out[String(b.name)] = [b.get_meta("section"), b.global_position.x, b.global_position.y, b.get_node("SectionTag").color.to_html()]
+	return out
+
+func _run_net_delivery_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	var dd := DirAccess.open("user://")
+	if dd and dd.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
+	var d := dl()
+	var names := {}
+	for id in main.players:
+		names[id] = main.player_display_name(id)
+	check(main.players.size() == want, "net: %d players connected (%s)" % [main.players.size(), str(names.values())])
+	var ids: Array = main.players.keys()
+	ids.sort()
+	# Quiet store; the first truck held back until everyone's here.
+	main._customer_grace_timer = 1.0e9
+	main._order_timer = 1.0e9
+	fk()._pause_timer = 1.0e9
+	pin_manager(Vector2(480, 1350), 0.0)
+	d._truck_timer = 1.0e9
+	for k in ids.size():
+		main.players[ids[k]].rpc("teleport_to", Vector2(2040 + 70 * k, 1150))
+	await wait(1.0)
+
+	# --- N1: one truck, rolled on the host, the same load on every screen.
+	check(d.boxes_per_truck() == d.BOXES_PER_TRUCK_BY_TIER[d._tier()] + d.BOXES_PER_EXTRA_PLAYER * (want - 1), "N1: %d boxes per truck for a crew of %d" % [d.boxes_per_truck(), want])
+	d.start_delivery()
+	await wait_until(func(): return d.truck_parked(), 5.0)
+	var cargo: Array = d.truck_load.duplicate()
+	_net_write("n1_go.json", {"load": cargo})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("n1_%d.json" % id, 30.0)
+		check(r.get("load", []) == cargo and r.get("truck_visible", false), "N1: %s sees the same load on the truck (%s) and the truck at the dock" % [names[id], str(r.get("load", []))])
+	await wait_until(func(): return boxes().size() == cargo.size() and dfk().carrying == "", 25.0 * cargo.size())
+	check(boxes().size() == cargo.size(), "N1: forklift unloaded all %d boxes" % cargo.size())
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("n1b_%d.json" % id, 30.0)
+		var seen: Array = r.get("forks", [])
+		check(seen.size() == cargo.size() and seen.all(func(x): return x in cargo), "N1: %s watched every box ride the forks, labelled: %s" % [names[id], str(seen)])
+
+	# --- N2: the boxes themselves, identical everywhere; then everybody hauls
+	# one onto the pad at once, each with their own keys.
+	var view := _box_view()
+	var assign := {}
+	var box_names: Array = view.keys()
+	box_names.sort()
+	for k in ids.size():
+		assign[str(ids[k])] = box_names[k]
+	# Forklift parked for the hauls: this part checks the haul itself; its
+	# hazard to a client (the knockback — which fumbles a carried box) is N4.
+	dfk()._pause_timer = 1.0e9
+	var bk0: int = d.backstock_total()
+	var fl0 := floor_total()
+	var n0: int = d.boxes_unpacked_today
+	_net_write("n2_go.json", {"boxes": view, "assign": assign})
+	var mine: Node2D = main.products_root.get_node(NodePath(assign["1"]))
+	var ok := await haul_box_side(mine, 0)
+	check(ok, "N2 host: hauled %s onto the pad" % assign["1"])
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("n2_%d.json" % id, 60.0)
+		check(r.get("same", false), "N2: %s's boxes match the host's exactly (names, sections, color tags, spots): %s" % [names[id], r.get("why", "")])
+		check(r.get("hauled", false), "N2: %s picked up %s and carried it to the pad with its own keys" % [names[id], assign[str(id)]])
+	await wait_until(func(): return d.boxes_unpacked_today >= n0 + want, 5.0)
+	var gone: bool = assign.values().all(func(n): return not main.products_root.has_node(NodePath(n)))
+	check(d.boxes_unpacked_today == n0 + want and gone, "N2: all %d boxes unpacked on the host (%d today)" % [want, d.boxes_unpacked_today])
+	# In co-op the floor cap grows as clients join after the opening; the first
+	# unpacked units fill that gap, the rest go to backstock.
+	await wait(0.3)
+	check(d.backstock_total() - bk0 + floor_total() - fl0 == want * d.UNITS_PER_BOX and floor_total() == main._product_cap(), "N2: %d units unpacked: %d to the floor (cap %d, grew with the crew), %d to backstock %s" % [want * d.UNITS_PER_BOX, floor_total() - fl0, main._product_cap(), d.backstock_total() - bk0, str(d.backstock)])
+	await wait(0.5)
+	_net_write("n3_go.json", {"backstock": d.backstock, "unpacked": d.boxes_unpacked_today})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("n3_%d.json" % id, 30.0)
+		check(r.get("ok", false), "N3: %s's pad sign and counters match the host: %s" % [names[id], r.get("sign", "")])
+
+	# --- N4: the delivery forklift runs into a client's player: that client
+	# gets knocked back on its own screen (movement is client-authoritative).
+	if ids.size() > 1:
+		var victim: int = ids[1]
+		for b in boxes():
+			b.queue_free()
+		main.players[victim].rpc("teleport_to", Vector2(2560, d.LANE_Y))
+		for k in ids.size():
+			if ids[k] != victim:
+				main.players[ids[k]].rpc("teleport_to", Vector2(2040 + 70 * k, 1150))
+		dfk().reset_for_new_day()
+		dfk()._pause_timer = 0.3
+		await wait(0.5)
+		_net_write("n4_go.json", {"victim": victim})
+		d.start_delivery()
+		var r := await _net_read("n4_%d.json" % victim, 30.0)
+		check(r.get("hit", false), "N4: the delivery forklift knocked %s back on their own screen (moved %.0fpx)" % [names[victim], r.get("moved", 0.0)])
+	_net_write("done.json", {})
+	await wait(1.0)
+	finish()
+
+func _run_net_delivery_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me)
+	var go := await _net_read("n1_go.json", 60.0)
+	await wait(0.3)
+	var d := dl()
+	_net_write("n1_%d.json" % me, {"load": d.truck_load, "truck_visible": d._truck.visible and d.truck_offset < 1.0})
+	# Watch the forks on my own screen.
+	var forks := []
+	var last := ""
+	var t := 0.0
+	var n_load: int = go.get("load", []).size()
+	while t < 25.0 * n_load and forks.size() < n_load:
+		await physics_frame
+		t += 1.0 / 60.0
+		var c: String = dfk().carrying
+		if c != last:
+			if c != "":
+				forks.append(c)
+				check(dfk().get_node("LoadArt").visible, "%s: load sprite on the forks for a %s box" % [who, c])
+			last = c
+	_net_write("n1b_%d.json" % me, {"forks": forks})
+	var g2 := await _net_read("n2_go.json", 60.0)
+	await wait(0.3)
+	var host_view: Dictionary = g2.get("boxes", {})
+	var my_view := _box_view()
+	var why := ""
+	if host_view.keys().size() != my_view.keys().size():
+		why = "count %d vs %d" % [my_view.size(), host_view.size()]
+	for n in host_view:
+		var hv: Array = host_view[n]
+		var mv: Array = my_view.get(n, [])
+		if mv.is_empty():
+			why += " missing %s" % n
+		elif mv[0] != hv[0] or mv[3] != hv[3] or Vector2(mv[1], mv[2]).distance_to(Vector2(hv[1], hv[2])) > 12.0:
+			why += " %s differs %s vs %s" % [n, str(mv), str(hv)]
+	var ids: Array = main.players.keys()
+	ids.sort()
+	var box_name: String = g2.get("assign", {}).get(str(me), "")
+	var box: Node2D = main.products_root.get_node_or_null(NodePath(box_name))
+	var hauled := false
+	if box:
+		hauled = await haul_box_side(box, ids.find(me) % PAD_SIDES.size())
+	_net_write("n2_%d.json" % me, {"same": why == "", "why": why, "hauled": hauled})
+	check(why == "" and hauled, "%s: N2 boxes match the host; hauled %s" % [who, box_name])
+	var g3 := await _net_read("n3_go.json", 60.0)
+	await wait(0.5)
+	var sign: String = d._stock_label.text.replace("\n", " | ")
+	var hb: Dictionary = g3.get("backstock", {})
+	var same: bool = hb.keys().all(func(k): return int(hb[k]) == int(d.backstock.get(k, -1))) and d.boxes_unpacked_today == int(g3.get("unpacked", -1))
+	var sign_ok: bool = hb.keys().all(func(k): return ("%s: %d" % [k, int(hb[k])]) in d._stock_label.text)
+	_net_write("n3_%d.json" % me, {"ok": same and sign_ok, "sign": sign})
+	check(same and sign_ok, "%s: N3 backstock/sign match the host: %s" % [who, sign])
+	var g4 := await _net_read("n4_go.json", 60.0)
+	if int(g4.get("victim", 0)) == me:
+		var start := player().global_position
+		var hit := await wait_until(func(): return player()._stun_timer > 0.0, 25.0)
+		await wait(0.4)
+		var moved := player().global_position.distance_to(start)
+		_net_write("n4_%d.json" % me, {"hit": hit, "moved": moved})
+		check(hit, "%s: N4 knocked back by the delivery forklift on my own screen (%.0fpx)" % [who, moved])
+	await _net_read("done.json", 60.0)
+	finish()
+
+## WEEK 15 regression (Carryable.gd's client smoothing fix): a box and a
+## product pushed on the host, three times — each client copy must come to
+## rest where the host's did. Before the fix the client's stopped 60-300px
+## short and stayed there.
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=1 --shift-seconds=600 --test=net-boxsync &
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-boxsync
+func _run_boxsync_host() -> void:
+	var dd := DirAccess.open("user://")
+	if dd and dd.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	await wait_until(func(): return main.shift_active and main.players.size() >= 2, 40.0)
+	main._customer_grace_timer = 1.0e9
+	dl()._truck_timer = 1.0e9
+	await wait(1.0)
+	dl().drop_box(Vector2(2300, 1330), "Dry Goods")
+	main.spawn_product_at("Dry Goods", Vector2(2300, 1200))
+	await wait(1.5)
+	var b: RigidBody2D = boxes()[0]
+	var pr: RigidBody2D = null
+	for o in get_nodes_in_group("carryable"):
+		if not o.is_in_group("delivery_box") and o.global_position.distance_to(Vector2(2300, 1200)) < 5.0:
+			pr = o
+	for i in 3:
+		var way := -1.0 if i % 2 == 0 else 1.0
+		b.get_node("Carryable").request_push(Vector2(300 * way, 0) * b.mass)
+		pr.get_node("Carryable").request_push(Vector2(300 * way, 0) * pr.mass)
+		await wait(1.5)
+		_net_write("bs_%d.json" % i, {"box": [b.global_position.x, b.global_position.y], "prod": [pr.global_position.x, pr.global_position.y], "bn": b.name, "pn": pr.name})
+		var r := await _net_read("bsc_%d.json" % i, 20.0)
+		var cb: Array = r.get("box", [0, 0])
+		var cp: Array = r.get("prod", [0, 0])
+		var db := b.global_position.distance_to(Vector2(cb[0], cb[1]))
+		var dp := pr.global_position.distance_to(Vector2(cp[0], cp[1]))
+		check(db < 10.0 and dp < 10.0, "S%d: after a push, the client's copies came to rest where the host's did (box off by %.1fpx, product by %.1fpx)" % [i, db, dp])
+	finish()
+
+func _run_boxsync_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1, 20.0)
+	for i in 3:
+		var g := await _net_read("bs_%d.json" % i, 40.0)
+		await wait(0.3)
+		var b: Node2D = main.products_root.get_node_or_null(NodePath(g.get("bn", "")))
+		var pr: Node2D = main.products_root.get_node_or_null(NodePath(g.get("pn", "")))
+		_net_write("bsc_%d.json" % i, {"box": [b.global_position.x, b.global_position.y] if b else null, "prod": [pr.global_position.x, pr.global_position.y] if pr else null})
 	finish()
