@@ -109,6 +109,18 @@ const ACTOR_HIT_COOLDOWN := 1.0 # per player/customer — one knockback per bump
 ## not loose items further up the aisle, so it can't trigger from the lane.
 const RAM_STOCK_CONTACT_RADIUS := 100.0
 
+## WEEK 19 — both forklifts wear the same warehouse-pack sprite (was: the
+## Produce one kept the Week 8 placeholder polygons, still in Forklift.tscn
+## and hidden here). Tile-B-04's orange counterbalance forklift: side view
+## with the forks pointing left (flipped for east), the same truck from the
+## front. Drawn upright whatever the collision box's rotation. The pack has
+## no rear view, so heading north (only the Produce forklift does, ramming a
+## shelf above the lane) keeps the side view it last had.
+const ART_SHEET := "res://assets/warehouse/tile-B-04.png"
+const ART_SIDE := Rect2i(99, 102, 91, 89)
+const ART_FRONT := Rect2i(204, 99, 71, 92)
+const ART_SCALE := 0.95
+
 @export var home_rotation := PI # parked facing west (toward the hub) at the lane's east end
 
 ## Replicated (see _ready()). target_* are the host's real pose, smoothed
@@ -133,6 +145,8 @@ var _blink_t := 0.0
 ## Diagnostic only — how many rams landed this day; printed and shown on the
 ## debug HUD so a playtest log can confirm the hazard actually did something.
 var rams_today := 0
+var _art: Sprite2D
+var _facing_east := true
 
 func _ready() -> void:
 	add_to_group("forklift")
@@ -154,6 +168,15 @@ func _ready() -> void:
 	sync.name = "Sync" # explicit, identical name on every peer — see Player.gd's note on why an auto-generated name breaks replication
 	sync.set_multiplayer_authority(1)
 	add_child(sync)
+	for n in ["ForkLeft", "ForkRight", "Body", "Stripes", "Mast", "Seat"]:
+		get_node(n).visible = false
+	_art = Sprite2D.new()
+	_art.name = "Art"
+	_art.texture = load(ART_SHEET)
+	_art.region_enabled = true
+	_art.scale = Vector2.ONE * ART_SCALE
+	add_child(_art)
+	move_child(_art, 0)
 	configure(false)
 
 ## Called by Main.gd on EVERY peer whenever current_day changes (see
@@ -456,3 +479,19 @@ func _process(delta: float) -> void:
 	$BeepAnchor/BeepLabel.visible = (reversing or alert) and on
 	$BeepAnchor/BeepLabel.text = "!!" if alert else "BEEP"
 	$BeepAnchor.rotation = -rotation # label stays upright and above the forklift whichever way it faces
+	_update_art()
+
+## Every peer, every frame (see ART_SHEET): side view east/west, front view
+## heading south.
+func _update_art() -> void:
+	var dir := Vector2.RIGHT.rotated(rotation)
+	var front := dir.y > 0.7
+	if absf(dir.x) > 0.3:
+		_facing_east = dir.x > 0.0
+	_art.rotation = -rotation
+	_art.region_rect = Rect2(ART_FRONT if front else ART_SIDE)
+	_art.flip_h = _facing_east and not front
+	# Wheels on the collision box's footprint, the rest standing up from it.
+	_art.position = Vector2(0, -28).rotated(-rotation)
+	# The beacon on the cab roof, BEEP above it.
+	$Beacon.position = Vector2(16, 0) + Vector2(0, -62).rotated(-rotation)
