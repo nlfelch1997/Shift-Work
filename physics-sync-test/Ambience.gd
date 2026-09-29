@@ -111,7 +111,12 @@ const SPILL_CLEAR_PLAYER := 130.0 # spawn clearances, from the spill's center
 const SPILL_CLEAR_FORKLIFT_LANE := 60.0 # + radius, either side of the lane
 const SPILL_CLEAR_SLOT := 45.0 # + radius
 const SPILL_CLEAR_SPILL := 50.0 # + both radii
-const SPILL_SPAWN_ATTEMPTS := 14
+## WEEK 16: 28 (was 14). The new wall shelves (Main.gd's WEEK 16 note) left
+## less open aisle, so more random picks land in front of a slot; with 14 tries
+## about a fifth of spill rounds found no spot at all (the round is skipped),
+## which quietly thinned Day 6+ spills. More tries restores the rate without
+## touching where a spill is allowed. Plumbing, not a balance knob.
+const SPILL_SPAWN_ATTEMPTS := 28
 const SPILL_COLOR := Color(0.55, 0.75, 0.35, 0.72) # something green and regrettable
 
 const Z_DARKNESS := 100

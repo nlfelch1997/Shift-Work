@@ -8,21 +8,20 @@ extends Node2D
 ##   -> the delivery forklift (DeliveryForklift.gd) unloads it one pallet box
 ##      at a time into the RECEIVING row
 ##   -> a player carries a box to the UNPACK PAD and sets it down
-##   -> the box becomes BACKSTOCK for its section (UNITS_PER_BOX units)
-##   -> Main.gd's _restock_products() sends backstock out to that section's
-##      floor, same spots and same floor cap as before, as sales make room.
+##   -> WEEK 16: the box comes apart into UNITS_PER_BOX loose products of its
+##      section, spilled around the pad, which the crew carries to that
+##      section's shelves by hand like any other carried item.
 ##
-## So the old floor cap and spawn band are untouched (every clock/grace number
-## tuned since Week 6 was tuned against stock appearing in the section); what
-## changed is that the floor only refills from backstock, and backstock only
-## grows when somebody unpacks a box. No one on the box run = the floor drains.
-## The opening floor (Main.gd's _start_shift()) is still stocked on the clock:
-## the day starts with one floor's worth already in backstock ("unpacked by
-## the night crew"), see OPENING in the header of Main.gd's WEEK 15 note.
+## (Week 15 fed unpacked stock into a per-section backstock that Main.gd laid
+## out on the section's floor by itself; Week 16 made it manual, per the final
+## design — the backstock, the auto-feed and the UNPACK_TO_SECTION switch are
+## gone.) No one on the box run = no stock anywhere. The store also opens with
+## no stock of its own (Main.gd's OPENING_STOCK_FRACTION = 0): the first
+## trucks arrive during the prep phase, so there's work from the first minute.
 ##
 ## Built in code from Main.gd's _ready() like Ambience.gd (nothing new in a
 ## .tscn — see Main.gd's header note on .tscn comments). Host-authoritative:
-## the truck's schedule, what's on it, the pad, and backstock are all decided
+## the truck's schedule, what's on it and the pad are all decided
 ## on the host and replicated through this node's "Sync"; clients only draw.
 ## RANDOMNESS (host rolls, peers copy — the same rule as the lights' seed and
 ## the priority orders): the gap between trucks and which section each box is
@@ -41,7 +40,9 @@ extends Node2D
 
 ## --- TUNABLE (every one a FLAGGED placeholder, tuned against the bot sims) ---
 const DELIVERY_START_DAY := 1 # Storage is open from Day 1, and so is receiving
-const TRUCK_FIRST_DELAY := 8.0 # s into the shift before the first truck pulls in
+## WEEK 16: 3s (was 8) — prep starts the moment the shift does, and the first
+## truck is the only work there is until it arrives.
+const TRUCK_FIRST_DELAY := 3.0 # s into the shift before the first truck pulls in
 ## Arrival to next arrival. The timer runs while a truck is parked too, but a
 ## truck never arrives while the last one is still there — a slow unload
 ## pushes the next one back rather than stacking them.
@@ -55,7 +56,7 @@ const TRUCK_LINGER := 1.0 # s parked after the last box comes off
 ## (who also get a bigger floor cap and more customers).
 const BOXES_PER_TRUCK_BY_TIER := [2, 3, 4, 5]
 const BOXES_PER_EXTRA_PLAYER := 1
-const UNITS_PER_BOX := 6 # backstock one box turns into
+const UNITS_PER_BOX := 6 # loose products one box comes apart into
 ## The pad: a box SET DOWN on it unpacks at once (_on_box_set_down()). One
 ## that ends up there any other way (slid, shoved, thrown short) — a free box
 ## with its center on the pad, moving slower than
@@ -68,12 +69,11 @@ const UNITS_PER_BOX := 6 # backstock one box turns into
 ## 150px/s; a throw starts at 620.
 const PAD_SETTLE_TIME := 0.3
 const PAD_REST_SPEED := 150.0
-## Where unpacked stock goes. true (default): backstock, sent out to its own
-## section's floor by Main.gd's _restock_products(). false: the box's units
-## spawn loose around the pad, inside Storage, for the crew to carry out by
-## hand — the more literal version, left one switch away for a playtest
-## comparison (see the Week 15 report for the sim numbers on both).
-const UNPACK_TO_SECTION := true
+## Unpacked stock spills in a ring around the pad (clear of the pad itself, so
+## a product never sits where the next box has to go), this far from center.
+const SPILL_RING_MIN := 80.0
+const SPILL_RING_MAX := 150.0
+const SPILL_ATTEMPTS := 12
 
 ## --- LAYOUT (world px; Storage is x 1920-2880, y 1080-1620) ---
 const LANE_Y := 1250.0 # the forklift's east-west lane, dock door centered on it
@@ -112,7 +112,6 @@ var finale := false
 ## Host-written, replicated (see _ready()).
 var truck_offset := TRUCK_AWAY_OFFSET # 0 = parked at the dock, TRUCK_AWAY_OFFSET = gone
 var truck_load: Array = [] # section names still on the truck, first one comes off first
-var backstock := {} # section name -> units waiting (reassigned on change, never mutated in place)
 var unpack_event_id := 0
 var unpack_event_text := ""
 var deliveries_today := 0
@@ -132,7 +131,6 @@ var main: Node
 var _truck: Node2D
 var _truck_cargo: Node2D
 var _pad_label: Label
-var _stock_label: Label
 var _unpack_label: Label
 var _unpack_shown := 0
 var _unpack_t := 0.0
@@ -142,7 +140,7 @@ func _ready() -> void:
 	main = get_parent()
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	for prop in [".:truck_offset", ".:truck_load", ".:backstock", ".:unpack_event_id", ".:unpack_event_text", ".:deliveries_today", ".:boxes_unpacked_today"]:
+	for prop in [".:truck_offset", ".:truck_load", ".:unpack_event_id", ".:unpack_event_text", ".:deliveries_today", ".:boxes_unpacked_today"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -170,12 +168,9 @@ func truck_interval() -> float:
 	return randf_range(TRUCK_INTERVAL_MIN, TRUCK_INTERVAL_MAX)
 
 ## Host-only, from Main.gd's _start_shift(), after the floor was cleared.
-## `opening` is section name -> units: the day's opening floor, put in
-## backstock so _restock_products() lays it out exactly like before.
-func reset_for_new_day(opening: Dictionary) -> void:
+func reset_for_new_day() -> void:
 	if not multiplayer.is_server():
 		return
-	backstock = opening.duplicate()
 	truck_load = []
 	truck_offset = TRUCK_AWAY_OFFSET
 	_truck_state = TRUCK_AWAY
@@ -372,33 +367,38 @@ func unpack(box) -> void: # untyped: may arrive (deferred) already freed
 	box.queue_free()
 	boxes_unpacked_today += 1
 	unpack_event_id += 1
-	if UNPACK_TO_SECTION:
-		var stock := backstock.duplicate()
-		stock[section] = stock.get(section, 0) + UNITS_PER_BOX
-		backstock = stock
-		unpack_event_text = "+%d %s" % [UNITS_PER_BOX, section]
-		# Straight out to the floor if there's room, not on the next 3s tick.
-		main._restock_products()
-	else:
-		for i in UNITS_PER_BOX:
-			main.spawn_product_at(section, PAD_CENTER + Vector2(randf_range(-80, 80), randf_range(-110, 110)))
-		unpack_event_text = "%d x %s" % [UNITS_PER_BOX, section]
-	print("[Delivery] Unpacked a %s box (%d today) — backstock %s" % [section, boxes_unpacked_today, str(backstock)])
+	var spots := []
+	for i in UNITS_PER_BOX:
+		var pos := _spill_spot(spots)
+		spots.append(pos)
+		main.spawn_product_at(section, pos)
+	unpack_event_text = "%d x %s" % [UNITS_PER_BOX, section]
+	print("[Delivery] Unpacked a %s box (%d today) -> %d loose on the floor by the pad" % [section, boxes_unpacked_today, UNITS_PER_BOX])
 
-## Main.gd's _restock_products() draws from here: one unit of `section`.
-func take_backstock(section: String) -> bool:
-	if backstock.get(section, 0) <= 0:
-		return false
-	var stock := backstock.duplicate()
-	stock[section] -= 1
-	backstock = stock
-	return true
-
-func backstock_total() -> int:
-	var n := 0
-	for s in backstock:
-		n += backstock[s]
-	return n
+## Host-only: somewhere in the ring round the pad that isn't on top of other
+## stock, a box, a player or the forklift (a RigidBody spawned overlapping one
+## gets flung — same reasoning as Main.gd's _spawn_pos_is_clear()). Takes the
+## last roll if the ring is crowded, like Main.gd does.
+func _spill_spot(taken: Array) -> Vector2:
+	var pos := PAD_CENTER
+	for attempt in SPILL_ATTEMPTS:
+		pos = PAD_CENTER + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(SPILL_RING_MIN, SPILL_RING_MAX)
+		pos.x = maxf(pos.x, 1940.0) # stay in Storage (its open west edge is the way out)
+		var clear := true
+		for q in taken:
+			if pos.distance_to(q) < main.SPAWN_CLEARANCE_PRODUCT:
+				clear = false
+		for obj in get_tree().get_nodes_in_group("carryable"):
+			if pos.distance_to(obj.global_position) < main.SPAWN_CLEARANCE_PRODUCT + 10.0:
+				clear = false
+		for p in main.players.values():
+			if pos.distance_to(p.global_position) < 36.0:
+				clear = false
+		if pos.distance_to(main.delivery_forklift.global_position) < main.SPAWN_CLEARANCE_FORKLIFT:
+			clear = false
+		if clear:
+			break
+	return pos
 
 ## Boxes that exist right now: on the truck, on the forks, on the floor.
 func boxes_waiting() -> int:
@@ -466,8 +466,8 @@ func _build_receiving() -> void:
 		add_child(mark)
 	_label("RECEIVING", Vector2(RECEIVING_SPOTS[3].x - 130, RECEIVING_SPOTS[0].y + 42), 18, Color(1, 0.85, 0.3, 0.95))
 
-## The unpack pad: the A2 sheet's hazard-bordered concrete square, a sign, the
-## backstock readout, and a floating "+6 Dry Goods" when a box unpacks.
+## The unpack pad: the A2 sheet's hazard-bordered concrete square, a sign, and
+## a floating "6 x Dry Goods" when a box unpacks.
 func _build_pad() -> void:
 	var pad := Sprite2D.new()
 	pad.name = "UnpackPad"
@@ -477,8 +477,6 @@ func _build_pad() -> void:
 	add_child(pad)
 	_pad_label = _label("UNPACK PAD\ndrop boxes here", PAD_CENTER + Vector2(-130, -PAD_HALF - 60), 16, Color(1, 0.85, 0.3, 0.95))
 	_pad_label.size.y = 50
-	_stock_label = _label("", PAD_CENTER + Vector2(-130, PAD_HALF + 12), 14)
-	_stock_label.size.y = 90
 	_unpack_label = _label("", PAD_CENTER + Vector2(-130, -20), 22, Color(0.5, 1, 0.5, 1))
 	_unpack_label.visible = false
 	_unpack_label.z_index = 20
@@ -533,10 +531,6 @@ func _update_truck_visual() -> void:
 
 func _process(delta: float) -> void:
 	_update_truck_visual()
-	var lines := []
-	for s in main._unlocked_sections():
-		lines.append("%s: %d" % [s["name"], backstock.get(s["name"], 0)])
-	_stock_label.text = "BACKSTOCK\n" + "\n".join(lines)
 	if unpack_event_id != _unpack_shown:
 		_unpack_shown = unpack_event_id
 		_unpack_t = 1.6

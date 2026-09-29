@@ -11,6 +11,7 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	main.opening_stock_fraction = 1.0 # stocked shelves to photograph (WEEK 16: the store opens empty)
 	_run.call_deferred()
 
 func shot(name: String) -> void:
@@ -30,6 +31,13 @@ func _run() -> void:
 	var p: Node2D = main.players[1]
 	var cam: Camera2D = p.get_node("Camera")
 	main.debug_label.visible = false
+	# WEEK 16 — the Store sign at the entrance, closed during prep (standing
+	# at it, so the E hint shows), then open.
+	p.teleport_to(main.STORE_SIGN_POS + Vector2(-20, 45))
+	await shot("entrance_sign_closed")
+	main.open_store(1)
+	await create_timer(0.3).timeout
+	await shot("entrance_sign_open")
 	var spots := {
 		"dry_goods": Vector2(1440, 300), "meat_deli": Vector2(2400, 700), "dairy_frozen": Vector2(480, 810),
 		"bakery": Vector2(2400, 270), "checkout_hub": Vector2(1440, 810), "storage": Vector2(2400, 1300),
@@ -97,7 +105,7 @@ func _until(cond: Callable, timeout: float) -> void:
 func _delivery_shots(p: Node2D, cam: Camera2D) -> void:
 	var d: Node = main.delivery
 	var f: Node = main.delivery_forklift
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	p.teleport_to(Vector2(2520, 1120))
 	if not d.truck_parked():
 		d._truck_state = d.TRUCK_AWAY

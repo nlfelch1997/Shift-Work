@@ -26,6 +26,10 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# WEEK 16: written against a day that opens with a stocked floor and
+	# customers from the start (no prep phase): both as they were.
+	main.opening_stock_fraction = 1.0
+	main.prep_ceiling_override = 0.0
 	var mode := "host"
 	for a in args:
 		if a.begins_with("--test="):
@@ -125,7 +129,7 @@ func _run_host() -> void:
 	place_player(Vector2(1440, 1000)) # idle, in open hub floor
 	await wait_until(func(): return main.is_day_report_active(), 30.0)
 	check(main.writeups_today == 0, "Day 3: nobody written up while idle all shift")
-	await process_frame
+	await wait(0.2) # the report labels refresh on Main's next _process
 	check(not main.report_writeup_label.visible, "Day 3 report: write-up line hidden")
 	check(main.report_pay_label.text.begins_with("Pay Today: "), "Day 3 report: pay line present (%s)" % main.report_pay_label.text)
 	await shot("day3_report")

@@ -65,6 +65,12 @@ func _initialize() -> void:
 	for a in args:
 		if a.begins_with("--test="):
 			mode = a.substr(7)
+	# WEEK 16: the store now opens empty (every unit arrives by truck). The
+	# tests written before that are about other systems and were written
+	# against a floor that opens stocked — they keep it. The solo sim and the
+	# delivery/prep tests play the real thing.
+	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync"]:
+		main.opening_stock_fraction = 1.0
 	match mode:
 		"interact":
 			_run_interact.call_deferred()
@@ -93,6 +99,13 @@ func _initialize() -> void:
 				_run_boxsync_client.call_deferred()
 			else:
 				_run_boxsync_host.call_deferred()
+		"prep":
+			_run_prep.call_deferred()
+		"net-prep":
+			if "--client" in args:
+				_run_net_prep_client.call_deferred()
+			else:
+				_run_net_prep_host.call_deferred()
 		"net-orders":
 			if "--client" in args:
 				_run_net_orders_client.call_deferred()
@@ -228,7 +241,7 @@ func _run_interact() -> void:
 	var dairy_gate: Node = main.get_node("Gates/GateDairyFrozen/Gate")
 	check(dairy_gate.collision.disabled, "Dairy/Frozen gate open (collision off)")
 	var dairy_shelves: Array = main.shelves.filter(func(s): return main._grid_cell_of(s.global_position) == Vector2i(0, 1))
-	check(dairy_shelves.size() == 4, "Dairy/Frozen has %d shelves" % dairy_shelves.size())
+	check(dairy_shelves.size() == 5, "Dairy/Frozen has %d shelves (WEEK 16: +1 wall shelf)" % dairy_shelves.size())
 	var dairy_slots := 0
 	for s in dairy_shelves:
 		dairy_slots += s.get_node("Shelf").slot_count()
@@ -251,8 +264,8 @@ func _run_interact() -> void:
 	main.current_day = real_day
 	print("DENSITY  day -> [reachable slots, product cap]: %s" % str(slots_by_day))
 	check(slots_by_day[5][1] / 3.0 > slots_by_day[4][1] / 2.0, "Day 5 spawn density (product cap per open section) is higher than Day 4's: %s" % str(slots_by_day))
-	check(slots_by_day[5][0] == 2 * 36, "Day 5 shelves stock two deep: %d reachable slots (36 one-deep)" % slots_by_day[5][0])
-	check(dairy_slots == 24, "Dairy/Frozen shelves two deep: %d slots" % dairy_slots)
+	check(slots_by_day[5][0] == 2 * 48, "Day 5 shelves stock two deep: %d reachable slots (48 one-deep: 16 shelves)" % slots_by_day[5][0])
+	check(dairy_slots == 30, "Dairy/Frozen shelves two deep: %d slots" % dairy_slots)
 
 	# --- I1: forklift clips a CARRYING player right in front of the manager.
 	# Getting hit fumbles the item (Player.forklift_hit -> try_throw). That's
@@ -586,14 +599,14 @@ func _run_solo() -> void:
 	var day_stats := []
 	for day in solo_days:
 		await wait_until(func(): return main.shift_active and main.current_day == day, 20.0)
-		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main._customer_grace_timer, "slip_s": 0.0}
+		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
 		var start_sold: int = main._sold_at_day_start
 		print("SOLO  Day %d start — %.0fs shift, sections %s, product cap %d" % [day, main.shift_time_left, str(main._unlocked_sections().map(func(s): return s["name"])), main._product_baseline()])
 		await _play_shift()
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
 		var sold: int = main._total_sold() - main._sold_at_day_start
-		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | trucks %d, boxes unpacked %d, backstock left %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, dl().deliveries_today, dl().boxes_unpacked_today, dl().backstock_total(), main.report_pay_label.text]
+		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | trucks %d, boxes unpacked %d | clock %.0fs = prep %.0fs (opened by %s, ceiling %.0fs) + selling %.0fs, lights events while open %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, dl().deliveries_today, dl().boxes_unpacked_today, stats["shift_len"], stats.get("opened_at", -1.0), stats.get("opened_by", "?"), stats["grace"], stats["shift_len"] - stats.get("opened_at", 0.0), main.ambience.lights_events_today - stats.get("lights_at_open", 0), main.report_pay_label.text]
 		print(line)
 		day_stats.append(line)
 		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
@@ -624,6 +637,28 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 	var approach_phase := 0
 	while not stop.call():
 		await physics_frame
+		# WEEK 16: note when the store opened (by the sign or the ceiling).
+		if main.store_open and not stats.has("opened_at"):
+			stats["opened_at"] = stats["shift_len"] - main.shift_time_left
+			stats["opened_by"] = "ceiling" if main.store_opened_by == 0 else main.player_display_name(main.store_opened_by)
+			stats["lights_at_open"] = main.ambience.lights_events_today
+		# WEEK 16: prep. A person opens the store once the shelves are mostly
+		# full, or once there's been nothing to do for a while with at least
+		# half of them stocked. --never-open leaves it to the ceiling.
+		if not main.store_open and not never_open and main.shift_active:
+			var busy := false
+			for o in get_nodes_in_group("carryable"):
+				if o.get_node("Carryable").carrier_id == me:
+					busy = true
+			if obj == null and not busy:
+				_prep_idle_t += 1.0 / 60.0
+			else:
+				_prep_idle_t = 0.0
+			var fill := _fill_ratio()
+			if not busy and (fill >= OPEN_WHEN_FILLED or (fill >= 0.5 and _prep_idle_t > OPEN_WHEN_IDLE)):
+				await _go_flip_sign()
+				_prep_idle_t = 0.0
+				continue
 		for k in recent_drops.keys():
 			recent_drops[k] -= dt
 			if recent_drops[k] <= 0.0 or not is_instance_valid(k):
@@ -669,7 +704,7 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 		_trace_t -= dt
 		if trace and _trace_t <= 0.0:
 			_trace_t = 1.0
-			print("TRACE t=%.0f pos=%s carry=%s obj=%s phase=%d loose=%d boxes=%d backstock=%s floor=%d" % [stats["shift_len"] - main.shift_time_left, str(pos.round()), my_carry.name if my_carry else "-", obj.name if obj and is_instance_valid(obj) else "-", box_phase, _loose_stockable(), boxes().size(), str(dl().backstock), floor_total()])
+			print("TRACE t=%.0f pos=%s carry=%s obj=%s phase=%d loose=%d boxes=%d open=%s floor=%d" % [stats["shift_len"] - main.shift_time_left, str(pos.round()), my_carry.name if my_carry else "-", obj.name if obj and is_instance_valid(obj) else "-", box_phase, _loose_stockable(), boxes().size(), str(main.store_open), floor_total()])
 		if my_carry and my_carry.is_in_group("delivery_box"):
 			# WEEK 15: carrying a box -> onto the pad, set it down with E. From
 			# the receiving side (east), so walking back doesn't cross it.
@@ -815,6 +850,27 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 
 ## WEEK 15 — the solo brain's delivery job.
 var trace := "--trace" in OS.get_cmdline_user_args()
+## WEEK 16 — the solo brain's prep phase.
+var never_open := "--never-open" in OS.get_cmdline_user_args()
+const OPEN_WHEN_FILLED := 0.9
+const OPEN_WHEN_IDLE := 12.0
+var _prep_idle_t := 0.0
+
+func _fill_ratio() -> float:
+	var f := 0
+	var n := 0
+	for sb in main.shelves:
+		if main.is_unlocked_at_pos(sb.global_position):
+			f += sb.get_node("Shelf").filled_count()
+			n += sb.get_node("Shelf").slot_count()
+	return float(f) / maxf(1.0, n)
+
+## Walk to the Store sign and press E at it (the real key).
+func _go_flip_sign() -> void:
+	var at: Vector2 = main.STORE_SIGN_POS + Vector2(0, 45)
+	await walk_to(at, 8.0, 30.0)
+	await tap(act + "interact")
+	await wait_until(func(): return main.store_open, 1.0)
 var _trace_t := 0.0
 const BOX_RUN_BELOW := 3 # loose stock (free, shelvable) under this -> unpack a box
 var box_phase := 0
@@ -924,39 +980,33 @@ func rects_overlap(a: Control, b: Control) -> bool:
 func _run_orders() -> void:
 	await wait_until(func(): return main.shift_active, 10.0)
 	# Captured on the very first frames of the shift, before it ticks away.
-	var grace_now: float = main._customer_grace_timer
+	var prep_now: float = main.prep_time_left
 	var clock_now: float = main.shift_time_left
 	check(main.current_day == 5, "started on Day 5")
 
-	# --- G: grace period. Existing per-section scaling intact, +15s flat on
-	# top from Day 5; Days 1-4 unchanged.
-	var base: float = main.CUSTOMER_GRACE_PERIOD
-	var bonus: float = main.SECTION_TIME_BONUS
+	# --- G (WEEK 16): the prep ceiling replaced the grace period. Ceiling =
+	# 3 min + 3 min per section opened after Dry Goods; the day's clock =
+	# ceiling + the SAME selling window every day had before (111s, 96s on
+	# the finale) — so a team that uses the whole ceiling sells exactly as long
+	# as it used to.
+	var sd: float = main.shift_duration
 	var real_day: int = main.current_day
 	var table := {}
 	for d in range(1, 8):
 		main.current_day = d
-		table[d] = [main._current_customer_grace_period(), main._current_shift_duration()]
+		table[d] = [main._prep_ceiling(), main._current_shift_duration()]
 	main.current_day = real_day
-	print("GRACE  day -> [grace, shift clock]: %s" % str(table))
-	var sd: float = main.shift_duration
-	for d in [1, 2]:
-		check(is_equal_approx(table[d][0], base) and is_equal_approx(table[d][1], sd), "G: Day %d unchanged: %.0fs grace, %.0fs clock" % [d, table[d][0], table[d][1]])
-	for d in [3, 4]:
-		check(is_equal_approx(table[d][0], base + bonus) and is_equal_approx(table[d][1], sd + bonus), "G: Day %d unchanged: %.0fs grace, %.0fs clock" % [d, table[d][0], table[d][1]])
-	for d in [5, 6]:
-		check(is_equal_approx(table[d][0], base + 2 * bonus + 15.0) and is_equal_approx(table[d][1], sd + 2 * bonus + 15.0), "G: Day %d = per-section %.0fs + flat 15s: %.0fs grace, %.0fs clock" % [d, base + 2 * bonus, table[d][0], table[d][1]])
-	# WEEK 12: Day 7 is the finale — its clock and grace are deliberately cut
-	# (Main.gd's FINALE_CLOCK_CUT / FINALE_GRACE_CUT); Days 1-6 above are the
-	# proof nothing earlier moved.
-	check(is_equal_approx(table[7][0], base + 3 * bonus + 15.0 - main.FINALE_GRACE_CUT) and is_equal_approx(table[7][1], sd + 3 * bonus + 15.0 - main.FINALE_CLOCK_CUT), "G: Day 7 (Bakery opens, finale cut): %.0fs grace, %.0fs clock" % [table[7][0], table[7][1]])
-	check(absf(grace_now - table[5][0]) < 0.5, "G: the live Day 5 shift actually started with %.1fs of grace" % grace_now)
+	print("PREP  day -> [prep ceiling, day clock]: %s" % str(table))
+	var want := {1: [180.0, sd], 2: [180.0, sd], 3: [360.0, sd], 4: [360.0, sd], 5: [540.0, sd], 6: [540.0, sd], 7: [720.0, sd - main.FINALE_SELLING_CUT]}
+	for d in range(1, 8):
+		check(is_equal_approx(table[d][0], want[d][0]) and is_equal_approx(table[d][1] - table[d][0], want[d][1]), "G: Day %d: prep ceiling %.0fs, clock %.0fs -> %.0fs selling if the whole ceiling is used (as before: %.0fs)" % [d, table[d][0], table[d][1], table[d][1] - table[d][0], want[d][1]])
+	check(absf(prep_now - table[5][0]) < 0.5 and not main.store_open, "G: the live Day 5 shift started closed, with %.1fs of prep" % prep_now)
 	check(absf(clock_now - table[5][1]) < 0.5, "G: ...and %.1fs on the clock" % clock_now)
 
 	# Test control: no auto orders, no customers buying our stock, manager
 	# and forklift parked far away, player in the break room.
 	main._order_timer = 1.0e9
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
 	player().teleport_to(Vector2(480, 270))
@@ -1084,6 +1134,11 @@ func _run_orders() -> void:
 	var unlocked: Array = main._unlocked_sections().map(func(s): return s["name"])
 	check(seen.size() >= 2 and seen.keys().all(func(n): return n in unlocked), "O4: sections called over 40 rolls: %s (unlocked: %s)" % [str(seen.keys()), str(unlocked)])
 	check(qtys.all(func(q): return q >= 1 and q <= main.PRIORITY_ORDER_QTY_MAX), "O4: quantities in range: %s" % str(qtys))
+	# WEEK 16: call-outs only run while the store is open — open it, but keep
+	# customers out of the test (their top-up tick held off).
+	if not main.store_open:
+		main.open_store(0)
+	main._restock_timer = 1.0e9
 	main._order_timer = 0.01
 	await wait(0.1)
 	check(main.order_section != "", "O4: the interval timer calls one out on its own (%s x%d)" % [main.order_section, main.order_needed])
@@ -1113,7 +1168,7 @@ func _run_orders() -> void:
 	main._on_continue_pressed()
 	await wait_until(func(): return main.shift_active and main.current_day == 6, 5.0)
 	check(main.current_day == 6, "O5: advanced to Day 6")
-	check(absf(main._customer_grace_timer - (base + 2 * bonus + 15.0)) < 0.5, "O5: Day 6 grace %.1fs (per-section + 15)" % main._customer_grace_timer)
+	check(absf(main.prep_time_left - 540.0) < 0.5 and not main.store_open, "O5: Day 6 opens closed, %.1fs of prep" % main.prep_time_left)
 	check(main.orders_called_today == 0 and main.orders_filled_today == 0 and main.priority_sales_today == 0, "O5: Day 6 order tallies reset")
 	check(main.priority_sales_week == week_bonus, "O5: week keeps its %d bonus sales" % main.priority_sales_week)
 	check(is_equal_approx(main._order_timer, main.PRIORITY_ORDER_INTERVAL) or main._order_timer > main.PRIORITY_ORDER_INTERVAL - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
@@ -1311,7 +1366,7 @@ func _run_net_orders_host() -> void:
 	check(main.current_day == 5, "net: Day 5")
 	# Controlled phase: no auto orders, no customers, both hazards parked.
 	main._order_timer = 1.0e9
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
 	_watch_tags()
@@ -1406,7 +1461,7 @@ func _run_net_orders_host() -> void:
 	# manager and forklift live, everyone stocking. Then the bell.
 	release_manager()
 	fk()._pause_timer = 0.0
-	main._customer_grace_timer = 0.0
+	main.prep_time_left = 0.0
 	main._order_timer = 3.0
 	main.shift_time_left = 115.0 # call-outs at ~3s, 48s, 93s
 	_net_view = {"orders": [], "results": [], "open_frames": 0, "banner_frames": 0, "text_bad": 0}
@@ -1564,7 +1619,7 @@ func clear_strip(y: float, x0: float, x1: float) -> void:
 func park_everything() -> void:
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -2246,7 +2301,7 @@ func _run_net_ambience_host() -> void:
 	# --- E4: free play.
 	release_manager()
 	fk()._pause_timer = 0.0
-	main._customer_grace_timer = 0.0
+	main.prep_time_left = 0.0
 	main._order_timer = 3.0
 	amb()._lights_timer = 4.0
 	amb()._spill_timer = 0.5
@@ -2463,13 +2518,11 @@ func _run_finale() -> void:
 	var real_day: int = main.current_day
 	for d in [1, 2, 3, 4, 5, 6]:
 		main.current_day = d
-		var expect_clock: float = base_shift + main._extra_day_time()
-		var expect_grace: float = main.CUSTOMER_GRACE_PERIOD + main._extra_day_time()
-		if main._current_shift_duration() != expect_clock or main._current_customer_grace_period() != expect_grace or main._priority_order_interval() != main.PRIORITY_ORDER_INTERVAL:
+		if main._selling_window() != base_shift or main._priority_order_interval() != main.PRIORITY_ORDER_INTERVAL:
 			day_numbers_ok = false
 	main.current_day = real_day
-	check(day_numbers_ok, "F0 Days 1-6: clock, grace and order cadence are the pre-finale numbers")
-	check(is_equal_approx(main.shift_time_left + 0.0, main.shift_time_left) and main._current_shift_duration() == base_shift + 35.0 and main._current_customer_grace_period() == 44.0, "F0 Day 6: %.0fs clock, %.0fs grace" % [main._current_shift_duration(), main._current_customer_grace_period()])
+	check(day_numbers_ok, "F0 Days 1-6: full selling window and order cadence are the pre-finale numbers")
+	check(main._current_shift_duration() == 540.0 + base_shift and main._prep_ceiling() == 540.0, "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
 	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main.PRIORITY_ORDER_INTERVAL and main._order_timer > main.PRIORITY_ORDER_INTERVAL - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main.PRIORITY_ORDER_INTERVAL])
 	check(not main._finale_banner.visible and main.finale_banner_left == 0.0, "F0 Day 6: no FINAL SHIFT banner")
 	park_everything()
@@ -2502,8 +2555,8 @@ func _run_finale() -> void:
 	var banner_start := Time.get_ticks_msec()
 	check(main.shift_active and main.is_finale() and fk().finale and mgr().finale and a.finale, "F1 Day 7: finale on for forklift, manager, spills/lights")
 	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "FINAL SHIFT", "F1 Day 7: FINAL SHIFT banner up as the shift starts")
-	check(main._current_shift_duration() == base_shift + 45.0 - main.FINALE_CLOCK_CUT and main._current_customer_grace_period() == main.CUSTOMER_GRACE_PERIOD + 45.0 - main.FINALE_GRACE_CUT, "F1 Day 7: clock %.0fs (uncut %.0f), grace %.0fs (uncut %.0f)" % [main._current_shift_duration(), base_shift + 45.0, main._current_customer_grace_period(), main.CUSTOMER_GRACE_PERIOD + 45.0])
-	check(main._current_shift_duration() < base_shift + 35.0 and main._current_shift_duration() - main._current_customer_grace_period() < (base_shift + 35.0) - 44.0, "F1 Day 7: tighter than Day 6 — clock %.0f < %.0f, selling window %.0fs < %.0fs" % [main._current_shift_duration(), base_shift + 35.0, main._current_shift_duration() - main._current_customer_grace_period(), base_shift + 35.0 - 44.0])
+	check(main._prep_ceiling() == 720.0 and main._current_shift_duration() == 720.0 + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
+	check(main._selling_window() < base_shift, "F1 Day 7: tighter selling window than Day 6 — %.0fs < %.0fs" % [main._selling_window(), base_shift])
 	check(main._order_timer > main.FINALE_PRIORITY_ORDER_INTERVAL - 1.0 and main._order_timer <= main.FINALE_PRIORITY_ORDER_INTERVAL, "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main.FINALE_PRIORITY_ORDER_INTERVAL, main._order_timer])
 	check(main.FINALE_PRIORITY_ORDER_INTERVAL > main.PRIORITY_ORDER_WINDOW + 5.0, "F1: an order is always closed before the next is due (%.0f > %.0f)" % [main.FINALE_PRIORITY_ORDER_INTERVAL, main.PRIORITY_ORDER_WINDOW])
 	# Banner vs every alert row, with all of them up at once.
@@ -2689,15 +2742,13 @@ func _run_delivery() -> void:
 	var d := dl()
 	var cap: int = main._product_cap()
 	var names: Array = main._unlocked_sections().map(func(s): return s["name"])
-	# --- D1: the opening floor is the old one: cap-full, from backstock.
-	var fs := floor_stock()
-	print("DLV  opening floor %s, backstock %s, cap %d" % [str(fs), str(d.backstock), cap])
-	check(floor_total() == cap and d.backstock_total() == 0, "D1: day opens with the floor at cap (%d/%d) and backstock used up (%d)" % [floor_total(), cap, d.backstock_total()])
-	check(names.all(func(n): return absi(fs.get(n, 0) - cap / names.size()) <= 1), "D1: opening floor spread evenly over %s: %s" % [str(names), str(fs)])
+	# --- D1 (WEEK 16): the store opens empty and closed — all stock arrives
+	# by truck, starting during prep.
+	check(floor_total() == 0 and not main.store_open and main.prep_time_left > 300.0, "D1: day opens with no stock on the floor (%d), store closed, %.0fs of prep" % [floor_total(), main.prep_time_left])
 	check(boxes().is_empty() and not d.truck_parked(), "D1: no boxes, no truck at opening")
 	check(dfk().active and dfk().visible and not dfk().is_in_group("forklift") and main.manager.get_tree().get_first_node_in_group("forklift") == fk(), "D1: delivery forklift live; the manager's 'forklift' is still the Produce one")
 	# Quiet store for the mechanics checks.
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
@@ -2762,47 +2813,51 @@ func _run_delivery() -> void:
 	move_body(b0, home0)
 	await wait(0.3)
 
-	# --- D5: carry one onto the pad with the real keys: it unpacks into
-	# backstock, and backstock goes out to that section's floor as sales make
-	# room — and only then.
+	# --- D5 (WEEK 16): carry one onto the pad with the real keys: it comes
+	# apart into UNITS_PER_BOX loose products of its section, around the pad
+	# (not on it), in Storage — and nothing else puts stock anywhere.
 	var sec: String = b0.get_meta("section")
-	var st0: int = floor_stock().get(sec, 0)
-	var bk0: int = d.backstock.get(sec, 0)
+	var before_ids := {}
+	for o in get_nodes_in_group("carryable"):
+		before_ids[o] = true
 	var unpacked0: int = d.boxes_unpacked_today
 	var hauled := await haul_box(b0)
 	await wait_until(func(): return d.boxes_unpacked_today > unpacked0, 2.0)
 	check(hauled and d.boxes_unpacked_today == unpacked0 + 1 and not is_instance_valid(b0), "D5: box carried onto the pad with E/E and unpacked (%d today)" % d.boxes_unpacked_today)
-	await wait(0.3)
-	var fs5 := floor_stock()
-	print("DLV  after unpack: floor %s (was %d %s), backstock %s" % [str(fs5), st0, sec, str(d.backstock)])
-	check(d.backstock.get(sec, 0) == bk0 + d.UNITS_PER_BOX and floor_total() == cap, "D5: floor was full, so all %d went to %s backstock (%d)" % [d.UNITS_PER_BOX, sec, d.backstock.get(sec, 0)])
-	await wait(0.1)
-	check(("%s: %d" % [sec, d.backstock.get(sec, 0)]) in d._stock_label.text, "D5: the pad's BACKSTOCK sign says so: '%s'" % d._stock_label.text.replace("\n", " | "))
-	# Sell 3 of that section's products: the next restock pulls 3 from its backstock.
-	var sold := 0
-	for obj in get_nodes_in_group("carryable"):
-		if sold >= 3 or obj.is_in_group("delivery_box"):
-			continue
-		if main._section_of_color(obj.get_node("Polygon2D").color) == sec:
-			main.cashiers[0].get_node("Cashier")._complete_purchase(obj, -99999)
-			sold += 1
-	await physics_frame
-	main._restock_products()
-	await wait(0.2)
-	check(floor_stock().get(sec, 0) == fs5.get(sec, 0) and d.backstock.get(sec, 0) == bk0 + d.UNITS_PER_BOX - 3, "D5: 3 sold -> 3 out of %s backstock onto its floor (backstock now %d)" % [sec, d.backstock.get(sec, 0)])
-	# Drain: with no backstock left, sales are NOT replaced.
-	d.backstock = {}
+	await wait(0.6)
+	var spilled := get_nodes_in_group("carryable").filter(func(o): return not before_ids.has(o) and not o.is_in_group("delivery_box"))
+	var right_sec: bool = spilled.all(func(o): return main._section_of_color(o.get_node("Polygon2D").color) == sec)
+	var by_pad: bool = spilled.all(func(o): return main._grid_cell_of(o.global_position) == main.STORAGE_GRID_POS and not d.on_pad(o.global_position) and o.global_position.distance_to(d.PAD_CENTER) < d.SPILL_RING_MAX + 40.0)
+	var calm: bool = spilled.all(func(o): return o.linear_velocity.length() < 60.0)
+	print("DLV  unpacked into: %s" % str(spilled.map(func(o): return [o.name, o.global_position.round()])))
+	check(spilled.size() == d.UNITS_PER_BOX and right_sec, "D5: %d loose %s products came out of it" % [spilled.size(), sec])
+	check(by_pad and calm, "D5: ...lying round the pad, off it, in Storage, at rest (none flung)")
+	await shot("d5_unpacked")
+	# Carry one of them to its shelf by hand (E to pick up, C at the slot).
+	var item: RigidBody2D = spilled[0]
+	var slot5: Marker2D = empty_slot_in(sec)
+	await walk_to(item.global_position + Vector2(0, -40), 5.0, 10.0)
+	await tap(act + "interact")
+	await wait_until(func(): return get_nodes_in_group("carryable").any(func(o): return o.get_node("Carryable").carrier_id == me), 1.0)
+	for o in get_nodes_in_group("carryable"):
+		if o.get_node("Carryable").carrier_id == me:
+			item = o # E takes the nearest one — follow whichever it was
+	var job := pick_slot(player().global_position, item)
+	await walk_to(job["pos"] + job["out"] * 80.0, 10.0, 25.0)
+	await walk_to(job["pos"] + job["out"] * 29.0, 3.0, 5.0)
+	await wait_until(func(): return player()._place_target_slot != null, 1.0)
+	await tap(act + "place")
+	var shelved := await wait_until(func(): return _is_placed(item), 2.0)
+	check(shelved, "D5: carried one by hand from the pad to a %s shelf and it stocked (%s)" % [sec, str(slot5 != null)])
+	# No refill from nothing: sell two, give the old restock cadence time.
 	var before := floor_total()
-	sold = 0
+	var sold := 0
 	for obj in get_nodes_in_group("carryable"):
 		if sold < 2 and not obj.is_in_group("delivery_box"):
 			main.cashiers[0].get_node("Cashier")._complete_purchase(obj, -99999)
 			sold += 1
-	await physics_frame
-	main._restock_products()
-	await wait(0.2)
-	check(floor_total() == before - 2, "D5: no backstock -> nothing refills (floor %d -> %d)" % [before, floor_total()])
-	await shot("d5_pad")
+	await wait(main.RESTOCK_CHECK_INTERVAL + 1.0)
+	check(floor_total() == before - 2, "D5: nothing refills on its own (floor %d -> %d after %.0fs)" % [before, floor_total(), main.RESTOCK_CHECK_INTERVAL + 1.0])
 
 	# --- D6: a box thrown across the pad doesn't unpack (it has to be set down).
 	var b1: RigidBody2D = boxes()[0]
@@ -2848,7 +2903,7 @@ func _run_delivery() -> void:
 	await wait_until(func(): return main.shift_active, 5.0)
 	await wait(0.5)
 	check(boxes().is_empty() and d.truck_load.is_empty() and d.truck_offset >= d.TRUCK_AWAY_OFFSET and dfk().carrying == "", "D9: new day: no boxes, no truck, empty forks")
-	check(floor_total() == main._product_cap() and d.deliveries_today == 0 and d.boxes_unpacked_today == 0, "D9: opening floor back at cap (%d), counters reset" % floor_total())
+	check(floor_total() == 0 and d.deliveries_today == 0 and d.boxes_unpacked_today == 0 and not main.store_open, "D9: new day opens empty and closed again (floor %d), counters reset" % floor_total())
 	check(dfk().global_position.distance_to(dfk().home_position) < 2.0, "D9: delivery forklift back home")
 	finish()
 
@@ -2909,7 +2964,7 @@ func _run_net_delivery_host() -> void:
 	var ids: Array = main.players.keys()
 	ids.sort()
 	# Quiet store; the first truck held back until everyone's here.
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
@@ -2949,7 +3004,6 @@ func _run_net_delivery_host() -> void:
 	# Forklift parked for the hauls: this part checks the haul itself; its
 	# hazard to a client (the knockback — which fumbles a carried box) is N4.
 	dfk()._pause_timer = 1.0e9
-	var bk0: int = d.backstock_total()
 	var fl0 := floor_total()
 	var n0: int = d.boxes_unpacked_today
 	_net_write("n2_go.json", {"boxes": view, "assign": assign})
@@ -2965,17 +3019,19 @@ func _run_net_delivery_host() -> void:
 	await wait_until(func(): return d.boxes_unpacked_today >= n0 + want, 5.0)
 	var gone: bool = assign.values().all(func(n): return not main.products_root.has_node(NodePath(n)))
 	check(d.boxes_unpacked_today == n0 + want and gone, "N2: all %d boxes unpacked on the host (%d today)" % [want, d.boxes_unpacked_today])
-	# In co-op the floor cap grows as clients join after the opening; the first
-	# unpacked units fill that gap, the rest go to backstock.
-	await wait(0.3)
-	check(d.backstock_total() - bk0 + floor_total() - fl0 == want * d.UNITS_PER_BOX and floor_total() == main._product_cap(), "N2: %d units unpacked: %d to the floor (cap %d, grew with the crew), %d to backstock %s" % [want * d.UNITS_PER_BOX, floor_total() - fl0, main._product_cap(), d.backstock_total() - bk0, str(d.backstock)])
-	await wait(0.5)
-	_net_write("n3_go.json", {"backstock": d.backstock, "unpacked": d.boxes_unpacked_today})
+	# WEEK 16: each box comes apart into loose stock by the pad.
+	await wait(1.0)
+	check(floor_total() - fl0 == want * d.UNITS_PER_BOX, "N2: %d boxes -> %d loose products by the pad" % [want, floor_total() - fl0])
+	var loose := {}
+	for o in get_nodes_in_group("carryable"):
+		if not o.is_in_group("delivery_box") and main._grid_cell_of(o.global_position) == main.STORAGE_GRID_POS:
+			loose[String(o.name)] = [o.global_position.x, o.global_position.y, main._section_of_color(o.get_node("Polygon2D").color)]
+	_net_write("n3_go.json", {"loose": loose, "unpacked": d.boxes_unpacked_today})
 	for id in ids:
 		if id == 1:
 			continue
 		var r := await _net_read("n3_%d.json" % id, 30.0)
-		check(r.get("ok", false), "N3: %s's pad sign and counters match the host: %s" % [names[id], r.get("sign", "")])
+		check(r.get("ok", false), "N3: %s sees the same unpacked stock, same sections, same spots: %s" % [names[id], r.get("why", "")])
 
 	# --- N4: the delivery forklift runs into a client's player: that client
 	# gets knocked back on its own screen (movement is client-authoritative).
@@ -3047,12 +3103,21 @@ func _run_net_delivery_client() -> void:
 	check(why == "" and hauled, "%s: N2 boxes match the host; hauled %s" % [who, box_name])
 	var g3 := await _net_read("n3_go.json", 60.0)
 	await wait(0.5)
-	var sign: String = d._stock_label.text.replace("\n", " | ")
-	var hb: Dictionary = g3.get("backstock", {})
-	var same: bool = hb.keys().all(func(k): return int(hb[k]) == int(d.backstock.get(k, -1))) and d.boxes_unpacked_today == int(g3.get("unpacked", -1))
-	var sign_ok: bool = hb.keys().all(func(k): return ("%s: %d" % [k, int(hb[k])]) in d._stock_label.text)
-	_net_write("n3_%d.json" % me, {"ok": same and sign_ok, "sign": sign})
-	check(same and sign_ok, "%s: N3 backstock/sign match the host: %s" % [who, sign])
+	var hl: Dictionary = g3.get("loose", {})
+	var why3 := ""
+	for n in hl:
+		var o = main.products_root.get_node_or_null(NodePath(n))
+		if o == null:
+			why3 += " missing %s" % n
+			continue
+		var hv: Array = hl[n]
+		if o.global_position.distance_to(Vector2(hv[0], hv[1])) > 12.0 or main._section_of_color(o.get_node("Polygon2D").color) != hv[2]:
+			why3 += " %s at %s vs host %s" % [n, str(o.global_position.round()), str(hv)]
+	if d.boxes_unpacked_today != int(g3.get("unpacked", -1)):
+		why3 += " unpacked count %d vs %d" % [d.boxes_unpacked_today, int(g3.get("unpacked", -1))]
+	var ok3: bool = why3 == "" and hl.size() > 0
+	_net_write("n3_%d.json" % me, {"ok": ok3, "why": "%d products%s" % [hl.size(), why3]})
+	check(ok3, "%s: N3 the unpacked stock matches the host (%d products)%s" % [who, hl.size(), why3])
 	var g4 := await _net_read("n4_go.json", 60.0)
 	if int(g4.get("victim", 0)) == me:
 		var start := player().global_position
@@ -3076,7 +3141,7 @@ func _run_boxsync_host() -> void:
 		for f in DirAccess.get_files_at(NET_DIR):
 			DirAccess.remove_absolute(NET_DIR + f)
 	await wait_until(func(): return main.shift_active and main.players.size() >= 2, 40.0)
-	main._customer_grace_timer = 1.0e9
+	main.prep_time_left = 1.0e9
 	dl()._truck_timer = 1.0e9
 	await wait(1.0)
 	dl().drop_box(Vector2(2300, 1330), "Dry Goods")
@@ -3109,4 +3174,296 @@ func _run_boxsync_client() -> void:
 		var b: Node2D = main.products_root.get_node_or_null(NodePath(g.get("bn", "")))
 		var pr: Node2D = main.products_root.get_node_or_null(NodePath(g.get("pn", "")))
 		_net_write("bsc_%d.json" % i, {"box": [b.global_position.x, b.global_position.y] if b else null, "prod": [pr.global_position.x, pr.global_position.y] if pr else null})
+	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 16 — THE PREP PHASE + STORE SIGN, and the new wall shelves.
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --test=prep
+## Co-op, incl. the sign race (every player presses E at the sign on the same
+## instant):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=1 --players=3 --test=net-prep &
+##   (x2) godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-prep
+
+func live_customers() -> int:
+	return get_nodes_in_group("customer").filter(func(c): return not c.is_queued_for_deletion()).size()
+
+func _run_prep() -> void:
+	await wait_until(func(): return main.shift_active and main.players.has(1), 20.0)
+	var t_start := Time.get_ticks_msec()
+	var clock0: float = main.shift_time_left
+	var day: int = main.current_day
+	# --- P1: closed, the ceiling, the clock; trucks during prep, no customers.
+	check(not main.store_open and absf(main.prep_time_left - main._prep_ceiling()) < 1.0, "P1: Day %d opens CLOSED with %.0fs of prep (ceiling %.0fs)" % [day, main.prep_time_left, main._prep_ceiling()])
+	check(is_equal_approx(main._current_shift_duration(), main._prep_ceiling() + main._selling_window()) and absf(clock0 - main._current_shift_duration()) < 1.0, "P1: clock %.0fs = ceiling %.0f + selling %.0f" % [clock0, main._prep_ceiling(), main._selling_window()])
+	await wait(0.2)
+	check(main._sign_text.text == "CLOSED" and main._prep_label.visible and "PREP" in main._prep_label.text, "P1: sign says CLOSED; banner: '%s'" % main._prep_label.text)
+	var got_truck := await wait_until(func(): return dl().deliveries_today >= 1, dl().TRUCK_FIRST_DELAY + 2.0)
+	check(got_truck, "P1: a truck is on its way %.0fs into prep" % ((Time.get_ticks_msec() - t_start) / 1000.0))
+	var order_t0: float = main._order_timer
+	await wait(12.0)
+	check(live_customers() == 0 and not main.store_open, "P1: %.0fs into prep (longer than the old grace): no customers (%d), still closed" % [(Time.get_ticks_msec() - t_start) / 1000.0, live_customers()])
+	check(main.orders_called_today == 0 and is_equal_approx(main._order_timer, order_t0), "P1: no priority order call-outs while closed (timer held at %.0fs)" % main._order_timer)
+	await shot("p1_prep_banner")
+	# --- P2: E away from the sign does nothing to the store.
+	player().teleport_to(main.STORE_SIGN_POS + Vector2(0, 160))
+	await wait(0.3)
+	await tap(act + "interact")
+	await wait(0.4)
+	check(not main.store_open, "P2: E pressed away from the sign: still closed")
+	# ...and carrying something at the sign: E sets it down, doesn't open.
+	var spot: Vector2 = main.STORE_SIGN_POS + Vector2(40, 140) # well outside the sign's range
+	main.spawn_product_at(main._unlocked_sections()[0]["name"], spot)
+	await wait(0.4)
+	var prod: RigidBody2D = null
+	for o in get_nodes_in_group("carryable"):
+		if o.global_position.distance_to(spot) < 10.0:
+			prod = o
+	player().teleport_to(main.STORE_SIGN_POS + Vector2(0, 140))
+	await wait(0.3)
+	await tap(act + "interact")
+	await wait_until(func(): return prod.get_node("Carryable").carrier_id == 1, 1.0)
+	await walk_to(main.STORE_SIGN_POS + Vector2(0, 45), 6.0, 5.0)
+	await tap(act + "interact")
+	await wait(0.4)
+	check(not main.store_open and prod.get_node("Carryable").carrier_id == 0, "P2: carrying something at the sign, E sets it down — doesn't open the store")
+	# --- P3: flip the sign with the real E key.
+	await walk_to(main.STORE_SIGN_POS + Vector2(-30, 45), 6.0, 5.0)
+	await wait(0.2)
+	check(main._sign_hint.visible, "P3: 'E: open the store' shows when standing at the sign")
+	var clock_before: float = main.shift_time_left
+	var t_before := Time.get_ticks_msec()
+	var prep_left: float = main.prep_time_left
+	await tap(act + "interact")
+	await wait_until(func(): return main.store_open, 1.0)
+	var dt := (Time.get_ticks_msec() - t_before) / 1000.0
+	check(main.store_open and main.store_opened_by == 1 and main.store_open_events_today == 1 and main.prep_time_left == 0.0, "P3: sign flipped -> store OPEN, by Host, once")
+	check(absf((clock_before - main.shift_time_left) - dt) < 0.3, "P3: the day's clock didn't jump: %.1fs -> %.1fs over %.1fs" % [clock_before, main.shift_time_left, dt])
+	print("PREP  opened with %.0fs of ceiling unused -> %.0fs to sell (a full-ceiling day sells %.0fs)" % [prep_left, main.shift_time_left, main._selling_window()])
+	check(main.shift_time_left > main._selling_window() + prep_left - 5.0, "P3: the unused %.0fs of prep became selling time: %.0fs to sell (vs %.0fs)" % [prep_left, main.shift_time_left, main._selling_window()])
+	await wait(0.2)
+	check(main._sign_text.text == "OPEN" and main._prep_label.visible and "STORE OPEN" in main._prep_label.text, "P3: sign says OPEN, banner '%s'" % main._prep_label.text)
+	await shot("p3_store_open")
+	var came := await wait_until(func(): return live_customers() > 0, 4.0)
+	check(came, "P3: customers start arriving right away (%d)" % live_customers())
+	if day >= main.PRIORITY_ORDER_START_DAY:
+		var ot: float = main._order_timer
+		await wait(1.0)
+		check(main._order_timer < ot - 0.5, "P3: priority order call-outs counting now (%.1f -> %.1f)" % [ot, main._order_timer])
+	await tap(act + "interact") # again, now open: nothing happens
+	await wait(0.3)
+	check(main.store_open_events_today == 1, "P3: a second flip does nothing")
+	# --- P4: next day, nobody flips it: the ceiling opens it.
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	await wait(0.1)
+	check(not main._prep_label.visible, "P4: no prep/open banner over the report")
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and main.current_day == day + 1, 5.0)
+	await wait(0.2)
+	check(not main.store_open and main.store_opened_by == -1 and absf(main.prep_time_left - main._prep_ceiling()) < 1.0 and live_customers() == 0, "P4: Day %d starts closed again, %.0fs of prep, no customers" % [main.current_day, main.prep_time_left])
+	var clock_d: float = main.shift_time_left
+	main.prep_time_left = 1.5
+	var auto := await wait_until(func(): return main.store_open, 3.0)
+	check(auto and main.store_opened_by == 0 and main.store_open_events_today == 1, "P4: ceiling ran out -> store opened by itself")
+	check(absf(main.shift_time_left - (clock_d - 1.5)) < 0.6, "P4: clock unaffected by the auto-open (%.1f)" % main.shift_time_left)
+	var came2 := await wait_until(func(): return live_customers() > 0, 4.0)
+	check(came2, "P4: customers after the auto-open")
+	# --- P5: the new wall shelves — every slot stocks, each has the pack art.
+	# The Produce forklift's lap picks the new shelf up as a stop of its own
+	# (built from the shelves in its cell); parked for the slot checks — a ram
+	# wrecks a shelf and it refuses stock for a few seconds.
+	var saved: Array = fk()._legs.duplicate()
+	fk()._legs.clear()
+	fk()._build_lap()
+	var built: Array = fk()._legs.map(func(l): return l["pos"])
+	# Any stop off the lane at x 2400 — the only shelf at that x is the new one
+	# (a near-miss stop just short of its slots, or a ram into it).
+	var lane_y: float = fk().home_position.y
+	var visits_new: bool = built.any(func(p): return absf(p.x - 2400.0) < 1.0 and absf(p.y - lane_y) > 1.0)
+	fk()._legs = saved
+	check(visits_new, "P5: the Produce forklift's lap now stops at the new Produce shelf too %s" % ("" if visits_new else str(built)))
+	fk()._pause_timer = 1.0e9
+	for sb in main.shelves:
+		sb.get_node("Shelf").wrecked = false
+	main.prep_time_left = 0.0
+	var per := {}
+	for sb in main.shelves:
+		var sec: String = main._section_name_at(sb.global_position)
+		per[sec] = per.get(sec, 0) + 1
+	print("SHELVES  %s" % str(per))
+	check(per.get("Dry Goods") == 6 and per.get("Dairy/Frozen") == 5 and per.get("Bakery") == 5 and per.get("Produce") == 5, "P5: shelves per section %s (was 4 each)" % str(per))
+	var bad := []
+	var n_new := 0
+	for sb in main.shelves:
+		if not (String(sb.name) in ["Shelf5", "Shelf6"]):
+			continue
+		if sb.get_node_or_null("Polygon2D/ShelfArt") == null:
+			bad.append("%s no art" % sb.get_path())
+		if not main.is_unlocked_at_pos(sb.global_position):
+			continue
+		n_new += 1
+		var shelf: Node = sb.get_node("Shelf")
+		var sec: String = main._section_name_at(sb.global_position)
+		for i in shelf.slots.size():
+			if shelf.filled[i]:
+				continue
+			var at: Vector2 = shelf.slots[i].global_position
+			main.spawn_product_at(sec, at + (at - sb.global_position).normalized() * 120.0)
+			await wait(0.3)
+			var item: RigidBody2D = null
+			var bd := INF
+			for o in get_nodes_in_group("carryable"):
+				var dd: float = o.global_position.distance_to(at + (at - sb.global_position).normalized() * 120.0)
+				if dd < bd:
+					bd = dd
+					item = o
+			move_body(item, at)
+			if not await wait_until(func(): return shelf.filled[i], 1.5):
+				bad.append("%s slot %d" % [sb.get_path(), i])
+	check(n_new > 0 and bad.is_empty(), "P5: all %d new shelves open today stock in every slot, and all 5 have the pack shelf art %s" % [n_new, str(bad)])
+	await shot("p5_new_shelves")
+	finish()
+
+## --- net-prep ----------------------------------------------------------------
+## Spots round the sign, one per player, all within its range.
+const SIGN_SPOTS := [Vector2(-40, 45), Vector2(40, 45), Vector2(-55, 0), Vector2(55, 0)]
+
+func _run_net_prep_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	var dd := DirAccess.open("user://")
+	if dd and dd.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
+	var ids: Array = main.players.keys()
+	ids.sort()
+	check(main.players.size() == want, "net: %d players connected" % main.players.size())
+	await wait(1.0)
+	# --- NP1: everyone starts closed, with the host's countdown.
+	_net_write("np1_go.json", {"prep": main.prep_time_left, "t": Time.get_unix_time_from_system()})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("np1_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NP1: %s: closed, CLOSED sign, prep banner, no customers, countdown within 1s of the host's %s" % [main.player_display_name(id), r.get("why", "")])
+	# --- NP2: a client nowhere near the sign can't open it by sending the RPC.
+	_net_write("np2_go.json", {})
+	await _net_read("np2_%d.json" % ids[1], 30.0)
+	await wait(1.0)
+	check(not main.store_open, "NP2: an open request from a player nowhere near the sign is refused")
+	# --- NP3: THE RACE — every player at the sign, all press E at the same
+	# wall-clock instant, so the requests land together.
+	for k in ids.size():
+		main.players[ids[k]].rpc("teleport_to", main.STORE_SIGN_POS + SIGN_SPOTS[k])
+	await wait(1.5)
+	var at := Time.get_unix_time_from_system() + 2.0
+	_net_write("np3_go.json", {"at": at})
+	while Time.get_unix_time_from_system() < at:
+		await process_frame
+	await tap(act + "interact")
+	await wait(1.5)
+	check(main.store_open and main.store_open_events_today == 1, "NP3 race: %d players flipped it together -> opened exactly once (open events %d)" % [want, main.store_open_events_today])
+	check(main.store_opened_by in ids, "NP3 race: credited to one of them: %s" % main.player_display_name(main.store_opened_by))
+	var came := await wait_until(func(): return live_customers() > 0, 4.0)
+	check(came, "NP3: customers started coming")
+	_net_write("np3_host.json", {"by": main.store_opened_by, "clock": main.shift_time_left, "t": Time.get_unix_time_from_system()})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("np3_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NP3: %s: OPEN, same opener, one STORE OPEN banner, clock matches: %s" % [main.player_display_name(id), r.get("why", "")])
+	# --- NP4: next day, the ceiling runs out with nobody at the sign.
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and not main.store_open, 5.0)
+	await wait(1.0)
+	main.prep_time_left = 2.0
+	await wait_until(func(): return main.store_open, 4.0)
+	check(main.store_open and main.store_opened_by == 0 and main.store_open_events_today == 1, "NP4: Day %d: ceiling ran out -> opened by itself" % main.current_day)
+	_net_write("np4_go.json", {})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("np4_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NP4: %s saw it open by itself: %s" % [main.player_display_name(id), r.get("why", "")])
+	_net_write("done.json", {})
+	await wait(1.0)
+	finish()
+
+var _np_banners := 0
+var _np_shown := false
+
+func _watch_open_banner() -> void:
+	while true:
+		await process_frame
+		var up: bool = main._prep_label.visible and "STORE OPEN" in main._prep_label.text
+		if up and not _np_shown:
+			_np_banners += 1
+		_np_shown = up
+
+func _run_net_prep_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me)
+	_watch_open_banner()
+	var g1 := await _net_read("np1_go.json", 60.0)
+	await wait(0.3)
+	var lag: float = Time.get_unix_time_from_system() - g1.get("t", 0.0)
+	var why := ""
+	if main.store_open:
+		why += " open?"
+	if main._sign_text.text != "CLOSED":
+		why += " sign '%s'" % main._sign_text.text
+	if not (main._prep_label.visible and "PREP" in main._prep_label.text):
+		why += " no banner"
+	if absf(main.prep_time_left - (g1.get("prep", 0.0) - lag)) > 1.0:
+		why += " countdown %.1f vs host %.1f" % [main.prep_time_left, g1.get("prep", 0.0) - lag]
+	if live_customers() != 0:
+		why += " customers"
+	_net_write("np1_%d.json" % me, {"ok": why == "", "why": why})
+	check(why == "", "%s: NP1 closed on my screen%s" % [who, why])
+	await _net_read("np2_go.json", 60.0)
+	var ids: Array = main.players.keys()
+	ids.sort()
+	if me == ids[1]:
+		# Straight RPC from the break room, bypassing the key: must be refused.
+		main.rpc_id(1, "_request_open_store")
+		_net_write("np2_%d.json" % me, {})
+	var g3 := await _net_read("np3_go.json", 60.0)
+	var at: float = g3.get("at", 0.0)
+	await wait_until(func(): return player().global_position.distance_to(main.STORE_SIGN_POS) < main.STORE_SIGN_RANGE, 3.0)
+	while Time.get_unix_time_from_system() < at:
+		await process_frame
+	await tap(act + "interact")
+	var r3 := await _net_read("np3_host.json", 30.0)
+	await wait(0.5)
+	var why3 := ""
+	if not main.store_open:
+		why3 += " still closed"
+	if main.store_opened_by != int(r3.get("by", -2)):
+		why3 += " opener %d vs %d" % [main.store_opened_by, int(r3.get("by", -2))]
+	if main._sign_text.text != "OPEN":
+		why3 += " sign '%s'" % main._sign_text.text
+	if _np_banners != 1:
+		why3 += " %d STORE OPEN banners" % _np_banners
+	var lag3: float = Time.get_unix_time_from_system() - r3.get("t", 0.0)
+	if absf(main.shift_time_left - (r3.get("clock", 0.0) - lag3)) > 1.0:
+		why3 += " clock %.1f vs %.1f" % [main.shift_time_left, r3.get("clock", 0.0) - lag3]
+	_net_write("np3_%d.json" % me, {"ok": why3 == "", "why": why3 + " (opener %s)" % main.player_display_name(main.store_opened_by)})
+	check(why3 == "", "%s: NP3 race outcome on my screen%s" % [who, why3])
+	await _net_read("np4_go.json", 60.0)
+	await wait(0.5)
+	var why4 := ""
+	if not main.store_open or main.store_opened_by != 0:
+		why4 += " open=%s by=%d" % [str(main.store_open), main.store_opened_by]
+	if _np_banners != 2:
+		why4 += " banners %d (want 2)" % _np_banners
+	_net_write("np4_%d.json" % me, {"ok": why4 == "", "why": why4})
+	check(why4 == "", "%s: NP4 auto-open on my screen%s" % [who, why4])
+	await _net_read("done.json", 60.0)
 	finish()

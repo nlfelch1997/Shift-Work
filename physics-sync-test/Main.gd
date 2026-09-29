@@ -287,7 +287,8 @@ extends Node2D
 ##   top) and a faster spawn cadence, without which the cap never binds.
 ## - Lights: shorter gaps between events; the event itself is unchanged.
 ## - Clock: the one deliberate exception to "flat shift length" — see
-##   FINALE_CLOCK_CUT / FINALE_GRACE_CUT for the numbers and reasoning.
+##   FINALE_CLOCK_CUT / FINALE_GRACE_CUT for the numbers and reasoning. (WEEK 16:
+##   both became FINALE_SELLING_CUT — see the WEEK 16 note.)
 ## - "FINAL SHIFT" banner once as Day 7 starts (finale_banner_left, replicated), in its
 ##   own band of the alert layer, with a placeholder sound hook.
 ## Day 7 also opens Bakery (the 4th section, top density tier) — that was
@@ -309,7 +310,9 @@ extends Node2D
 ## a box onto the UNPACK PAD; the box becomes BACKSTOCK for its section; and
 ## _restock_products() sends backstock out to that section's floor — same
 ## spawn band, same floor cap as before — as sales make room. No box run, no
-## refill. Full design in Delivery.gd's header. What lives HERE:
+## refill. Full design in Delivery.gd's header. (WEEK 16 replaced the backstock
+## step with manual unpacking and the stocked opening with an empty store —
+## see the WEEK 16 note; the list below is how Week 15 left it.) What lives HERE:
 ## - _restock_products() draws from backstock (and skips delivery boxes when
 ##   counting stock); _spawn_product_for() replaces the random-section spawn.
 ## - OPENING: each day still opens with the floor at cap — _opening_backstock()
@@ -335,6 +338,30 @@ extends Node2D
 ##   client's copy of any loose item the host pushed used to settle short of
 ##   where the host had it (pre-existing, reproduced on the Week 14 code).
 ##
+## WEEK 16 — FINISHING THE DELIVERY LOOP: PREP PHASE, STORE SIGN, MANUAL
+## UNPACKING, MORE SHELVES.
+## - Manual unpacking: a box set down on the Storage pad comes apart into
+##   loose products of its section round the pad, carried to the shelves by
+##   hand (Delivery.gd). Week 15's backstock/auto-feed is gone, and so is the
+##   last of the floor top-up (_restock_products()): no box runs, no stock.
+##   The store opens empty (OPENING_STOCK_FRACTION = 0).
+## - The prep phase (PREP_CEILING_BASE and below) replaces every grace-period
+##   knob: the store opens CLOSED — no customers, no priority call-outs, but
+##   trucks from 3s in — until someone flips the Store sign at the entrance
+##   (open_store(), host-authoritative, replicated; simultaneous flips open it
+##   once) or the ceiling runs out. The day's clock is fixed: ceiling + the
+##   selling window every day already had.
+## - More shelving: Shelf5 (and Shelf6 in Dry Goods) in Main.tscn, in the empty
+##   middle of a section wall — Dry Goods +2 (top wall), Produce, Dairy/Frozen
+##   and Bakery +1 (bottom wall) — same shelf art as every other (StoreArt.gd
+##   dresses them from the "shelf" group), same section tint. The Produce
+##   forklift's lap picks its new shelf up as one more stop by itself. FOUND
+##   BY THE SPILL TESTS: a second shelf on the opposite wall of Dairy/Frozen or
+##   Bakery closes the only stretch of aisle wide enough for a spill once
+##   shelves stock two deep (Day 5+: 168px between the outer slot rows, a
+##   54px spill needs ~200 clear of slots) — spills there nearly stopped. So
+##   those two get one; Dry Goods' open side is the hub, so it keeps two.
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -345,13 +372,15 @@ extends Node2D
 ## distances, clearances, smoothing, stall detection), which are
 ## correctness plumbing, not balance.
 ##
-##   SHIFT CLOCK & GRACE — Main.gd
-##     SHIFT_DURATION_DEFAULT            120.0 s  base shift (--shift-seconds= overrides)
-##     CUSTOMER_GRACE_PERIOD               9.0 s  base no-customer head start
-##     SECTION_TIME_BONUS                 10.0 s  per extra unlocked section, on grace AND clock
-##     STOCKING_GRACE_BONUS               15.0 s  flat, on grace AND clock, from...
-##     STOCKING_GRACE_BONUS_START_DAY      5
-##     -> resulting grace / clock: Day 3-4 19/130s, Day 5-6 44/155s, Day 7 54/165s
+##   SHIFT CLOCK & PREP (WEEK 16; replaced the grace-period knobs) — Main.gd
+##     PREP_CEILING_BASE                 180.0 s  store-closed prep, at most...
+##     PREP_CEILING_PER_SECTION          180.0 s  ...+ this per section open beyond Dry Goods
+##     SHIFT_DURATION_DEFAULT            111.0 s  the selling window (--shift-seconds= overrides)
+##     FINALE_SELLING_CUT                 15.0 s  Day 7 selling window 96s
+##     -> day clock = ceiling + selling: Day 1-2 180+111=291s, Day 3-4 360+111=471s,
+##        Day 5-6 540+111=651s, Day 7 720+96=816s. Opening early (the Store
+##        sign) moves the unused ceiling into selling; the clock never changes.
+##     STORE_SIGN_POS / STORE_SIGN_RANGE   (1610,1115) / 70 px
 ##
 ##   DAY GATING — Main.gd
 ##     SECTIONS required_day              Meat/Deli 3 (+ forklift), Dairy/Frozen 5, Bakery 7
@@ -367,7 +396,7 @@ extends Node2D
 ##     PRODUCT_PER_EXTRA_PLAYER            3
 ##     CUSTOMER_PER_EXTRA_PLAYER           2
 ##     CUSTOMER_DISRUPTIVE_RATIO           0.35
-##     RESTOCK_CHECK_INTERVAL              3.0 s  floor top-up cadence
+##     RESTOCK_CHECK_INTERVAL              3.0 s  customer top-up + stray-stock rescue cadence
 ##
 ##   PAY — Main.gd
 ##     PAY_PER_SALE                       $10
@@ -393,8 +422,8 @@ extends Node2D
 ##     SPILL_EXCUSE_MARGIN                70 px   Manager.gd: pushes near a spill aren't chaos
 ##
 ##   DAY 7 FINALE — FINALE_START_DAY 7 (Main.gd); every value is Day 7+ only
-##     FINALE_CLOCK_CUT / FINALE_GRACE_CUT  20 / 5 s  -> Day 7 clock 145s, grace 49s
-##                                         (Day 6: 155 / 44; uncut Day 7 would be 165 / 54)
+##     FINALE_SELLING_CUT                 15 s   -> Day 7 sells 96s (Day 6: 111s) after a
+##                                         12-min prep ceiling (was: clock -20s, grace -5s)
 ##     FINALE_PRIORITY_ORDER_INTERVAL     32 s   (vs 45)
 ##     Forklift FINALE_LOAD / END_PAUSE    0.7 / 0.8 s  (vs 1.2 / 1.6)
 ##     Manager FINALE_CATCH_TIME           2.0 s  (vs 2.5; still > CHAOS_MEMORY 1.5)
@@ -405,16 +434,16 @@ extends Node2D
 ##
 ##   STORAGE DELIVERIES — Delivery.gd (forklift driving: DeliveryForklift.gd)
 ##     DELIVERY_START_DAY                  1      (Storage is open from Day 1)
-##     TRUCK_FIRST_DELAY                   8.0 s  into the shift
+##     TRUCK_FIRST_DELAY                   3.0 s  into the shift (prep starts at once)
 ##     TRUCK_INTERVAL_MIN / _MAX          24 / 32 s  arrival to arrival (never two at once)
 ##     TRUCK_ARRIVE / DEPART / LINGER      2.5 / 2.0 / 1.0 s
 ##     BOXES_PER_TRUCK_BY_TIER            [2, 3, 4, 5]  (each open section gets one first)
 ##     BOXES_PER_EXTRA_PLAYER              1
-##     UNITS_PER_BOX                       6      backstock per unpacked box
+##     UNITS_PER_BOX                       6      loose products per unpacked box
 ##     PAD_SETTLE_TIME / PAD_REST_SPEED    0.3 s / 150 px/s
-##     UNPACK_TO_SECTION                   true   (false: units spawn loose at the pad)
+##     SPILL_RING_MIN / _MAX              80 / 150 px  where they land round the pad
 ##     Delivery forklift: Forklift.gd's speeds and LOAD_PAUSE; SET_DOWN_PAUSE 0.6 s
-##     OPENING_STOCK_FRACTION (Main.gd)    1.0    of the floor cap out at opening (as before)
+##     OPENING_STOCK_FRACTION (Main.gd)    0.0    of the old floor cap out at opening
 ##
 ##   PRIORITY ORDERS — Main.gd
 ##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
@@ -464,17 +493,13 @@ const MANAGER_START_DAY := 4
 ## WEEK 12 — the finale (see the WEEK 12 header note). Everything below is a
 ## FLAGGED placeholder, tuned against the bot sims, not a human playtest.
 const FINALE_START_DAY := 7
-## The shift clock. Uncut, Day 7 would be the LONGEST day (165s clock, 54s
-## grace — Bakery opening adds SECTION_TIME_BONUS to both). The finale cuts
-## 20s off the clock and 5s off the grace: 145s / 49s. The grace keeps most
-## of Bakery's extra stocking time (49s vs Day 6's 44s, for one more section
-## to fill — cutting it harder makes the opening a scramble before anyone has
-## seen a customer, which reads as unfair rather than tense), so the cut
-## lands on the selling window: 96s vs Day 6's 111s (-14%), with the biggest
-## crowd of the week (CUSTOMER_CAP_BY_TIER's top tier). Both are cuts to the
-## normal math, so --shift-seconds= still scales it.
-const FINALE_CLOCK_CUT := 20.0
-const FINALE_GRACE_CUT := 5.0
+## The selling window. Week 12 cut the finale's clock by 20s and its grace by
+## 5s, which landed as a 15s cut to the selling window: 96s vs Day 6's 111s
+## (-14%), with the biggest crowd of the week. WEEK 16 keeps exactly that
+## selling window and drops the grace side (the prep phase replaced it — see
+## PREP_CEILING_BASE), so the finale's cut is now stated as what it always
+## amounted to. A cut to the normal math, so --shift-seconds= still scales it.
+const FINALE_SELLING_CUT := 15.0
 ## Priority orders every 32s instead of 45 — about 3 call-outs in the
 ## selling window instead of 2. The window to fill one (15s) is unchanged,
 ## and still well under the interval, so one is always closed before the
@@ -831,13 +856,15 @@ const ITEMS_TARGET_BY_TIER := [1, 2, 2, 3]
 ##   now-doubled slot count so a solo crew can't simply run out of shelf.
 const STACK_ROWS_BY_TIER := [1, 1, 2, 2]
 const PRODUCT_DENSITY_BY_TIER := [1.0, 1.0, 1.5, 1.5]
-## WEEK 15 — how much of the floor cap is already out when the day opens
-## (_opening_backstock()); everything after it arrives by truck. 1.0 keeps
-## every tuned opening exactly as it was. FLAGGED: the sims found that from
-## Day 5 on a solo crew doesn't sell through the opening floor in one shift,
-## so solo players rarely *need* a box run on those days (true of the old
-## restock too). Lower this to make deliveries matter from the first minute.
-const OPENING_STOCK_FRACTION := 1.0
+## WEEK 16 — how much of the old floor cap is already out when the day opens
+## (_spawn_opening_stock()). 0: the store opens empty and every unit of stock
+## arrives by truck during the prep phase — the point of prep is the delivery
+## run. FLAGGED: raise it to hand a team some floor stock to shelve while the
+## first truck backs in.
+const OPENING_STOCK_FRACTION := 0.0
+## Live value (tests from before Week 16 set it to 1.0: they were written
+## against a day that opens with a stocked floor).
+var opening_stock_fraction := OPENING_STOCK_FRACTION
 const CUSTOMER_PER_EXTRA_PLAYER := 2
 ## Week 6: restored to 0.35 now that the spacebar defend/shove action
 ## (Player.gd's _try_defend(), Customer.gd's request_shove()) gives players
@@ -845,7 +872,11 @@ const CUSTOMER_PER_EXTRA_PLAYER := 2
 ## unanswerable chaos. Still a placeholder value, like the rest of this
 ## block: it's an educated guess for Day 1, not a playtested number.
 const CUSTOMER_DISRUPTIVE_RATIO := 0.35
-const SHIFT_DURATION_DEFAULT := 120.0
+## WEEK 16: the SELLING window (store open) — what Days 1-6 always had after
+## the old 9s grace (120 - 9 = 111s; the per-section and Day 5 bonuses went
+## on grace and clock alike, so they never changed it). --shift-seconds=
+## overrides it. The day's total clock is the prep ceiling plus this.
+const SHIFT_DURATION_DEFAULT := 111.0
 ## How long after hosting starts before the shift begins — gives CLI-
 ## launched bot/client processes a moment to connect first, so the product/
 ## customer counts reflect the actual party size instead of just the host
@@ -861,57 +892,41 @@ const PRODUCT_SPAWN_DELAY := 2.0
 ## back up to their pool caps. Shared by both since they're the same shape
 ## of system; no reason for them to run on different cadences right now.
 const RESTOCK_CHECK_INTERVAL := 3.0
-## Playtest request: no customer (shopper or disruptive) restocking for
-## this long after a shift starts, giving the player/team a head start to
-## get initial product stocked before anyone shows up to buy or disrupt
-## it. Applies to EVERY day, not just Day 1, since _customer_grace_timer
-## is reset in _start_shift(), which now runs at the start of every day
-## (see its own comment) — and, as of this session's root-cause fix,
-## _start_shift() also force-despawns any customer still on the floor from
-## the previous day BEFORE this timer starts counting down
-## (_despawn_all_customers()), so the grace period actually means "zero
-## customers" every day now, not just "no NEW customers" while old ones
-## linger. Products are NOT held back the same way — _restock_products()
-## still runs immediately, since there'd be nothing to stock during the
-## grace period otherwise. Placeholder, not tuned.
-const CUSTOMER_GRACE_PERIOD := 9.0
-## Playtest request: each ADDITIONAL section that's unlocked (beyond the
-## first, Dry Goods) buys the player 10 more seconds of both the pre-shift
-## grace period and the shift clock itself, cumulative — a bigger store
-## means more ground to cover, so both numbers should grow together, not
-## just the shift length. Read via _current_customer_grace_period()/
-## _current_shift_duration() below, evaluated fresh in _start_shift() every
-## day (using _unlocked_sections(), which is already current_day-driven), so
-## Day 1-2 (1 section) is unaffected and later days automatically pick up
-## whatever's unlocked that day.
-const SECTION_TIME_BONUS := 10.0
-## WEEK 11 — playtest feedback: Day 5's density (two-deep shelves, 1.5x
-## stock on the floor, both hazards live) made the grace period above feel
-## too short to get shelves stocked before customers walk in. A FLAT extra
-## STOCKING_GRACE_BONUS on top of SECTION_TIME_BONUS's per-section scaling
-## (additive, that scaling is untouched), every day from
-## STOCKING_GRACE_BONUS_START_DAY — the same day the density tier starts, so
-## Days 1-4 (already playtested and confirmed) are unchanged. It also goes on
-## the shift clock, the same way SECTION_TIME_BONUS extends both, so the
-## extra stocking time doesn't come out of selling time. FLAGGED placeholder.
-const STOCKING_GRACE_BONUS := 15.0
-const STOCKING_GRACE_BONUS_START_DAY := 5
+## WEEK 16 — THE PREP PHASE (replaces the Week 7 per-section grace bonus,
+## the Week 11 Day 5+ flat bonus and the old 9s grace, all three). Each shift
+## opens with the store CLOSED: no customers, but trucks already rolling, so
+## the crew unpacks and stocks at its own pace. It ends when anyone flips the
+## Store sign at the entrance (open_store(), host-authoritative) or when the
+## PREP CEILING runs out (automatic — nobody can get stuck waiting). The
+## ceiling is PREP_CEILING_BASE plus PREP_CEILING_PER_SECTION for each section
+## open beyond Dry Goods (Day 1-2: 3 min, 3-4: 6, 5-6: 9, 7: 12). FLAGGED
+## reading of the spec's "per newly-opened section": counted cumulatively
+## (every section opened after Day 1), which is what gives 12 minutes on
+## Day 7.
+## The day's TOTAL clock is fixed: ceiling + that day's selling window
+## (_selling_window(): 111s, 96s on the finale — exactly what each day sold
+## for before). Opening early doesn't shorten the day; every second of
+## ceiling left over becomes selling time. Using the whole ceiling gets
+## exactly the old selling window.
+const PREP_CEILING_BASE := 180.0
+const PREP_CEILING_PER_SECTION := 180.0
 
-## See SECTION_TIME_BONUS / STOCKING_GRACE_BONUS above.
-func _extra_day_time() -> float:
-	var extra: float = SECTION_TIME_BONUS * max(0, _unlocked_sections().size() - 1)
-	if current_day >= STOCKING_GRACE_BONUS_START_DAY:
-		extra += STOCKING_GRACE_BONUS
-	return extra
+## --prep-seconds=N replaces the formula (a quick playtest of the selling
+## window, and the tests written before the prep phase existed, use 0).
+var prep_ceiling_override := -1.0
 
-func _current_customer_grace_period() -> float:
-	return CUSTOMER_GRACE_PERIOD + _extra_day_time() - (FINALE_GRACE_CUT if is_finale() else 0.0)
+func _prep_ceiling() -> float:
+	if prep_ceiling_override >= 0.0:
+		return prep_ceiling_override
+	return PREP_CEILING_BASE + PREP_CEILING_PER_SECTION * maxi(0, _unlocked_sections().size() - 1)
 
-## See SECTION_TIME_BONUS above. shift_duration is still the Day-1/single-
-## section BASE (and still overridable via --shift-seconds=) — this is what
-## actually gets loaded into shift_time_left at the start of every shift.
+func _selling_window() -> float:
+	return shift_duration - (FINALE_SELLING_CUT if is_finale() else 0.0)
+
+## The day's whole clock: prep ceiling + selling window. Loaded into
+## shift_time_left at the start of every shift; nothing extends it.
 func _current_shift_duration() -> float:
-	return shift_duration + _extra_day_time() - (FINALE_CLOCK_CUT if is_finale() else 0.0)
+	return _prep_ceiling() + _selling_window()
 
 ## The display name of the section a point is in ("" outside the sections).
 func _section_name_at(world_pos: Vector2) -> String:
@@ -1003,13 +1018,13 @@ var shift_active := false
 var shift_time_left := 0.0
 var _shelf_log_timer := 0.0
 var _restock_timer := 0.0
-## Counts down from CUSTOMER_GRACE_PERIOD at the start of every shift (see
-## _start_shift()); while positive, _process()'s restock check skips
-## _restock_customers() entirely (products are unaffected). Host-only
-## state — never replicated, since clients don't call _restock_customers()
-## themselves anyway (the spawner-authority check inside already no-ops
-## their call), so there's nothing for a client to react to here.
-var _customer_grace_timer := 0.0
+## WEEK 16 — prep phase (see PREP_CEILING_BASE). Host-written, replicated
+## (DaySync). prep_time_left counts the ceiling down while the store is
+## closed; store_opened_by is who flipped the sign (0 = the ceiling did).
+var store_open := false
+var prep_time_left := 0.0
+var store_opened_by := -1 # -1 = not opened yet today
+var store_opened_at := 0.0 # shift_time_left when it opened
 var _product_spawn_index := 0
 var _customer_spawn_index := 0
 ## Unique synthetic carry-id pool for customers — decremented (stays
@@ -1077,7 +1092,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1103,6 +1118,7 @@ func _ready() -> void:
 	$DebugLayer.layer = UI_LAYER_DEBUG
 	report_layer.layer = UI_LAYER_REPORT
 	_build_alert_layer()
+	_build_store_sign()
 
 	_parse_cli_args()
 
@@ -1116,6 +1132,8 @@ func _parse_cli_args() -> void:
 			bot_run_seconds = float(arg.substr("--duration=".length()))
 		elif arg.begins_with("--shift-seconds="):
 			shift_duration = float(arg.substr("--shift-seconds=".length()))
+		elif arg.begins_with("--prep-seconds="):
+			prep_ceiling_override = float(arg.substr("--prep-seconds=".length()))
 		elif arg.begins_with("--bot-roles="):
 			bot_roles.assign(arg.substr("--bot-roles=".length()).split(","))
 		elif arg.begins_with("--day="):
@@ -1382,9 +1400,10 @@ func _reset_players_to_break_room() -> void:
 ## the shift — Week 5B removed the one-time fixed batch entirely: there's
 ## no finish line except the clock, so supply has to keep replenishing for
 ## as long as the shift runs, not just spawn once and taper off.
-## Customers are NOT restocked here — see CUSTOMER_GRACE_PERIOD below;
-## _process()'s periodic restock check is what actually starts spawning
-## them, once the grace period elapses.
+## Customers are NOT restocked here — WEEK 16: the day opens in the prep
+## phase (store closed, see PREP_CEILING_BASE); _process()'s periodic check
+## starts them once open_store() runs. (Week 16 also removed the product
+## top-up: stock only comes from unpacked delivery boxes.)
 ##
 ## Also the entry point for every day AFTER the first — _advance_to_next_day()
 ## below calls this exact same function once a player clicks Continue on the
@@ -1420,10 +1439,7 @@ func _start_shift() -> void:
 	delivery_forklift.reset_for_new_day()
 	manager.reset_for_new_day()
 	ambience.reset_for_new_day()
-	# WEEK 15: the day opens with one floor's worth in backstock, which
-	# _restock_products() below lays out exactly as the opening floor always
-	# was; everything after that arrives by truck.
-	delivery.reset_for_new_day(_opening_backstock())
+	delivery.reset_for_new_day()
 	writeups_today = 0
 	writeups_by_peer = {}
 	_clear_priority_order()
@@ -1433,13 +1449,17 @@ func _start_shift() -> void:
 	_order_timer = _priority_order_interval()
 	for display_body in displays:
 		display_body.get_node("Display").reset_to_home()
-	var grace := _current_customer_grace_period()
 	var duration := _current_shift_duration()
-	_customer_grace_timer = grace
+	# WEEK 16: the store opens CLOSED — prep until the sign is flipped or the
+	# ceiling runs out (see PREP_CEILING_BASE).
+	store_open = false
+	store_opened_by = -1
+	store_open_events_today = 0
+	prep_time_left = _prep_ceiling()
 	_restock_timer = 0.0
 	_reset_players_to_break_room()
-	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock, %.0fs customer grace period, no fixed stock target" % [current_day, players.size(), duration, grace])
-	_restock_products()
+	print("[Main] Day %d shift starting — %d player(s), %.0fs on the clock: up to %.0fs of prep (store closed), %.0fs selling at the least" % [current_day, players.size(), duration, prep_time_left, _selling_window()])
+	_spawn_opening_stock()
 	shift_time_left = duration
 	# Once, as the finale day starts (not on any later day).
 	if current_day == FINALE_START_DAY:
@@ -1470,6 +1490,131 @@ func _despawn_all_customers() -> void:
 ## customer left an item stranded at checkout when a day ended under it.
 func is_day_report_active() -> bool:
 	return _day_report_active
+
+## --- WEEK 16: the Store sign ------------------------------------------------
+## At the entrance (Sidewalk side of the hub boundary, beside where customers
+## walk in). Any player standing within STORE_SIGN_RANGE with empty hands
+## presses E at it to flip it to OPEN (Player.gd's _try_interact()). Same
+## "any peer may ask, only the host decides" shape as every other shared
+## change here: a client's press is a request RPC; the host opens the store
+## only if it's still closed, so two players flipping it in the same instant
+## open it exactly once (the second request finds it already open and does
+## nothing). store_open/store_opened_by reach every peer through DaySync.
+const STORE_SIGN_POS := Vector2(1610.0, 1115.0)
+const STORE_SIGN_RANGE := 70.0
+## Host diagnostic: times open_store() actually opened the store today (must
+## only ever be 0 or 1 — the sign race test checks it).
+var store_open_events_today := 0
+
+func near_store_sign(pos: Vector2) -> bool:
+	return pos.distance_to(STORE_SIGN_POS) <= STORE_SIGN_RANGE
+
+## Any peer: the local player pressed E at the sign.
+func try_flip_sign() -> void:
+	if multiplayer.is_server():
+		open_store(multiplayer.get_unique_id())
+	else:
+		rpc_id(1, "_request_open_store")
+
+@rpc("any_peer", "reliable")
+func _request_open_store() -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	# Where the HOST sees the sender's player — a client can't open the store
+	# from across the map by sending the RPC.
+	if players.has(sender) and near_store_sign(players[sender].global_position):
+		open_store(sender)
+
+## Every peer: the one-off "STORE OPEN" line (the state itself is DaySync's).
+@rpc("authority", "call_local", "reliable")
+func _announce_store_open(by_peer: int) -> void:
+	_open_banner_text = "STORE OPEN — %s" % ("customers are coming!" if by_peer == 0 else "%s flipped the sign" % ("you" if Net.is_active() and by_peer == multiplayer.get_unique_id() else player_display_name(by_peer)))
+	_open_banner_t = 3.5
+
+## The sign itself: the supermarket pack's price-sign-on-a-post (1.png), with
+## its board painted over by a CLOSED/OPEN panel. Every peer, built in _ready()
+## like the rest of the in-code visuals; redrawn from store_open each frame.
+const SIGN_SHEET := "res://assets/supermarket/1.png"
+const SIGN_REGION := Rect2i(580, 140, 41, 60)
+var _sign_board: Polygon2D
+var _sign_text: Label
+var _sign_hint: Label
+var _prep_label: Label
+var _open_banner_text := ""
+var _open_banner_t := 0.0
+
+func _build_store_sign() -> void:
+	var sign := Node2D.new()
+	sign.name = "StoreSign"
+	sign.position = STORE_SIGN_POS
+	add_child(sign)
+	move_child(sign, $Players.get_index())
+	var post := Sprite2D.new()
+	post.texture = load(SIGN_SHEET)
+	post.region_enabled = true
+	post.region_rect = Rect2(SIGN_REGION)
+	post.scale = Vector2(2.0, 2.0)
+	sign.add_child(post)
+	_sign_board = Polygon2D.new()
+	_sign_board.polygon = PackedVector2Array([Vector2(-38, -58), Vector2(38, -58), Vector2(38, -12), Vector2(-38, -12)])
+	sign.add_child(_sign_board)
+	_sign_text = Label.new()
+	_sign_text.position = Vector2(-38, -57)
+	_sign_text.size = Vector2(76, 44)
+	_sign_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sign_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_sign_text.add_theme_font_size_override("font_size", 17)
+	_sign_text.add_theme_color_override("font_color", Color(1, 1, 1))
+	sign.add_child(_sign_text)
+	_sign_hint = Label.new()
+	_sign_hint.text = "E: open the store"
+	_sign_hint.position = Vector2(-80, -86)
+	_sign_hint.size = Vector2(160, 24)
+	_sign_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sign_hint.add_theme_font_size_override("font_size", 15)
+	_sign_hint.add_theme_color_override("font_color", Color(1, 0.9, 0.3))
+	_sign_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_sign_hint.add_theme_constant_override("shadow_offset_x", 1)
+	_sign_hint.add_theme_constant_override("shadow_offset_y", 1)
+	sign.add_child(_sign_hint)
+
+## Every peer, every frame: the sign's face, its E hint (only for my own
+## player standing at it), the prep countdown banner, the STORE OPEN line.
+func _update_store_sign(delta: float) -> void:
+	var closed := shift_active and not store_open
+	_sign_board.color = Color(0.75, 0.12, 0.1) if closed else Color(0.1, 0.55, 0.2)
+	_sign_text.text = "CLOSED" if closed else "OPEN"
+	var me := multiplayer.get_unique_id() if Net.is_active() else 0
+	_sign_hint.visible = closed and players.has(me) and near_store_sign(players[me].global_position)
+	_open_banner_t = maxf(0.0, _open_banner_t - delta)
+	if closed and not _day_report_active:
+		_prep_label.visible = true
+		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
+		_prep_label.text = "PREP — store closed. Opens by itself in %d:%02d. Flip the sign at the entrance to open early." % [int(prep_time_left) / 60, int(prep_time_left) % 60]
+	elif _open_banner_t > 0.0 and not _day_report_active:
+		_prep_label.visible = true
+		_prep_label.add_theme_color_override("font_color", Color(0.45, 1, 0.45))
+		_prep_label.text = _open_banner_text
+	else:
+		_prep_label.visible = false
+
+## Host-only. by_peer = who flipped the sign; 0 = the prep ceiling ran out.
+## Ends prep: customers start arriving on the next restock tick, priority
+## orders start counting. The shift clock doesn't change — the rest of it is
+## the selling window.
+func open_store(by_peer: int) -> void:
+	if not multiplayer.is_server() or store_open or not shift_active or _day_report_active:
+		return
+	store_open = true
+	store_opened_by = by_peer
+	store_opened_at = shift_time_left
+	store_open_events_today += 1
+	_restock_timer = 0.0 # first customers right away, not up to 3s later
+	_announce_store_open.rpc(by_peer)
+	_order_timer = _priority_order_interval()
+	print("[Main] Store OPEN on Day %d — %s, %.0fs of prep left unused, %.0fs to sell" % [current_day, "sign flipped by %s" % player_display_name(by_peer) if by_peer != 0 else "prep ceiling ran out", prep_time_left, shift_time_left])
+	prep_time_left = 0.0
 
 ## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
 ## nothing previously reset shelf-fill state or the physical product pool
@@ -1621,6 +1766,10 @@ func _tick_priority_orders(delta: float) -> void:
 		order_time_left = maxf(0.0, order_time_left - delta)
 		if order_time_left <= 0.0:
 			_close_priority_order(false)
+	# WEEK 16: call-outs are a selling-window mechanic — the gap to the next
+	# one only runs once the store is open (open_store() restarts it).
+	if not store_open:
+		return
 	_order_timer -= delta
 	if _order_timer <= 0.0:
 		_order_timer = _priority_order_interval()
@@ -1823,6 +1972,22 @@ func _build_alert_layer() -> void:
 		l.add_theme_constant_override("shadow_offset_y", 3)
 		_finale_banner.add_child(l)
 	layer.add_child(_finale_banner)
+	# WEEK 16 — the prep countdown / STORE OPEN line: top of the screen, in
+	# its own band above the finale banner's.
+	_prep_label = Label.new()
+	_prep_label.name = "PrepLabel"
+	_prep_label.anchor_left = 0.0
+	_prep_label.anchor_right = 1.0
+	_prep_label.anchor_top = 0.07
+	_prep_label.anchor_bottom = 0.07
+	_prep_label.offset_bottom = 34.0
+	_prep_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_prep_label.add_theme_font_size_override("font_size", 20)
+	_prep_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
+	_prep_label.add_theme_constant_override("shadow_offset_x", 2)
+	_prep_label.add_theme_constant_override("shadow_offset_y", 2)
+	_prep_label.visible = false
+	layer.add_child(_prep_label)
 	# End-of-day report line for the orders, built in code like the rest of
 	# this layer (nothing new goes into a .tscn — see the header note on
 	# .tscn comments), placed just above the Pay line it feeds.
@@ -1894,51 +2059,24 @@ func _total_sold() -> int:
 ## below is the other half of this fix — it actively returns a stranded
 ## item to play rather than just no longer miscounting it.
 ##
-## WEEK 15 — the floor no longer refills from nothing: every unit comes out of
-## Delivery.gd's backstock (boxes unpacked on the Storage pad, plus the day's
-## opening stock). Same cap, same count, same spawn band; when the floor is
-## short, the section with the least stock out (among those with backstock)
-## gets the next unit. No backstock = no refill — that's the delivery job.
-## Delivery boxes are carryables too, but they aren't stock: never counted.
-func _restock_products() -> void:
-	var cap := _product_cap()
-	var current := 0
-	var per_section := {}
-	for obj in get_tree().get_nodes_in_group("carryable"):
-		if obj.is_in_group("delivery_box") or obj.is_queued_for_deletion():
-			continue
-		if not is_break_room_at_pos(obj.global_position) and not _is_out_of_bounds(obj.global_position):
-			current += 1
-			var sec := _section_of_color(obj.get_node("Polygon2D").color)
-			per_section[sec] = per_section.get(sec, 0) + 1
-	while current < cap:
-		var pick := ""
-		for section in _unlocked_sections():
-			var name_: String = section["name"]
-			if delivery.backstock.get(name_, 0) > 0 and (pick == "" or per_section.get(name_, 0) < per_section.get(pick, 0)):
-				pick = name_
-		if pick == "" or not delivery.take_backstock(pick):
-			return
-		_spawn_product_for(pick)
-		per_section[pick] = per_section.get(pick, 0) + 1
-		current += 1
-
+## WEEK 15 turned that top-up into a backstock feed from the unpack pad; WEEK
+## 16 removed it altogether: stock unpacked at the pad comes out as loose
+## product in Storage that the crew carries to the shelves by hand, like any
+## other carried item (Delivery.gd). There's no mid-shift refill from nothing
+## any more — no box runs, no stock.
 func _product_cap() -> int:
 	return _product_baseline() + PRODUCT_PER_EXTRA_PLAYER * max(0, players.size() - 1)
 
-## WEEK 15 — the day's opening floor, as backstock: the old opening top-up
-## (the floor cap, spread over the unlocked sections by random pick) made
-## even, with any remainder to random sections. Host-only (randi).
-func _opening_backstock() -> Dictionary:
+## WEEK 16 — the day's opening floor: OPENING_STOCK_FRACTION of the old floor
+## cap, spread evenly over the open sections (any remainder to random ones),
+## straight into each section's spawn band. 0 by default: every unit of stock
+## arrives by truck. Host-only.
+func _spawn_opening_stock() -> void:
 	var names: Array = _unlocked_sections().map(func(s): return s["name"])
-	var out := {}
-	var cap := roundi(_product_cap() * OPENING_STOCK_FRACTION)
-	for i in names.size():
-		out[names[i]] = cap / names.size()
-	for i in cap % names.size():
-		var n: String = names[randi() % names.size()]
-		out[n] += 1
-	return out
+	var n := roundi(_product_cap() * opening_stock_fraction)
+	var even := n - n % names.size()
+	for i in n:
+		_spawn_product_for(names[i % names.size()] if i < even else names[randi() % names.size()])
 
 func _section_of_color(color: Color) -> String:
 	for sec_name in SECTION_COLORS:
@@ -2374,18 +2512,18 @@ func _process(delta: float) -> void:
 	# the spawners themselves being authority-driven), but the timer is
 	# harmless to tick on every peer, so it's not worth an extra guard here.
 	if shift_active and multiplayer.is_server():
-		if _customer_grace_timer > 0.0:
-			_customer_grace_timer = max(0.0, _customer_grace_timer - delta)
+		# WEEK 16: the prep ceiling — the store opens on its own when it runs
+		# out, whether or not anyone flipped the sign.
+		if not store_open:
+			prep_time_left = maxf(0.0, prep_time_left - delta)
+			if prep_time_left <= 0.0:
+				open_store(0)
 		_restock_timer -= delta
 		if _restock_timer <= 0.0:
 			_restock_timer = RESTOCK_CHECK_INTERVAL
-			_restock_products()
 			_rescue_stranded_products()
-			# Customers wait out CUSTOMER_GRACE_PERIOD (see _start_shift())
-			# before this ever fires — products above are never held back
-			# the same way, so there's something to stock during the grace
-			# window, not just an empty floor.
-			if _customer_grace_timer <= 0.0:
+			# No customers until the store is open (WEEK 16 prep phase).
+			if store_open:
 				_restock_customers()
 		_tick_priority_orders(delta)
 		ambience.tick_host(delta)
@@ -2426,7 +2564,9 @@ func _process(delta: float) -> void:
 	if manager.active:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
 	if delivery.active:
-		lines.append("DELIVERY truck %s (%d on it) | boxes out %d | unpacked today %d | backstock %d" % ["at the dock" if delivery.truck_parked() else ("away" if delivery.truck_offset >= delivery.TRUCK_AWAY_OFFSET else "moving"), delivery.truck_load.size(), delivery.boxes_waiting(), delivery.boxes_unpacked_today, delivery.backstock_total()])
+		lines.append("DELIVERY truck %s (%d on it) | boxes out %d | unpacked today %d" % ["at the dock" if delivery.truck_parked() else ("away" if delivery.truck_offset >= delivery.TRUCK_AWAY_OFFSET else "moving"), delivery.truck_load.size(), delivery.boxes_waiting(), delivery.boxes_unpacked_today])
+	if shift_active:
+		lines.append("STORE %s" % ("OPEN" if store_open else "CLOSED — prep, opens by itself in %.0fs" % prep_time_left))
 	if ambience.active:
 		lines.append("LIGHTS %s  |  SPILLS on the floor: %d" % ["FLICKERING (%.0f%%)" % (ambience.brightness * 100.0) if ambience.brightness < 1.0 or ambience.event_playing() else "ok", ambience.spills.size()])
 	if order_section != "":
@@ -2447,3 +2587,4 @@ func _process(delta: float) -> void:
 	# bot pass — run earlier in _process(), the host's banner showed a new
 	# priority order one frame late (clients were fine, they get it by sync).
 	_update_alert_layer(delta)
+	_update_store_sign(delta)
