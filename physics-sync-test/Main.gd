@@ -447,7 +447,7 @@ extends Node2D
 ##
 ##   PRIORITY ORDERS — Main.gd
 ##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
-##     PRIORITY_ORDER_WINDOW_BY_PLAYERS   45 / 35 / 30 / 25 s  to fill one, 1/2/3/4 players
+##     PRIORITY_ORDER_WINDOW_BY_PLAYERS   45 / 40 / 35 / 30 s  to fill one, 1/2/3/4 players
 ##     PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW  5 s  call-out gap >= window + this
 ##     PRIORITY_ORDER_QTY_MIN / _MAX       3 / 5  (capped by what the section can take)
 ##     PRIORITY_ORDER_QTY_PER_EXTRA_PLAYER 2
@@ -547,10 +547,12 @@ const PRIORITY_ORDER_FIRST_AFTER_OPEN := 5.0
 ## one item per 11-12s from the pad, so most misses were near-misses (2/3,
 ## 2/4); 45s is the best measured without the window eating the call-outs.
 ## CREW: the average order is 4 items for one player, 6/8/10 for 2/3/4
-## (QTY_PER_EXTRA_PLAYER) — 3 / 2.7 / 2.5 per person — so 35/30/25s gives each
-## crew about the solo per-item pace, a touch tighter at 4 so a full crew
-## isn't handed it. FLAGGED placeholders, bot-sim tuned.
-const PRIORITY_ORDER_WINDOW_BY_PLAYERS := [45.0, 35.0, 30.0, 25.0]
+## (QTY_PER_EXTRA_PLAYER) — 3 / 2.7 / 2.5 per person — but a crew doesn't haul
+## at N x the solo pace (one pad, one walk, getting in each other's way): at
+## 35s the 2-player co-op sim filled 1 of 6 (most misses 2-5 of 6-7). So
+## 40/35/30s — still shorter per crew size, still tighter per item than solo
+## at 4. FLAGGED placeholders, bot-sim tuned.
+const PRIORITY_ORDER_WINDOW_BY_PLAYERS := [45.0, 40.0, 35.0, 30.0]
 ## An order is always closed before the next call-out is due (Week 11's rule):
 ## the gap to the next one is at least the window plus this.
 const PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW := 5.0
