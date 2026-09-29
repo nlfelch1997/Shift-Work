@@ -528,6 +528,13 @@ const WRITEUP_PENALTY := 25
 ## sim in tools/hazards_test.gd, not a human playtest.
 const PRIORITY_ORDER_START_DAY := 5
 const PRIORITY_ORDER_INTERVAL := 45.0
+## WEEK 16: call-outs only run once the store is open. Before, their timer ran
+## through the grace period too, so the selling window already had one due
+## soon after customers arrived — 3 per selling window on Days 5-7. Starting
+## the gap from zero at opening dropped that to 2 (found by the Days 1-7 solo
+## sim); the first one 5s after opening restores 3 (Day 5-6: 5/50/95s of a
+## 111s window; Day 7: 5/37/69s of 96s).
+const PRIORITY_ORDER_FIRST_AFTER_OPEN := 5.0
 const PRIORITY_ORDER_WINDOW := 15.0
 const PRIORITY_ORDER_MULTIPLIER := 1.5
 const PRIORITY_ORDER_QTY_MIN := 3
@@ -1612,7 +1619,7 @@ func open_store(by_peer: int) -> void:
 	store_open_events_today += 1
 	_restock_timer = 0.0 # first customers right away, not up to 3s later
 	_announce_store_open.rpc(by_peer)
-	_order_timer = _priority_order_interval()
+	_order_timer = PRIORITY_ORDER_FIRST_AFTER_OPEN
 	print("[Main] Store OPEN on Day %d — %s, %.0fs of prep left unused, %.0fs to sell" % [current_day, "sign flipped by %s" % player_display_name(by_peer) if by_peer != 0 else "prep ceiling ran out", prep_time_left, shift_time_left])
 	prep_time_left = 0.0
 
