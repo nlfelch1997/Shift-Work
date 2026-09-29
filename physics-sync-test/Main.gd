@@ -447,7 +447,8 @@ extends Node2D
 ##
 ##   PRIORITY ORDERS — Main.gd
 ##     PRIORITY_ORDER_INTERVAL            45.0 s  between call-outs
-##     PRIORITY_ORDER_WINDOW              15.0 s  to fill one
+##     PRIORITY_ORDER_WINDOW_BY_PLAYERS   45 / 35 / 30 / 25 s  to fill one, 1/2/3/4 players
+##     PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW  5 s  call-out gap >= window + this
 ##     PRIORITY_ORDER_QTY_MIN / _MAX       3 / 5  (capped by what the section can take)
 ##     PRIORITY_ORDER_QTY_PER_EXTRA_PLAYER 2
 ##     PRIORITY_ORDER_RESULT_SECONDS       3.0 s  FILLED/missed line on the banner
@@ -540,9 +541,16 @@ const PRIORITY_ORDER_FIRST_AFTER_OPEN := 5.0
 ## come out of Storage by hand, so a solo crew filled 1 of 9 orders (it was 5
 ## of 10 when stock sat on the section floor). The order's SIZE already grows
 ## with the crew (QTY_PER_EXTRA_PLAYER); the window shrinks the other way, as
-## a bigger crew splits the Storage run. Numbers from the Days 5-7 solo sim
-## sweep and the per-person haul load — see the WEEK 17 header note.
-const PRIORITY_ORDER_WINDOW_BY_PLAYERS := [15.0, 15.0, 15.0, 15.0]
+## a bigger crew splits the Storage run.
+## SOLO 45s: the Days 5-7 solo sim sweep (filled/called, 2-4 runs each) —
+## 15s 0/18, 25s 4/14, 35s 7/24, 40s 6/24, 45s 8/20. A solo player hauls about
+## one item per 11-12s from the pad, so most misses were near-misses (2/3,
+## 2/4); 45s is the best measured without the window eating the call-outs.
+## CREW: the average order is 4 items for one player, 6/8/10 for 2/3/4
+## (QTY_PER_EXTRA_PLAYER) — 3 / 2.7 / 2.5 per person — so 35/30/25s gives each
+## crew about the solo per-item pace, a touch tighter at 4 so a full crew
+## isn't handed it. FLAGGED placeholders, bot-sim tuned.
+const PRIORITY_ORDER_WINDOW_BY_PLAYERS := [45.0, 35.0, 30.0, 25.0]
 ## An order is always closed before the next call-out is due (Week 11's rule):
 ## the gap to the next one is at least the window plus this.
 const PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW := 5.0
