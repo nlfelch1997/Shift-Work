@@ -1545,6 +1545,9 @@ const STORE_SIGN_RANGE := 70.0
 ## Host diagnostic: times open_store() actually opened the store today (must
 ## only ever be 0 or 1 — the sign race test checks it).
 var store_open_events_today := 0
+## Test hook (WEEK 17): store open, hazards running, but no new customers —
+## what the tests written before the prep phase meant by "hold the grace".
+var test_hold_customers := false
 
 func near_store_sign(pos: Vector2) -> bool:
 	return pos.distance_to(STORE_SIGN_POS) <= STORE_SIGN_RANGE
@@ -2563,7 +2566,7 @@ func _process(delta: float) -> void:
 			_restock_timer = RESTOCK_CHECK_INTERVAL
 			_rescue_stranded_products()
 			# No customers until the store is open (WEEK 16 prep phase).
-			if store_open:
+			if store_open and not test_hold_customers:
 				_restock_customers()
 		_tick_priority_orders(delta)
 		# WEEK 17: no brownouts or spills during prep — their clocks (first

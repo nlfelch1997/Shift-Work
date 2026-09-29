@@ -247,6 +247,9 @@ func manager_overlaps_forklift(margin := 15.0) -> bool:
 
 func _run_interact() -> void:
 	await wait_until(func(): return main.shift_active, 10.0)
+	# WEEK 17: the forklift and manager only run once the store is open.
+	main.test_hold_customers = true
+	main.open_store(0)
 	check(main.current_day == 5, "started on Day 5")
 	check(fk().active and fk().visible, "Day 5: forklift active")
 	check(mgr().active and mgr().visible, "Day 5: manager active")
@@ -1036,8 +1039,11 @@ func _run_orders() -> void:
 
 	# Test control: no auto orders, no customers buying our stock, manager
 	# and forklift parked far away, player in the break room.
+	# WEEK 17: hazards only run once the store is open — open it, hold the
+	# customers instead of the prep.
+	main.test_hold_customers = true
+	main.open_store(0)
 	main._order_timer = 1.0e9
-	main.prep_time_left = 1.0e9
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
 	player().teleport_to(Vector2(480, 270))
@@ -1492,7 +1498,9 @@ func _run_net_orders_host() -> void:
 	# manager and forklift live, everyone stocking. Then the bell.
 	release_manager()
 	fk()._pause_timer = 0.0
-	main.prep_time_left = 0.0
+	main.test_hold_customers = false
+	if not main.store_open:
+		main.open_store(0)
 	main._order_timer = 3.0
 	main.shift_time_left = 115.0 # call-outs at ~3s, 48s, 93s
 	_net_view = {"orders": [], "results": [], "open_frames": 0, "banner_frames": 0, "text_bad": 0}
@@ -1648,9 +1656,12 @@ func clear_strip(y: float, x0: float, x1: float) -> void:
 			move_body(obj, Vector2(q.x, 200.0 if q.y < 810.0 else q.y + 200.0))
 
 func park_everything() -> void:
+	# WEEK 17: the hazards under test only run once the store is open — open
+	# it (customers held) rather than holding the prep phase.
+	main.test_hold_customers = true
+	main.open_store(0)
 	fk()._pause_timer = 1.0e9
 	pin_manager(Vector2(480, 1350), 0.0)
-	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -2332,7 +2343,9 @@ func _run_net_ambience_host() -> void:
 	# --- E4: free play.
 	release_manager()
 	fk()._pause_timer = 0.0
-	main.prep_time_left = 0.0
+	main.test_hold_customers = false
+	if not main.store_open:
+		main.open_store(0)
 	main._order_timer = 3.0
 	amb()._lights_timer = 4.0
 	amb()._spill_timer = 0.5
