@@ -1758,7 +1758,11 @@ func _run_net_orders_client() -> void:
 	var hv: Dictionary = n3.get("view", {})
 	print("NET  %s view: %s" % [who, str(_net_view)])
 	check(_net_view["banner_frames"] == _net_view["open_frames"] and _net_view["open_frames"] > 0 and _net_view["text_bad"] == 0, "%s: banner up for every open-order frame on my screen (%d/%d), text matched the replicated counters" % [who, _net_view["banner_frames"], _net_view["open_frames"]])
-	check(str(_net_view["orders"]) == str(hv.get("orders")), "%s: same free-play orders as the host: %s vs %s" % [who, str(_net_view["orders"]), str(hv.get("orders"))])
+	# (Through JSON, so the host's quantities come back as floats: compare as
+	# [section, int] pairs — a 3 vs 3.0 string mismatch used to fail this.)
+	var host_orders: Array = hv.get("orders", []).map(func(o): return [o[0], int(o[1])])
+	var my_orders: Array = _net_view["orders"].map(func(o): return [o[0], int(o[1])])
+	check(my_orders == host_orders, "%s: same free-play orders as the host: %s vs %s" % [who, str(my_orders), str(host_orders)])
 	check(str(_net_view["results"]) == str(hv.get("results")), "%s: same FILLED/missed results as the host: %s vs %s" % [who, str(_net_view["results"]), str(hv.get("results"))])
 	check(main.report_order_label.text == n3.get("orders", "") and main.report_pay_label.text == n3.get("pay", "") and main.report_today_label.text == n3.get("today", ""), "%s: report matches the host's: '%s' | '%s'" % [who, main.report_order_label.text, main.report_pay_label.text])
 	_net_write("result_%d.json" % me, {"fails": fails})
@@ -3896,7 +3900,11 @@ func _run_box_cycle() -> void:
 			steer(Vector2.ZERO)
 			await wait(0.3)
 			var spot: Vector2 = d.RECEIVING_SPOTS[3]
-			player().teleport_to(spot + Vector2(0, -110))
+			# Off the box's axis: started exactly on its approach point, the brain
+			# sometimes stood frozen there for a whole trial after an earlier
+			# trial timed out (seen on both codebases; cause not pinned down —
+			# harness only, the sims never start a trial there).
+			player().teleport_to(spot + Vector2(40, -150))
 			d.drop_box(spot, sec)
 			await wait(0.3)
 			var ev0: int = d.unpack_event_id
