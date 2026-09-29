@@ -566,7 +566,8 @@ func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 			continue
 		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or recent_drops.has(obj):
 			continue
-		# (Storage too: stock unpacked at the pad with UNPACK_TO_SECTION off.)
+		# (Storage too: stock knocked back there. WEEK 18: the pads are in the
+		# sections now.)
 		if not main.is_unlocked_at_pos(obj.global_position) and not main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
 			continue
 		if pick_slot(obj.global_position, obj).is_empty():
@@ -622,12 +623,14 @@ func _run_solo() -> void:
 		await wait_until(func(): return main.shift_active and main.current_day == day, 20.0)
 		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
 		var start_sold: int = main._sold_at_day_start
+		_haul = {"walk_px": 0.0, "last_pos": null, "box_t": {}, "carry_s": [], "item_born": {}, "item_s": [], "box_items": {}, "box_cycle_s": [], "seen": {}, "last_event": dl().unpack_event_id, "last_carry": null, "open_placed": 0, "open_called": 0, "item_carry": null, "last_pos_c": null, "carry_item_s": [], "carry_item_px": []}
 		print("SOLO  Day %d start — %.0fs shift, sections %s, product cap %d" % [day, main.shift_time_left, str(main._unlocked_sections().map(func(s): return s["name"])), main._product_baseline()])
 		await _play_shift()
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
 		var sold: int = main._total_sold() - main._sold_at_day_start
 		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | trucks %d, boxes unpacked %d | clock %.0fs = prep %.0fs (opened by %s, ceiling %.0fs) + selling %.0fs, lights events while open %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, dl().deliveries_today, dl().boxes_unpacked_today, stats["shift_len"], stats.get("opened_at", -1.0), stats.get("opened_by", "?"), stats["grace"], stats["shift_len"] - stats.get("opened_at", 0.0), main.ambience.lights_events_today - stats.get("lights_at_open", 0), main.report_pay_label.text]
+		line += " | " + _haul_line()
 		print(line)
 		day_stats.append(line)
 		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
@@ -689,6 +692,7 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 		for o in get_nodes_in_group("carryable"):
 			if o.get_node("Carryable").carrier_id == me:
 				my_carry = o
+		_track_haul(p, my_carry)
 		# bookkeeping
 		var stunned: bool = p._stun_timer > 0.0
 		if stunned and not prev_stun:
@@ -727,14 +731,15 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 			_trace_t = 1.0
 			print("TRACE t=%.0f pos=%s carry=%s obj=%s phase=%d loose=%d boxes=%d open=%s floor=%d" % [stats["shift_len"] - main.shift_time_left, str(pos.round()), my_carry.name if my_carry else "-", obj.name if obj and is_instance_valid(obj) else "-", box_phase, _loose_stockable(), boxes().size(), str(main.store_open), floor_total()])
 		if my_carry and my_carry.is_in_group("delivery_box"):
-			# WEEK 15: carrying a box -> onto the pad, set it down with E. From
-			# the receiving side (east), so walking back doesn't cross it.
-			var stand_at: Vector2 = dl().PAD_CENTER + Vector2(58, 0)
+			# WEEK 15: carrying a box -> onto the pad, set it down with E.
+			# WEEK 18: its own section's pad, from the aisle side (south —
+			# every pad has open floor below it), facing up.
+			var stand_at: Vector2 = _brain_pad_stand(my_carry)
 			if pos.distance_to(stand_at) > 6.0:
 				goal = waypoint(pos, stand_at)
 				dir = (goal - pos).normalized() * (0.5 if pos.distance_to(stand_at) < 30.0 else 1.0)
 			else:
-				steer(Vector2.LEFT)
+				steer(Vector2.UP if _per_section_pads() else Vector2.LEFT)
 				await physics_frame
 				await physics_frame
 				steer(Vector2.ZERO)
@@ -786,7 +791,7 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 						approach_phase = 0 # re-approach
 		else:
 			job = {}
-			if obj == null or not is_instance_valid(obj) or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or (obj.is_in_group("delivery_box") and dl().on_pad(obj.global_position)):
+			if obj == null or not is_instance_valid(obj) or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or (obj.is_in_group("delivery_box") and _on_own_pad(obj)):
 				obj = pick_product(p)
 				box_phase = 0
 				# WEEK 15: little loose stock left to shelve and a box waiting
@@ -795,6 +800,14 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 					var bx := _pick_box(p)
 					if bx != null:
 						obj = bx
+				# WEEK 18: an order's open and none of its section's stock is
+				# loose -> a human goes and gets that section's box.
+				# --order-blind keeps the Week 15-17 brain (boxes only by the
+				# BOX_RUN_BELOW rule, nearest first).
+				if order_box_aware and main.order_section != "" and (obj == null or not obj.get_node("Polygon2D").color.is_equal_approx(main.SECTION_COLORS[main.order_section])):
+					var ob := _pick_box(p, main.order_section)
+					if ob != null:
+						obj = ob
 			if obj != null and obj.is_in_group("delivery_box"):
 				# Come at it from the north and stop short (walking into it shoves it).
 				var pre: Vector2 = obj.global_position + Vector2(0, -110)
@@ -869,6 +882,81 @@ func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
 		steer(dir)
 	steer(Vector2.ZERO)
 
+## HAUL METRICS (pad-move before/after): a box's trip (picked up out of
+## RECEIVING -> unpacked), each unpacked item's trip (unpacked -> on a
+## shelf), a box's whole cycle (picked up -> its last item shelved), and the
+## player's walked distance per item placed. Solo only (the host's own
+## player; every product today comes out of a box, the store opens empty).
+var _haul := {}
+
+func _now() -> float:
+	return stats["shift_len"] - main.shift_time_left
+
+func _track_haul(p: Node2D, my_carry: Node2D) -> void:
+	if _haul.is_empty():
+		return
+	var t := _now()
+	if _haul["last_pos"] != null:
+		var step: float = p.global_position.distance_to(_haul["last_pos"])
+		if step < 60.0: # not a teleport
+			_haul["walk_px"] += step
+	_haul["last_pos"] = p.global_position
+	# Box picked up by me.
+	if my_carry and my_carry.is_in_group("delivery_box") and not _haul["box_t"].has(my_carry.name):
+		_haul["box_t"][my_carry.name] = t
+	if my_carry and my_carry.is_in_group("delivery_box"):
+		_haul["last_carry"] = my_carry.name
+	# An item in my hands: pickup time and distance walked, per carry.
+	if my_carry and not my_carry.is_in_group("delivery_box"):
+		if _haul["item_carry"] == null or _haul["item_carry"][0] != my_carry:
+			_haul["item_carry"] = [my_carry, t, 0.0]
+		elif _haul["last_pos_c"] != null:
+			_haul["item_carry"][2] += minf(60.0, p.global_position.distance_to(_haul["last_pos_c"]))
+	elif _haul["item_carry"] != null:
+		var ic: Array = _haul["item_carry"]
+		if is_instance_valid(ic[0]) and (_is_placed(ic[0]) or _at_a_slot(ic[0])):
+			_haul["carry_item_s"].append(t - ic[1])
+			_haul["carry_item_px"].append(ic[2])
+		_haul["item_carry"] = null
+	_haul["last_pos_c"] = p.global_position
+	# A box came apart: the products that appeared since last frame are its.
+	var born := []
+	for o in get_nodes_in_group("carryable"):
+		if o.is_in_group("delivery_box") or _haul["seen"].has(o):
+			continue
+		_haul["seen"][o] = true
+		born.append(o)
+	if dl().unpack_event_id != _haul["last_event"]:
+		_haul["last_event"] = dl().unpack_event_id
+		var bname = _haul["last_carry"]
+		if bname != null and _haul["box_t"].has(bname):
+			_haul["carry_s"].append(t - _haul["box_t"][bname])
+			_haul["box_items"][bname] = {"t0": _haul["box_t"][bname], "left": born.size()}
+			for o in born:
+				_haul["item_born"][o] = [t, bname]
+		_haul["last_carry"] = null
+	# Items shelved.
+	for o in _haul["item_born"].keys():
+		if not is_instance_valid(o):
+			_haul["item_born"].erase(o)
+			continue
+		if _is_placed(o):
+			var rec: Array = _haul["item_born"][o]
+			_haul["item_s"].append(t - rec[0])
+			var bi: Dictionary = _haul["box_items"][rec[1]]
+			bi["left"] -= 1
+			if bi["left"] == 0:
+				_haul["box_cycle_s"].append(t - bi["t0"])
+			_haul["item_born"].erase(o)
+
+func _mean(a: Array) -> float:
+	return 0.0 if a.is_empty() else a.reduce(func(x, y): return x + y, 0.0) / a.size()
+
+func _haul_line() -> String:
+	if _haul.is_empty():
+		return ""
+	return "HAUL boxes %d carry %.1fs avg | items shelved %d, pad->shelf %.1fs avg | full box cycles %d, %.1fs avg | walked %.0fpx, %.0fpx per place-press | item carries %d, %.1fs / %.0fpx avg pickup->shelf" % [_haul["carry_s"].size(), _mean(_haul["carry_s"]), _haul["item_s"].size(), _mean(_haul["item_s"]), _haul["box_cycle_s"].size(), _mean(_haul["box_cycle_s"]), _haul["walk_px"], _haul["walk_px"] / maxf(1.0, stats["placed"]), _haul["carry_item_s"].size(), _mean(_haul["carry_item_s"]), _mean(_haul["carry_item_px"])]
+
 ## WEEK 15 — the solo brain's delivery job.
 var trace := "--trace" in OS.get_cmdline_user_args()
 ## WEEK 16 — the solo brain's prep phase.
@@ -916,12 +1004,33 @@ func _teammate_closer(p: Node2D, obj: Node2D) -> bool:
 			return true
 	return false
 
-## Nearest free box that isn't on the pad already.
-func _pick_box(p: Node2D) -> Node2D:
+## The solo brain also runs against the pre-Week-18 code (one Storage pad,
+## PAD_CENTER) for the before/after pad comparison, unchanged from how it
+## played there: in from the receiving side (east), facing west.
+func _per_section_pads() -> bool:
+	return dl().has_method("pad_center")
+
+func _brain_pad_stand(box: Node2D) -> Vector2:
+	if _per_section_pads():
+		return dl().pad_center(box.get_meta("section")) + Vector2(0, 58)
+	return dl().PAD_CENTER + Vector2(58, 0)
+
+func _on_own_pad(box: Node2D) -> bool:
+	if _per_section_pads():
+		return dl().on_pad(box.global_position, box.get_meta("section"))
+	return dl().on_pad(box.global_position)
+
+## Nearest free box that isn't on its pad already (one set down on the wrong
+## pad is just a box on the floor); only_section: one of that section's.
+var order_box_aware := not "--order-blind" in OS.get_cmdline_user_args()
+
+func _pick_box(p: Node2D, only_section := "") -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
 	for b in get_nodes_in_group("delivery_box"):
-		if b.is_queued_for_deletion() or b.get_node("Carryable").carrier_id != 0 or dl().on_pad(b.global_position):
+		if b.is_queued_for_deletion() or b.get_node("Carryable").carrier_id != 0 or _on_own_pad(b):
+			continue
+		if only_section != "" and b.get_meta("section") != only_section:
 			continue
 		if _teammate_closer(p, b):
 			continue
@@ -2768,17 +2877,24 @@ func haul_box(box: Node2D) -> bool:
 	var got := await wait_until(func(): return is_instance_valid(box) and box.get_node("Carryable").carrier_id == me, 1.0)
 	if not got:
 		return false
-	# Drop point is CARRY_OFFSET in front of the player: stand west of the
-	# pad center facing east.
-	await walk_to(dl().PAD_CENTER + Vector2(-60, 0), 6.0, 25.0)
-	steer(Vector2.RIGHT)
+	return await carry_box_to_pad(box, box.get_meta("section"))
+
+## Carries the box I'm holding to `pad_section`'s pad (WEEK 18: one per
+## section — normally the box's own) and sets it down with E, standing south
+## of the pad facing north (the drop point is carry_distance in front). True
+## if it was set down on that pad or unpacked.
+func carry_box_to_pad(box: Node2D, pad_section: String) -> bool:
+	var c: Vector2 = dl().pad_center(pad_section)
+	await walk_to(c + Vector2(0, 140), 12.0, 40.0)
+	await walk_to(c + Vector2(0, 60), 5.0, 6.0)
+	steer(Vector2.UP)
 	await physics_frame
 	await physics_frame
 	steer(Vector2.ZERO)
 	await wait(0.15)
 	await tap(act + "interact")
 	await wait_until(func(): return not is_instance_valid(box) or box.get_node("Carryable").carrier_id != me, 1.0)
-	return not is_instance_valid(box) or dl().on_pad(box.global_position)
+	return not is_instance_valid(box) or dl().on_pad(box.global_position, pad_section)
 
 func _run_delivery() -> void:
 	await wait_until(func(): return main.shift_active and main.current_day >= 3, 20.0)
@@ -2857,25 +2973,57 @@ func _run_delivery() -> void:
 	move_body(b0, home0)
 	await wait(0.3)
 
+	# --- D4b (WEEK 18): carried to ANOTHER section's pad and set down with E,
+	# a box stays a box (the pad says "wrong pad"); even left at rest there,
+	# it never unpacks. Then picked back up for D5.
+	var sec: String = b0.get_meta("section")
+	var wrong: String = names.filter(func(n): return n != sec)[0] if names.size() > 1 else ""
+	if wrong != "":
+		var ev0: int = d.unpack_event_id
+		var nu: int = d.boxes_unpacked_today
+		await walk_to(b0.global_position + Vector2(0, -110), 12.0, 25.0)
+		await walk_to(b0.global_position + Vector2(0, -50), 4.0, 5.0)
+		await tap(act + "interact")
+		await wait_until(func(): return b0.get_node("Carryable").carrier_id == me, 1.0)
+		var on_wrong := await carry_box_to_pad(b0, wrong)
+		await wait(d.PAD_SETTLE_TIME + 1.0)
+		check(on_wrong and is_instance_valid(b0) and d.pad_at(b0.global_position) == wrong and d.boxes_unpacked_today == nu, "D4b: a %s box set down on the %s pad stays a box (at %s, unpacked today %d)" % [sec, wrong, str(b0.global_position.round()), d.boxes_unpacked_today])
+		check(d.unpack_event_id == ev0 + 1 and not d.unpack_event_ok and d.unpack_event_pad == wrong and d._unpack_labels[wrong].visible, "D4b: ...and that pad flashes '%s'" % d.unpack_event_text.replace("\n", " "))
+		await shot("d4b_wrong_pad")
+		# Pick it back up (from the south: the wall's to the north) and take it
+		# on to its own pad — D5.
+		await walk_to(b0.global_position + Vector2(0, 50), 4.0, 5.0)
+		await tap(act + "interact")
+		await wait_until(func(): return b0.get_node("Carryable").carrier_id == me, 1.0)
+		check(b0.get_node("Carryable").carrier_id == me, "D4b: picked it back up off the wrong pad")
+
 	# --- D5 (WEEK 16): carry one onto the pad with the real keys: it comes
 	# apart into UNITS_PER_BOX loose products of its section, around the pad
-	# (not on it), in Storage — and nothing else puts stock anywhere.
-	var sec: String = b0.get_meta("section")
+	# (not on it) — WEEK 18: its own section's pad, in that section — and
+	# nothing else puts stock anywhere.
+	var t_haul := Time.get_ticks_msec()
 	var before_ids := {}
 	for o in get_nodes_in_group("carryable"):
 		before_ids[o] = true
 	var unpacked0: int = d.boxes_unpacked_today
-	var hauled := await haul_box(b0)
+	var hauled := false
+	if b0.get_node("Carryable").carrier_id == me:
+		hauled = await carry_box_to_pad(b0, sec) # D4b left it in my hands
+	else:
+		hauled = await haul_box(b0)
 	await wait_until(func(): return d.boxes_unpacked_today > unpacked0, 2.0)
-	check(hauled and d.boxes_unpacked_today == unpacked0 + 1 and not is_instance_valid(b0), "D5: box carried onto the pad with E/E and unpacked (%d today)" % d.boxes_unpacked_today)
+	check(hauled and d.boxes_unpacked_today == unpacked0 + 1 and not is_instance_valid(b0), "D5: %s box carried to the %s pad with E/E (%.1fs) and unpacked (%d today)" % [sec, sec, (Time.get_ticks_msec() - t_haul) / 1000.0, d.boxes_unpacked_today])
 	await wait(0.6)
 	var spilled := get_nodes_in_group("carryable").filter(func(o): return not before_ids.has(o) and not o.is_in_group("delivery_box"))
 	var right_sec: bool = spilled.all(func(o): return main._section_of_color(o.get_node("Polygon2D").color) == sec)
-	var by_pad: bool = spilled.all(func(o): return main._grid_cell_of(o.global_position) == main.STORAGE_GRID_POS and not d.on_pad(o.global_position) and o.global_position.distance_to(d.PAD_CENTER) < d.SPILL_RING_MAX + 40.0)
+	var pc: Vector2 = d.pad_center(sec)
+	var by_pad: bool = spilled.all(func(o): return main._grid_cell_of(o.global_position) == section_by_name(sec)["grid_pos"] and not d.on_pad(o.global_position) and o.global_position.distance_to(pc) < d.SPILL_RING_MAX + 40.0)
+	var off_slots: bool = spilled.all(func(o): return not _at_a_slot(o) and not _is_placed(o))
 	var calm: bool = spilled.all(func(o): return o.linear_velocity.length() < 60.0)
 	print("DLV  unpacked into: %s" % str(spilled.map(func(o): return [o.name, o.global_position.round()])))
 	check(spilled.size() == d.UNITS_PER_BOX and right_sec, "D5: %d loose %s products came out of it" % [spilled.size(), sec])
-	check(by_pad and calm, "D5: ...lying round the pad, off it, in Storage, at rest (none flung)")
+	check(by_pad and calm, "D5: ...lying round the pad, off it, in %s, at rest (none flung)" % sec)
+	check(off_slots, "D5: ...none of them landed on a shelf slot (nothing stocks itself)")
 	await shot("d5_unpacked")
 	# Carry one of them to its shelf by hand (E to pick up, C at the slot).
 	var item: RigidBody2D = spilled[0]
@@ -2903,17 +3051,21 @@ func _run_delivery() -> void:
 	await wait(main.RESTOCK_CHECK_INTERVAL + 1.0)
 	check(floor_total() == before - 2, "D5: nothing refills on its own (floor %d -> %d after %.0fs)" % [before, floor_total(), main.RESTOCK_CHECK_INTERVAL + 1.0])
 
-	# --- D6: a box thrown across the pad doesn't unpack (it has to be set down).
-	var b1: RigidBody2D = boxes()[0]
+	# --- D6: a box thrown across its own pad doesn't unpack (it has to be set
+	# down). Dry Goods' pad: open floor on both sides (every truck carries a
+	# Dry Goods box — each open section gets one).
+	var dg: Array = boxes().filter(func(b): return b.get_meta("section") == "Dry Goods")
+	var b1: RigidBody2D = dg[0] if not dg.is_empty() else boxes()[0]
+	var c6: Vector2 = d.pad_center(b1.get_meta("section"))
 	var n6: int = d.boxes_unpacked_today
-	player().teleport_to(d.PAD_CENTER + Vector2(0, -160)) # out of the box's path
+	player().teleport_to(c6 + Vector2(0, 160)) # out of the box's path
 	await wait(0.2)
-	move_body(b1, d.PAD_CENTER + Vector2(-d.PAD_HALF - 40, 0))
+	move_body(b1, c6 + Vector2(-d.PAD_HALF - 40, 0))
 	await physics_frame
 	PhysicsServer2D.body_set_state(b1.get_rid(), PhysicsServer2D.BODY_STATE_LINEAR_VELOCITY, Vector2(750, 0))
 	await wait(1.5)
 	var end_x: float = b1.global_position.x if is_instance_valid(b1) else -1.0
-	check(end_x > d.PAD_CENTER.x + d.PAD_HALF and d.boxes_unpacked_today == n6, "D6: a box sliding across the pad at speed doesn't unpack (came to rest at x=%.0f, past the pad's edge %.0f)" % [end_x, d.PAD_CENTER.x + d.PAD_HALF])
+	check(end_x > c6.x + d.PAD_HALF and d.boxes_unpacked_today == n6, "D6: a %s box sliding across its pad at speed doesn't unpack (came to rest at x=%.0f, past the pad's edge %.0f)" % [b1.get_meta("section"), end_x, c6.x + d.PAD_HALF])
 
 	# --- D7: stray box rescue: knocked into the break room -> back to receiving.
 	if boxes().size() > 0:
@@ -2951,9 +3103,11 @@ func _run_delivery() -> void:
 	check(dfk().global_position.distance_to(dfk().home_position) < 2.0, "D9: delivery forklift back home")
 	finish()
 
-## Pad sides for simultaneous hauls, one per player, so a 4-crew doesn't all
-## queue at one edge: [stand offset from the pad center, facing to drop].
-const PAD_SIDES := [[Vector2(-58, 0), Vector2.RIGHT], [Vector2(0, -58), Vector2.DOWN], [Vector2(58, 0), Vector2.LEFT], [Vector2(0, 58), Vector2.UP]]
+## Pad sides for simultaneous hauls to the same pad, one per player, so a
+## crew doesn't all queue at one edge: [stand offset from the pad center,
+## facing to drop]. WEEK 18: the section pads have a wall (or the top shelves'
+## slot rows) to the north, so three sides — south, west, east.
+const PAD_SIDES := [[Vector2(0, 58), Vector2.UP], [Vector2(-58, 0), Vector2.RIGHT], [Vector2(58, 0), Vector2.LEFT]]
 
 func haul_box_side(box: Node2D, side: int) -> bool:
 	await walk_to(box.global_position + Vector2(0, -110), 12.0, 25.0)
@@ -2964,15 +3118,14 @@ func haul_box_side(box: Node2D, side: int) -> bool:
 		return false
 	var off: Vector2 = PAD_SIDES[side][0]
 	var face: Vector2 = PAD_SIDES[side][1]
-	# Round the pad's corners rather than walk across it (and shove a box
-	# someone else just set down there off it): from receiving, in by the
-	# south-east corner, then round to this side.
-	var c: Vector2 = dl().PAD_CENTER
-	var corners := {0: [Vector2(130, 130), Vector2(-130, 130)], 1: [Vector2(130, 130), Vector2(130, -130)], 2: [Vector2(130, 130)], 3: [Vector2(130, 130)]}
-	for k in corners[side]:
-		await walk_to(c + k, 14.0, 20.0)
-	await walk_to(dl().PAD_CENTER + off * 2.2, 12.0, 25.0)
-	await walk_to(dl().PAD_CENTER + off, 5.0, 8.0)
+	# Round the pad rather than walk across it (and shove a box someone else
+	# just set down there off it): every pad is reached from the south (the
+	# aisle), then round to this side.
+	var sec: String = box.get_meta("section")
+	var c: Vector2 = dl().pad_center(sec)
+	await walk_to(c + Vector2(off.x * 2.2, 140), 14.0, 45.0)
+	await walk_to(c + off * 2.2 if off.x != 0.0 else c + Vector2(0, 110), 12.0, 10.0)
+	await walk_to(c + off, 5.0, 8.0)
 	steer(face)
 	await physics_frame
 	await physics_frame
@@ -2982,7 +3135,19 @@ func haul_box_side(box: Node2D, side: int) -> bool:
 	await wait_until(func(): return not is_instance_valid(box) or box.get_node("Carryable").carrier_id != me, 1.5)
 	await wait(0.2)
 	# Set down on the pad (or already unpacked) — not fumbled somewhere else.
-	return not is_instance_valid(box) or (box.get_node("Carryable").carrier_id == 0 and dl().on_pad(box.global_position))
+	return not is_instance_valid(box) or (box.get_node("Carryable").carrier_id == 0 and dl().on_pad(box.global_position, sec))
+
+## WEEK 18: which pad side each player takes for its assigned box — players
+## whose boxes go to the same section's pad spread over its sides.
+func _pad_sides_for(assign: Dictionary, ids: Array) -> Dictionary:
+	var out := {}
+	var used := {}
+	for id in ids:
+		var b = main.products_root.get_node_or_null(NodePath(assign[str(id)]))
+		var sec: String = b.get_meta("section") if b else ""
+		out[str(id)] = used.get(sec, 0) % PAD_SIDES.size()
+		used[sec] = used.get(sec, 0) + 1
+	return out
 
 func _box_view() -> Dictionary:
 	var out := {}
@@ -3050,10 +3215,11 @@ func _run_net_delivery_host() -> void:
 	dfk()._pause_timer = 1.0e9
 	var fl0 := floor_total()
 	var n0: int = d.boxes_unpacked_today
-	_net_write("n2_go.json", {"boxes": view, "assign": assign})
+	var sides := _pad_sides_for(assign, ids)
+	_net_write("n2_go.json", {"boxes": view, "assign": assign, "sides": sides})
 	var mine: Node2D = main.products_root.get_node(NodePath(assign["1"]))
-	var ok := await haul_box_side(mine, 0)
-	check(ok, "N2 host: hauled %s onto the pad" % assign["1"])
+	var ok := await haul_box_side(mine, sides["1"])
+	check(ok, "N2 host: hauled %s (%s) onto the %s pad" % [assign["1"], view[assign["1"]][0], view[assign["1"]][0]])
 	for id in ids:
 		if id == 1:
 			continue
@@ -3063,13 +3229,19 @@ func _run_net_delivery_host() -> void:
 	await wait_until(func(): return d.boxes_unpacked_today >= n0 + want, 5.0)
 	var gone: bool = assign.values().all(func(n): return not main.products_root.has_node(NodePath(n)))
 	check(d.boxes_unpacked_today == n0 + want and gone, "N2: all %d boxes unpacked on the host (%d today)" % [want, d.boxes_unpacked_today])
-	# WEEK 16: each box comes apart into loose stock by the pad.
+	# WEEK 16: each box comes apart into loose stock by the pad — WEEK 18:
+	# by its own section's pad, in that section.
 	await wait(1.0)
-	check(floor_total() - fl0 == want * d.UNITS_PER_BOX, "N2: %d boxes -> %d loose products by the pad" % [want, floor_total() - fl0])
+	check(floor_total() - fl0 == want * d.UNITS_PER_BOX, "N2: %d boxes -> %d loose products by their pads" % [want, floor_total() - fl0])
 	var loose := {}
+	var in_place := true
 	for o in get_nodes_in_group("carryable"):
-		if not o.is_in_group("delivery_box") and main._grid_cell_of(o.global_position) == main.STORAGE_GRID_POS:
-			loose[String(o.name)] = [o.global_position.x, o.global_position.y, main._section_of_color(o.get_node("Polygon2D").color)]
+		if not o.is_in_group("delivery_box") and o.get_node("Carryable").carrier_id == 0:
+			var osec: String = main._section_of_color(o.get_node("Polygon2D").color)
+			loose[String(o.name)] = [o.global_position.x, o.global_position.y, osec]
+			if o.global_position.distance_to(d.pad_center(osec)) > d.SPILL_RING_MAX + 40.0:
+				in_place = false
+	check(in_place, "N2: every unpacked product lies by its own section's pad")
 	_net_write("n3_go.json", {"loose": loose, "unpacked": d.boxes_unpacked_today})
 	for id in ids:
 		if id == 1:
@@ -3142,7 +3314,7 @@ func _run_net_delivery_client() -> void:
 	var box: Node2D = main.products_root.get_node_or_null(NodePath(box_name))
 	var hauled := false
 	if box:
-		hauled = await haul_box_side(box, ids.find(me) % PAD_SIDES.size())
+		hauled = await haul_box_side(box, int(g2.get("sides", {}).get(str(me), 0)))
 	_net_write("n2_%d.json" % me, {"same": why == "", "why": why, "hauled": hauled})
 	check(why == "" and hauled, "%s: N2 boxes match the host; hauled %s" % [who, box_name])
 	var g3 := await _net_read("n3_go.json", 60.0)

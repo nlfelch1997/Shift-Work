@@ -362,6 +362,19 @@ extends Node2D
 ##   54px spill needs ~200 clear of slots) — spills there nearly stopped. So
 ##   those two get one; Dry Goods' open side is the hub, so it keeps two.
 ##
+## WEEK 18 — AN UNPACK PAD IN EVERY SECTION (Delivery.gd's PAD_CENTERS),
+## replacing the one central pad in Storage. The truck, dock, delivery
+## forklift and RECEIVING are unchanged; a player now carries a box from
+## RECEIVING, through the Sidewalk and the hub, to its own section's pad, and
+## it only unpacks there (another section's pad refuses it, "wrong pad"). The
+## six units it comes apart into are already in the room they're shelved in.
+## Why: with one pad in Storage, every unit was its own Storage -> section
+## walk, and that walking — not the order window — was what held the solo
+## priority-order fill rate at ~36%. Boxes and their carriers cross the hub
+## while customers shop (trucks run all shift): intended delivery chaos.
+## Produce's sale bin moved out of the alcove its pad sits in, to the
+## alcove's east side (2400,690 -> 2520,700).
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -442,6 +455,7 @@ extends Node2D
 ##     UNITS_PER_BOX                       6      loose products per unpacked box
 ##     PAD_SETTLE_TIME / PAD_REST_SPEED    0.3 s / 150 px/s
 ##     SPILL_RING_MIN / _MAX              80 / 150 px  where they land round the pad
+##     PAD_CENTERS (WEEK 18)              one per section, in the section (layout, not balance)
 ##     Delivery forklift: Forklift.gd's speeds and LOAD_PAUSE; SET_DOWN_PAUSE 0.6 s
 ##     OPENING_STOCK_FRACTION (Main.gd)    0.0    of the old floor cap out at opening
 ##
@@ -2258,8 +2272,9 @@ func is_unlocked_at_pos(world_pos: Vector2) -> bool:
 func is_break_room_at_pos(world_pos: Vector2) -> bool:
 	return _grid_cell_of(world_pos) == BREAK_ROOM_GRID_POS
 
-## WEEK 15: still true now that Storage has the loading dock, receiving and
-## the unpack pad in it — it's the crew's back room, customers stay out.
+## WEEK 15: still true now that Storage has the loading dock and receiving in
+## it — it's the crew's back room, customers stay out. (WEEK 18: the unpack
+## pads moved out of Storage into the sections.)
 ## PLAYTEST BUG FIX ("customers can enter Storage"): same exclusion-zone
 ## approach as is_break_room_at_pos() above, applied to Storage
 ## (STORAGE_GRID_POS) — Storage is a real, physically open, ungated cell
@@ -2440,7 +2455,7 @@ func _spawn_product_for(section_name: String) -> void:
 			spawn_product_at(section_name, _spawn_pos_in_section(section))
 			return
 
-## Host-only. Public for Delivery.gd's unpack-at-the-pad mode.
+## Host-only. Public for Delivery.gd's unpacking (at the box's section pad).
 func spawn_product_at(section_name: String, pos: Vector2) -> void:
 	product_spawner.spawn({
 		"index": _product_spawn_index,

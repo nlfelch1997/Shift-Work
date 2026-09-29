@@ -7,10 +7,26 @@ extends Node2D
 ##   truck backs up to the LOADING DOCK in Storage's east wall
 ##   -> the delivery forklift (DeliveryForklift.gd) unloads it one pallet box
 ##      at a time into the RECEIVING row
-##   -> a player carries a box to the UNPACK PAD and sets it down
+##   -> a player carries a box to ITS SECTION'S UNPACK PAD and sets it down
 ##   -> WEEK 16: the box comes apart into UNITS_PER_BOX loose products of its
 ##      section, spilled around the pad, which the crew carries to that
 ##      section's shelves by hand like any other carried item.
+##
+## WEEK 18 — ONE PAD PER SECTION, IN THE SECTION. Week 15-17 had a single pad
+## in Storage: every unit that came out of a box then had to be walked from
+## Storage, through the Sidewalk and the hub, into its section — a 6-unit box
+## was up to six long cross-store trips, and the solo sim's priority-order
+## fill rate (~36%) was bottlenecked on that walking, not on the order
+## window. Now the box makes the long trip once (Storage -> its section) and
+## every unit's trip is pad -> shelf inside the same room. The truck, dock,
+## delivery forklift and RECEIVING are untouched: only where a box goes after
+## a player picks it up changed. A box only unpacks on ITS OWN section's pad
+## (PAD_CENTERS, keyed by section name — the same name the box was tagged
+## with on the truck); set down on another section's pad it just sits there
+## and the pad flashes "wrong pad", the same spirit as an item only settling
+## into a slot of its own color. Boxes (and whoever's carrying them) now
+## cross the hub during the selling phase, since trucks keep coming all
+## shift — delivery chaos on the sales floor, on purpose.
 ##
 ## (Week 15 fed unpacked stock into a per-section backstock that Main.gd laid
 ## out on the section's floor by itself; Week 16 made it manual, per the final
@@ -57,7 +73,7 @@ const TRUCK_LINGER := 1.0 # s parked after the last box comes off
 const BOXES_PER_TRUCK_BY_TIER := [2, 3, 4, 5]
 const BOXES_PER_EXTRA_PLAYER := 1
 const UNITS_PER_BOX := 6 # loose products one box comes apart into
-## The pad: a box SET DOWN on it unpacks at once (_on_box_set_down()). One
+## A pad: a box SET DOWN on its own section's pad unpacks at once (_on_box_set_down()). One
 ## that ends up there any other way (slid, shoved, thrown short) — a free box
 ## with its center on the pad, moving slower than
 ## PAD_REST_SPEED, for PAD_SETTLE_TIME unpacks — the same "settle, then count"
@@ -94,8 +110,28 @@ const FORKLIFT_HOME := Vector2(2270.0, LANE_Y)
 ## bottleneck — the crew walks the rest.
 const RECEIVING_SPOTS := [Vector2(2680, 1450), Vector2(2605, 1450), Vector2(2530, 1450), Vector2(2455, 1450), Vector2(2380, 1450), Vector2(2305, 1450), Vector2(2230, 1450)]
 const SPOT_CLEAR_RADIUS := 36.0 # a spot with a box (or anything) within this is taken
-const PAD_CENTER := Vector2(2090.0, 1330.0) # near Storage's open west side, toward the hub
+## WEEK 18: one pad per section, keyed by the section's name (Main.gd's
+## SECTIONS). Each sits in open floor that no customer has to cross to reach a
+## shelf, clear of every shelf slot (two-deep rows included) by 40px+:
+## - Produce, Dairy/Frozen, Bakery (same room layout, shelves on the top and
+##   bottom walls): the alcove between the two top-wall shelves, below the
+##   section sign (low enough not to cover it) — a dead end nobody walks
+##   through, central to all five shelves. Produce's sale bin sat in that
+##   alcove (Main.tscn 2400,690); it moved to the alcove's east side
+##   (2520,700), off the way in from the hub and clear of the forklift's lane.
+## - Dry Goods (shelves on the side walls and the top wall, entered from the
+##   south): the middle of the room, in the open floor between the side
+##   shelves' slot columns and below the top shelves' — the only floor that
+##   size in there. Shoppers heading for the top shelves walk round it.
+const PAD_CENTERS := {
+	"Dry Goods": Vector2(1440.0, 300.0),
+	"Produce": Vector2(2400.0, 665.0),
+	"Dairy/Frozen": Vector2(480.0, 665.0),
+	"Bakery": Vector2(2400.0, 125.0),
+}
 const PAD_HALF := 56.0
+## Spilled stock stays this far inside its section's room edges.
+const SPILL_ROOM_MARGIN := 40.0
 const BOX_SIZE := 44.0
 const BOX_COLOR := Color(0.72, 0.56, 0.36, 1) # matches no section: a box never shelves
 
@@ -114,6 +150,8 @@ var truck_offset := TRUCK_AWAY_OFFSET # 0 = parked at the dock, TRUCK_AWAY_OFFSE
 var truck_load: Array = [] # section names still on the truck, first one comes off first
 var unpack_event_id := 0
 var unpack_event_text := ""
+var unpack_event_pad := "" # WEEK 18: which section's pad the last event was at
+var unpack_event_ok := true # false: a box set down on the wrong pad
 var deliveries_today := 0
 var boxes_unpacked_today := 0
 
@@ -130,9 +168,9 @@ var boxes_delivered_today := 0
 var main: Node
 var _truck: Node2D
 var _truck_cargo: Node2D
-var _pad_label: Label
-var _unpack_label: Label
-var _unpack_shown := 0
+var _pad_nodes := {} # section -> [sprite, sign, section name label] (lock dimming)
+var _unpack_labels := {} # section -> its pad's floating event label
+var _unpack_shown := 0 # the last unpack_event_id this peer showed
 var _unpack_t := 0.0
 var _last_load_key := ""
 
@@ -140,7 +178,7 @@ func _ready() -> void:
 	main = get_parent()
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	for prop in [".:truck_offset", ".:truck_load", ".:unpack_event_id", ".:unpack_event_text", ".:deliveries_today", ".:boxes_unpacked_today"]:
+	for prop in [".:truck_offset", ".:truck_load", ".:unpack_event_id", ".:unpack_event_text", ".:unpack_event_pad", ".:unpack_event_ok", ".:deliveries_today", ".:boxes_unpacked_today"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -150,7 +188,8 @@ func _ready() -> void:
 	add_child(sync)
 	_build_dock()
 	_build_receiving()
-	_build_pad()
+	for section in PAD_CENTERS:
+		_build_pad(section)
 	_build_truck()
 
 func configure(day: int, is_finale := false) -> void:
@@ -330,25 +369,54 @@ func _section_tag(section: String) -> Polygon2D:
 
 ## --- Pad --------------------------------------------------------------------
 
-## Host: a box was just SET DOWN (not thrown). On the pad -> it unpacks now,
+## Host: a box was just SET DOWN (not thrown). On its own section's pad -> it
+## unpacks now,
 ## at its exact drop spot. FOUND BY THE 2-PLAYER NET TEST: two players setting
 ## boxes down on the pad at the same moment overlapped them, the physics
 ## engine pushed both apart and off the pad, and neither ever settled on it.
 ## The settle rule in _tick_pad() still catches a box that slides or gets
 ## shoved onto the pad and comes to rest there.
+## WEEK 18: on another section's pad it stays a box, and that pad says so.
 func _on_box_set_down(box: RigidBody2D) -> void:
-	if multiplayer.is_server() and on_pad(box.global_position):
+	if not multiplayer.is_server():
+		return
+	var section: String = box.get_meta("section")
+	if on_pad(box.global_position, section):
 		unpack.call_deferred(box)
+	else:
+		var at := pad_at(box.global_position)
+		if at != "":
+			_pad_event(at, "%s box —\nwrong pad" % section, false)
 
-func on_pad(pos: Vector2) -> bool:
-	return absf(pos.x - PAD_CENTER.x) <= PAD_HALF and absf(pos.y - PAD_CENTER.y) <= PAD_HALF
+func pad_center(section: String) -> Vector2:
+	return PAD_CENTERS[section]
+
+## The section whose pad `pos` is on, or "" if it's on none.
+func pad_at(pos: Vector2) -> String:
+	for section in PAD_CENTERS:
+		var c: Vector2 = PAD_CENTERS[section]
+		if absf(pos.x - c.x) <= PAD_HALF and absf(pos.y - c.y) <= PAD_HALF:
+			return section
+	return ""
+
+## On `section`'s pad — or, with no section, on any pad.
+func on_pad(pos: Vector2, section := "") -> bool:
+	var at := pad_at(pos)
+	return at != "" if section == "" else at == section
+
+## Host-only: the floating line over a pad, on every peer (replicated).
+func _pad_event(section: String, text: String, ok: bool) -> void:
+	unpack_event_pad = section
+	unpack_event_text = text
+	unpack_event_ok = ok
+	unpack_event_id += 1
 
 func _tick_pad(delta: float) -> void:
 	var seen := {}
 	for box in get_tree().get_nodes_in_group("delivery_box"):
 		if box.is_queued_for_deletion():
 			continue
-		if box.get_node("Carryable").carrier_id != 0 or not on_pad(box.global_position) or box.linear_velocity.length() > PAD_REST_SPEED:
+		if box.get_node("Carryable").carrier_id != 0 or not on_pad(box.global_position, box.get_meta("section")) or box.linear_velocity.length() > PAD_REST_SPEED:
 			continue
 		seen[box] = true
 		_pad_settle[box] = _pad_settle.get(box, 0.0) + delta
@@ -366,39 +434,56 @@ func unpack(box) -> void: # untyped: may arrive (deferred) already freed
 	_pad_settle.erase(box)
 	box.queue_free()
 	boxes_unpacked_today += 1
-	unpack_event_id += 1
 	var spots := []
 	for i in UNITS_PER_BOX:
-		var pos := _spill_spot(spots)
+		var pos := _spill_spot(section, spots)
 		spots.append(pos)
 		main.spawn_product_at(section, pos)
-	unpack_event_text = "%d x %s" % [UNITS_PER_BOX, section]
-	print("[Delivery] Unpacked a %s box (%d today) -> %d loose on the floor by the pad" % [section, boxes_unpacked_today, UNITS_PER_BOX])
+	_pad_event(section, "%d x %s" % [UNITS_PER_BOX, section], true)
+	print("[Delivery] Unpacked a %s box (%d today) -> %d loose on the floor by its pad" % [section, boxes_unpacked_today, UNITS_PER_BOX])
 
-## Host-only: somewhere in the ring round the pad that isn't on top of other
-## stock, a box, a player or the forklift (a RigidBody spawned overlapping one
-## gets flung — same reasoning as Main.gd's _spawn_pos_is_clear()). Takes the
-## last roll if the ring is crowded, like Main.gd does.
-func _spill_spot(taken: Array) -> Vector2:
-	var pos := PAD_CENTER
-	for attempt in SPILL_ATTEMPTS:
-		pos = PAD_CENTER + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(SPILL_RING_MIN, SPILL_RING_MAX)
-		pos.x = maxf(pos.x, 1940.0) # stay in Storage (its open west edge is the way out)
-		var clear := true
+## Host-only: somewhere in the ring round the section's pad that isn't on top
+## of other stock, a box, a player, a forklift, a display or a shelf slot (a
+## RigidBody spawned overlapping one gets flung, and one on a slot would stock
+## itself — Main.gd's _spawn_pos_is_clear() covers all of those), nor inside a
+## shelf or a wall. WEEK 18: the pads sit among shelves now, not in an empty
+## room, so a spot is also kept inside the section's room and tested against
+## every static collider. Takes the last clear-of-walls roll if the ring is
+## crowded, like Main.gd does.
+func _spill_spot(section: String, taken: Array) -> Vector2:
+	var c: Vector2 = PAD_CENTERS[section]
+	var cell: Vector2i = main._grid_cell_of(c)
+	var room := Rect2(Vector2(cell.x * main.ROOM_WIDTH, cell.y * main.ROOM_HEIGHT), Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT)).grow(-SPILL_ROOM_MARGIN)
+	var fallback := c + Vector2(0, SPILL_RING_MIN) # the pad's open (aisle) side
+	for attempt in SPILL_ATTEMPTS * 2:
+		var pos := c + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(SPILL_RING_MIN, SPILL_RING_MAX)
+		if not room.has_point(pos) or _hits_static(pos):
+			continue
+		fallback = pos
+		var clear: bool = main._spawn_pos_is_clear(pos)
 		for q in taken:
 			if pos.distance_to(q) < main.SPAWN_CLEARANCE_PRODUCT:
-				clear = false
-		for obj in get_tree().get_nodes_in_group("carryable"):
-			if pos.distance_to(obj.global_position) < main.SPAWN_CLEARANCE_PRODUCT + 10.0:
 				clear = false
 		for p in main.players.values():
 			if pos.distance_to(p.global_position) < 36.0:
 				clear = false
-		if pos.distance_to(main.delivery_forklift.global_position) < main.SPAWN_CLEARANCE_FORKLIFT:
-			clear = false
 		if clear:
-			break
-	return pos
+			return pos
+	return fallback
+
+## True if a product-sized square at `pos` would overlap a wall, a shelf, a
+## gate or anything else static.
+func _hits_static(pos: Vector2) -> bool:
+	var q := PhysicsShapeQueryParameters2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(36, 36) # a 28px product plus margin
+	q.shape = rect
+	q.transform = Transform2D(0.0, pos)
+	q.collide_with_areas = false
+	for hit in get_world_2d().direct_space_state.intersect_shape(q, 8):
+		if hit["collider"] is StaticBody2D:
+			return true
+	return false
 
 ## Boxes that exist right now: on the truck, on the forks, on the floor.
 func boxes_waiting() -> int:
@@ -466,20 +551,29 @@ func _build_receiving() -> void:
 		add_child(mark)
 	_label("RECEIVING", Vector2(RECEIVING_SPOTS[3].x - 130, RECEIVING_SPOTS[0].y + 42), 18, Color(1, 0.85, 0.3, 0.95))
 
-## The unpack pad: the A2 sheet's hazard-bordered concrete square, a sign, and
-## a floating "6 x Dry Goods" when a box unpacks.
-func _build_pad() -> void:
+## An unpack pad: the A2 sheet's hazard-bordered concrete square (the same
+## pack tile as Week 15's Storage pad), "UNPACK PAD" and the section's name in
+## its accent color (the same color as the stripe on its boxes) printed on
+## the pad itself (WEEK 18: one per section, among shelves and stock — a sign
+## off the pad landed on a slot row or under loose stock), and a floating
+## "6 x Dry Goods" (or "wrong pad") when a box is set down on it.
+func _build_pad(section: String) -> void:
+	var c: Vector2 = PAD_CENTERS[section]
 	var pad := Sprite2D.new()
-	pad.name = "UnpackPad"
+	pad.name = "UnpackPad" + String(section).replace("/", "")
 	pad.texture = _a2_block(Vector2i(1, 1))
-	pad.position = PAD_CENTER
+	pad.position = c
 	pad.scale = Vector2.ONE * (PAD_HALF * 2.0 + 16.0) / 96.0
 	add_child(pad)
-	_pad_label = _label("UNPACK PAD\ndrop boxes here", PAD_CENTER + Vector2(-130, -PAD_HALF - 60), 16, Color(1, 0.85, 0.3, 0.95))
-	_pad_label.size.y = 50
-	_unpack_label = _label("", PAD_CENTER + Vector2(-130, -20), 22, Color(0.5, 1, 0.5, 1))
-	_unpack_label.visible = false
-	_unpack_label.z_index = 20
+	var sign_label := _label("UNPACK\nPAD", c + Vector2(-130, -40), 15, Color(1, 0.85, 0.3, 0.95))
+	sign_label.size.y = 44
+	var name_label := _label(section.to_upper(), c + Vector2(-130, 10), 13, main.SECTION_COLORS[section].lightened(0.25))
+	_pad_nodes[section] = [pad, sign_label, name_label]
+	var ev := _label("", c + Vector2(-130, -20), 22, Color(0.5, 1, 0.5, 1))
+	ev.size.y = 60
+	ev.visible = false
+	ev.z_index = 20
+	_unpack_labels[section] = ev
 
 ## Placeholder box truck (neither pack has a vehicle): a white cargo box with
 ## its back doors open at the dock, the load visible inside as the pack's
@@ -531,11 +625,22 @@ func _update_truck_visual() -> void:
 
 func _process(delta: float) -> void:
 	_update_truck_visual()
+	# A locked section's pad dims with the rest of the room (Main.gd's LOCKED_DIM).
+	for section in _pad_nodes:
+		var tint: Color = Color.WHITE if main.is_unlocked_at_pos(PAD_CENTERS[section]) else main.LOCKED_DIM
+		for n in _pad_nodes[section]:
+			n.modulate = tint
 	if unpack_event_id != _unpack_shown:
 		_unpack_shown = unpack_event_id
 		_unpack_t = 1.6
-		_unpack_label.text = unpack_event_text
+		for section in _unpack_labels:
+			_unpack_labels[section].visible = false
+	var ev: Label = _unpack_labels.get(unpack_event_pad)
 	_unpack_t = maxf(0.0, _unpack_t - delta)
-	_unpack_label.visible = _unpack_t > 0.0
-	_unpack_label.position.y = PAD_CENTER.y - 20 - (1.6 - _unpack_t) * 25.0
-	_unpack_label.modulate.a = minf(1.0, _unpack_t / 0.5)
+	if ev == null:
+		return
+	ev.text = unpack_event_text
+	ev.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1) if unpack_event_ok else Color(1, 0.4, 0.35, 1))
+	ev.visible = _unpack_t > 0.0
+	ev.position.y = PAD_CENTERS[unpack_event_pad].y - 20 - (1.6 - _unpack_t) * 25.0
+	ev.modulate.a = minf(1.0, _unpack_t / 0.5)
