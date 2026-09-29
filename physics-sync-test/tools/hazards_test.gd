@@ -44,6 +44,15 @@ extends SceneTree
 ##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --shift-seconds=400 --test=finale
 ## Co-op on the finale: the net-ambience pass above with --day=7 on the host.
 ## Solo Day 6 vs Day 7: --test=solo --day=6 --days=6,7
+## WEEK 18 — one unpack pad per section. The pad-move before/after (the solo
+## brain also runs against the pre-Week-18 one-Storage-pad code, unchanged):
+##   godot --headless --fixed-fps 60 --path . --script res://tools/hazards_test.gd -- --server --day=5 --days=5,6,7 --test=solo
+##   (--fixed-fps 60 runs it ~4x faster than real time, same game; each per-day
+##   line ends with HAUL metrics; --order-blind = the Week 15-17 brain, which
+##   never fetches a box for an open order)
+##   godot --headless --fixed-fps 60 --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=box-cycle
+##   (BC_SECTIONS=Produce,Bakery in the environment limits it to those)
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=route-len
 
 var main: Node
 var fails := 0
@@ -69,7 +78,7 @@ func _initialize() -> void:
 	# tests written before that are about other systems and were written
 	# against a floor that opens stocked — they keep it. The solo sim and the
 	# delivery/prep tests play the real thing.
-	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync", "hazard-pause", "net-hazard-pause", "coop-sim"]:
+	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync", "hazard-pause", "net-hazard-pause", "coop-sim", "box-cycle", "route-len"]:
 		main.opening_stock_fraction = 1.0
 	# WEEK 17: sweep hook for the priority-order window (solo sim tuning).
 	for a in args:
@@ -110,6 +119,10 @@ func _initialize() -> void:
 				_run_solo.call_deferred()
 		"hazard-pause":
 			_run_hazard_pause.call_deferred()
+		"box-cycle":
+			_run_box_cycle.call_deferred()
+		"route-len":
+			_run_route_len.call_deferred()
 		"net-hazard-pause":
 			if "--client" in args:
 				_run_net_hazard_pause_client.call_deferred()
@@ -202,11 +215,16 @@ func _is_placed(obj: Node) -> bool:
 			return true
 	return false
 
+## WEEK 18 (found by the box-cycle benchmark): only a slot something could
+## still settle into — an empty one, or the one this item holds. An item
+## lying in front of a slot that's already stocked with something else is
+## just loose stock (a person picks it up); before, the brain skipped it
+## forever.
 func _at_a_slot(obj: Node) -> bool:
 	for s in main.shelves:
 		var shelf: Node = s.get_node("Shelf")
-		for slot in shelf.slots:
-			if obj.global_position.distance_to(slot.global_position) <= shelf.CAPTURE_RADIUS:
+		for i in shelf.slots.size():
+			if obj.global_position.distance_to(shelf.slots[i].global_position) <= shelf.CAPTURE_RADIUS and (not shelf._is_filled(i) or _is_placed(obj)):
 				return true
 	return false
 
@@ -3234,14 +3252,20 @@ func _run_net_delivery_host() -> void:
 	await wait(1.0)
 	check(floor_total() - fl0 == want * d.UNITS_PER_BOX, "N2: %d boxes -> %d loose products by their pads" % [want, floor_total() - fl0])
 	var loose := {}
-	var in_place := true
+	var in_room := true
+	var far := []
 	for o in get_nodes_in_group("carryable"):
 		if not o.is_in_group("delivery_box") and o.get_node("Carryable").carrier_id == 0:
 			var osec: String = main._section_of_color(o.get_node("Polygon2D").color)
 			loose[String(o.name)] = [o.global_position.x, o.global_position.y, osec]
-			if o.global_position.distance_to(d.pad_center(osec)) > d.SPILL_RING_MAX + 40.0:
-				in_place = false
-	check(in_place, "N2: every unpacked product lies by its own section's pad")
+			if main._grid_cell_of(o.global_position) != section_by_name(osec)["grid_pos"]:
+				in_room = false
+			var dist: float = o.global_position.distance_to(d.pad_center(osec))
+			if dist > d.SPILL_RING_MAX + 40.0:
+				far.append("%s %.0fpx" % [osec, dist])
+	# (Spilled round the pad; a player walking round it to their side can nudge
+	# one further, so the check is the room, and how far any strayed is shown.)
+	check(in_room, "N2: every unpacked product is in its own section's room, by its pad (farther than %.0fpx: %s)" % [d.SPILL_RING_MAX + 40.0, str(far)])
 	_net_write("n3_go.json", {"loose": loose, "unpacked": d.boxes_unpacked_today})
 	for id in ids:
 		if id == 1:
@@ -3841,3 +3865,124 @@ func _run_coop_client() -> void:
 		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
 		await _play_shift()
 		await wait_until(func(): return not main.shift_active or main.is_day_report_active(), 10.0)
+
+## ---------------------------------------------------------------------------
+## WEEK 18 — BOX CYCLE BENCHMARK: the time to shelve one box, start to finish,
+## with nothing else going on. Per open section, TRIALS times: empty shelves,
+## no loose stock, one box of that section on a RECEIVING spot, the solo brain
+## standing by it; the clock runs from there until all UNITS_PER_BOX of its
+## units are on shelves. Store closed (no customers), hazards paused (prep),
+## no trucks. Runs against the pre-Week-18 code too (one Storage pad), for the
+## pad-move before/after:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=box-cycle
+func _run_box_cycle() -> void:
+	await wait_until(func(): return main.shift_active and main.players.has(1), 20.0)
+	await wait(0.5)
+	never_open = true
+	main.prep_time_left = 1.0e9
+	var d := dl()
+	d._truck_timer = 1.0e9
+	const TRIALS := 3
+	const BC_TIMEOUT := 240.0
+	var all_t := []
+	for sec in (OS.get_environment("BC_SECTIONS").split(",") if OS.get_environment("BC_SECTIONS") != "" else main._unlocked_sections().map(func(x): return x["name"])):
+		var times := []
+		var walks := []
+		var box_legs := []
+		for trial in TRIALS:
+			main._reset_shelves_and_products_for_new_day()
+			box_phase = 0
+			recent_drops = {}
+			steer(Vector2.ZERO)
+			await wait(0.3)
+			var spot: Vector2 = d.RECEIVING_SPOTS[3]
+			player().teleport_to(spot + Vector2(0, -110))
+			d.drop_box(spot, sec)
+			await wait(0.3)
+			var ev0: int = d.unpack_event_id
+			var frames := [0] # game time (the loop steps once per physics frame), so --fixed-fps runs time the same
+			var t_unpack := [-1.0]
+			var walked := [0.0]
+			var last := [player().global_position]
+			var done := func() -> bool:
+				frames[0] += 1
+				var pos: Vector2 = player().global_position
+				walked[0] += minf(60.0, pos.distance_to(last[0]))
+				last[0] = pos
+				if t_unpack[0] < 0.0 and d.unpack_event_id != ev0:
+					t_unpack[0] = frames[0] / 60.0
+				var placed := get_nodes_in_group("carryable").filter(func(o): return not o.is_in_group("delivery_box") and _is_placed(o)).size()
+				if trace and frames[0] % 300 == 0:
+					print("BCTRACE t=%.0f me=%s placed=%d loose=%s" % [frames[0] / 60.0, str(player().global_position.round()), placed, str(get_nodes_in_group("carryable").filter(func(o): return not _is_placed(o)).map(func(o): return [o.name, o.global_position.round(), o.get_node("Carryable").carrier_id])) ])
+				return placed >= d.UNITS_PER_BOX or frames[0] > BC_TIMEOUT * 60
+			await _play_shift(done)
+			var secs: float = frames[0] / 60.0
+			var ok := secs < BC_TIMEOUT
+			if not ok:
+				for o in get_nodes_in_group("carryable"):
+					if _is_placed(o):
+						continue
+					for sb in main.shelves:
+						var sh: Node = sb.get_node("Shelf")
+						for k in sh.slots.size():
+							var dd: float = o.global_position.distance_to(sh.slots[k].global_position)
+							if dd < 60.0:
+								print("BCSTUCK %s at %s: %s slot %d dist %.0f filled=%s occ=%s wrecked=%s vel=%.0f color_ok=%s carrier=%d" % [o.name, str(o.global_position.round()), sb.name, k, dd, str(sh._is_filled(k)), str(sh._occupant[k].name if sh._occupant[k] else null), str(sh.wrecked), o.linear_velocity.length(), str(sh._color_matches(o)), o.get_node("Carryable").carrier_id])
+			times.append(secs)
+			walks.append(walked[0])
+			box_legs.append(t_unpack[0])
+			print("BOXCYCLE  %s trial %d: %s in %.1fs (box leg %.1fs, then %.1fs shelving), walked %.0fpx" % [sec, trial + 1, "shelved all %d" % d.UNITS_PER_BOX if ok else "TIMED OUT", secs, t_unpack[0], secs - t_unpack[0], walked[0]])
+			check(ok, "BC: %s box shelved within %.0fs" % [sec, BC_TIMEOUT])
+		all_t.append_array(times)
+		print("BOXCYCLE  %s: %.1fs avg to shelve a box (box leg %.1fs, shelving %.1fs), %.0fpx walked" % [sec, _mean(times), _mean(box_legs), _mean(times) - _mean(box_legs), _mean(walks)])
+	print("BOXCYCLE  ALL: %.1fs avg over %d boxes (%s pads)" % [_mean(all_t), all_t.size(), "per-section" if _per_section_pads() else "one Storage"])
+	finish()
+
+## WEEK 18 — ROUTE LENGTH to shelve one box, pad-move before/after, measured
+## on the routes the sim brain walks (waypoint(): cell to cell through the
+## open connections; straight within a cell): RECEIVING -> the pad carrying
+## the box, then UNITS_PER_BOX round trips pad -> slot -> pad to the section's
+## nearest empty slots (all empty). Deterministic, no physics; the Week 15-17
+## Storage pad is its old fixed spot (2090,1330).
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=route-len
+const OLD_STORAGE_PAD := Vector2(2090.0, 1330.0)
+
+func route_len(a: Vector2, b: Vector2) -> float:
+	var total := 0.0
+	var pos := a
+	for i in 20:
+		var nxt := waypoint(pos, b)
+		total += pos.distance_to(nxt)
+		pos = nxt
+		if pos.distance_to(b) < 1.0:
+			break
+	return total
+
+func _run_route_len() -> void:
+	await wait_until(func(): return main.shift_active, 20.0)
+	main._reset_shelves_and_products_for_new_day()
+	await wait(0.2)
+	var start: Vector2 = dl().RECEIVING_SPOTS[3]
+	var speed: float = player().SPEED if "SPEED" in player() else 220.0
+	var totals := {"old": 0.0, "new": 0.0}
+	for sec in main.SECTIONS:
+		var name: String = sec["name"]
+		var line := "ROUTE  %-13s" % name
+		for which in ["old", "new"]:
+			var pad: Vector2 = OLD_STORAGE_PAD if which == "old" else dl().pad_center(name)
+			var slots := []
+			for sb in main.shelves:
+				if main._grid_cell_of(sb.global_position) == sec["grid_pos"]:
+					for sl in sb.get_node("Shelf").slots:
+						slots.append(sl.global_position)
+			slots.sort_custom(func(x, y): return route_len(pad, x) < route_len(pad, y))
+			var box_leg := route_len(start, pad)
+			var items := 0.0
+			for k in dl().UNITS_PER_BOX:
+				items += route_len(pad, slots[k]) + route_len(slots[k], pad)
+			var tot := box_leg + items
+			totals[which] += tot
+			line += " | %s: box %4.0fpx + 6 units %5.0fpx = %5.0fpx (%.0fs walking)" % [which, box_leg, items, tot, tot / speed]
+		print(line)
+	print("ROUTE  ALL 4 SECTIONS: old %.0fpx, new %.0fpx (%.0f%% less walking per box)" % [totals["old"], totals["new"], 100.0 * (1.0 - totals["new"] / totals["old"])])
+	finish()

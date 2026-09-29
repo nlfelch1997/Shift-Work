@@ -132,6 +132,12 @@ const PAD_CENTERS := {
 const PAD_HALF := 56.0
 ## Spilled stock stays this far inside its section's room edges.
 const SPILL_ROOM_MARGIN := 40.0
+## ...and this far from every shelf slot. FOUND BY THE BOX-CYCLE BENCHMARK:
+## Dry Goods' spill ring reaches the top-wall shelves' slot rows, and with
+## Main.gd's 40px spawn clearance a unit could land (or get nudged) in front
+## of an already-stocked slot — clutter right where the crew and the
+## shoppers reach the shelf.
+const SPILL_SLOT_CLEARANCE := 70.0
 const BOX_SIZE := 44.0
 const BOX_COLOR := Color(0.72, 0.56, 0.36, 1) # matches no section: a box never shelves
 
@@ -460,7 +466,7 @@ func _spill_spot(section: String, taken: Array) -> Vector2:
 		if not room.has_point(pos) or _hits_static(pos):
 			continue
 		fallback = pos
-		var clear: bool = main._spawn_pos_is_clear(pos)
+		var clear: bool = main._spawn_pos_is_clear(pos) and not _near_a_slot(pos)
 		for q in taken:
 			if pos.distance_to(q) < main.SPAWN_CLEARANCE_PRODUCT:
 				clear = false
@@ -470,6 +476,13 @@ func _spill_spot(section: String, taken: Array) -> Vector2:
 		if clear:
 			return pos
 	return fallback
+
+func _near_a_slot(pos: Vector2) -> bool:
+	for shelf_body in main.shelves:
+		for slot in shelf_body.get_node("Shelf").slots:
+			if pos.distance_to(slot.global_position) < SPILL_SLOT_CLEARANCE:
+				return true
+	return false
 
 ## True if a product-sized square at `pos` would overlap a wall, a shelf, a
 ## gate or anything else static.
