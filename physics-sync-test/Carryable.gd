@@ -57,7 +57,7 @@ const MAX_SPEED := 900.0
 @export var replication_interval := 0.0
 ## WEEK 15 — authority only: a carrier just SET THIS DOWN (E / C), at its
 ## final drop position, before physics has touched it. Not for throws. The
-## Storage unpack pad (Delivery.gd) listens so that "set down on the pad"
+## unpack pads (Delivery.gd) listen so that "set down on the pad"
 ## counts at once, even if another box set down beside it shoves it a moment
 ## later. Keeps this component ignorant of what listens, like everything else
 ## here.

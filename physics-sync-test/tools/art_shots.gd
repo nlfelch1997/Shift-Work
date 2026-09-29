@@ -128,17 +128,52 @@ func _delivery_shots(p: Node2D, cam: Camera2D) -> void:
 	await _until(func(): return d.truck_load.is_empty() and f.carrying == "", 60.0)
 	p.teleport_to(Vector2(2400, 1330))
 	await shot("storage_receiving")
-	var boxes: Array = get_nodes_in_group("delivery_box")
-	if not boxes.is_empty():
-		var b = boxes[0] # untyped: checked with is_instance_valid() after it is freed
-		PhysicsServer2D.body_set_state(b.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D(0.0, d.PAD_CENTER))
-		b.global_position = d.PAD_CENTER
-		p.teleport_to(d.PAD_CENTER + Vector2(120, -40))
-		await create_timer(0.2).timeout
-		await shot("storage_box_on_pad")
+	# WEEK 18: a pad in every section. Each open section: its box set down on
+	# its pad, the unpack, and a close-up; then a box on the wrong pad.
+	for sec in d.PAD_CENTERS:
+		if not main.is_unlocked_at_pos(d.pad_center(sec)):
+			continue
+		var c: Vector2 = d.pad_center(sec)
+		var tag := String(sec).to_lower().replace("/", "_").replace(" ", "_")
+		p.teleport_to(c + Vector2(0, 170))
+		await create_timer(0.3).timeout
+		await shot("pad_%s" % tag)
+		var b = await _box_for(sec) # untyped: checked with is_instance_valid() after it is freed
+		if b == null:
+			continue
+		PhysicsServer2D.body_set_state(b.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D(0.0, c))
+		b.global_position = c
+		await create_timer(0.1).timeout
+		await shot("pad_%s_box_on_pad" % tag)
 		await _until(func(): return not is_instance_valid(b), 2.0)
 		await create_timer(0.3).timeout
-		await shot("storage_unpacked")
+		await shot("pad_%s_unpacked" % tag)
 		cam.zoom = Vector2(1.6, 1.6)
-		await shot("storage_pad_closeup")
+		await shot("pad_%s_closeup" % tag)
 		cam.zoom = Vector2.ONE
+	# The wrong pad: a box for another section set down on Dry Goods'.
+	var other = null
+	for b in get_nodes_in_group("delivery_box"):
+		if b.get_meta("section") != "Dry Goods":
+			other = b
+	if other != null:
+		var c: Vector2 = d.pad_center("Dry Goods")
+		PhysicsServer2D.body_set_state(other.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D(0.0, c))
+		other.global_position = c
+		p.teleport_to(c + Vector2(0, 170))
+		d._on_box_set_down(other)
+		await create_timer(0.4).timeout
+		await shot("pad_dry_goods_wrong_box")
+
+## A box for `sec` — off receiving if one's there, else a fresh one on the
+## next truck's worth of data (so every section gets its frame).
+func _box_for(sec: String):
+	for b in get_nodes_in_group("delivery_box"):
+		if b.get_meta("section") == sec and not b.is_queued_for_deletion():
+			return b
+	main.delivery.drop_box(Vector2(2230, 1450), sec)
+	await create_timer(0.2).timeout
+	for b in get_nodes_in_group("delivery_box"):
+		if b.get_meta("section") == sec and not b.is_queued_for_deletion():
+			return b
+	return null
