@@ -535,7 +535,17 @@ const PRIORITY_ORDER_INTERVAL := 45.0
 ## sim); the first one 5s after opening restores 3 (Day 5-6: 5/50/95s of a
 ## 111s window; Day 7: 5/37/69s of 96s).
 const PRIORITY_ORDER_FIRST_AFTER_OPEN := 5.0
-const PRIORITY_ORDER_WINDOW := 15.0
+## WEEK 17 — the window to fill an order, by crew size (index = players - 1,
+## 4+ use the last). Was a flat 15s. Since Week 16 the called stock has to
+## come out of Storage by hand, so a solo crew filled 1 of 9 orders (it was 5
+## of 10 when stock sat on the section floor). The order's SIZE already grows
+## with the crew (QTY_PER_EXTRA_PLAYER); the window shrinks the other way, as
+## a bigger crew splits the Storage run. Numbers from the Days 5-7 solo sim
+## sweep and the per-person haul load — see the WEEK 17 header note.
+const PRIORITY_ORDER_WINDOW_BY_PLAYERS := [15.0, 15.0, 15.0, 15.0]
+## An order is always closed before the next call-out is due (Week 11's rule):
+## the gap to the next one is at least the window plus this.
+const PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW := 5.0
 const PRIORITY_ORDER_MULTIPLIER := 1.5
 const PRIORITY_ORDER_QTY_MIN := 3
 const PRIORITY_ORDER_QTY_MAX := 5
@@ -947,8 +957,21 @@ func _section_name_at(world_pos: Vector2) -> String:
 func is_finale() -> bool:
 	return current_day >= FINALE_START_DAY
 
+## WEEK 17: stretched when today's window wouldn't close in time (a solo
+## window can be longer than the finale's 32s cadence).
 func _priority_order_interval() -> float:
-	return FINALE_PRIORITY_ORDER_INTERVAL if is_finale() else PRIORITY_ORDER_INTERVAL
+	var base: float = FINALE_PRIORITY_ORDER_INTERVAL if is_finale() else PRIORITY_ORDER_INTERVAL
+	return maxf(base, _priority_order_window() + PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW)
+
+## Test/sweep hook: >= 0 replaces the table.
+var priority_order_window_override := -1.0
+
+## WEEK 17 — see PRIORITY_ORDER_WINDOW_BY_PLAYERS.
+func _priority_order_window() -> float:
+	if priority_order_window_override >= 0.0:
+		return priority_order_window_override
+	var i := clampi(players.size() - 1, 0, PRIORITY_ORDER_WINDOW_BY_PLAYERS.size() - 1)
+	return PRIORITY_ORDER_WINDOW_BY_PLAYERS[i]
 
 ## Screen-space draw order, bottom to top. PLAYTEST BUG FIX (debug HUD
 ## drawn behind the write-up toast and, from Day 5, the priority order
@@ -1781,7 +1804,7 @@ func _tick_priority_orders(delta: float) -> void:
 	if _order_timer <= 0.0:
 		_order_timer = _priority_order_interval()
 		# Don't call one out that the shift clock would cut short.
-		if _order_id == 0 and shift_time_left > PRIORITY_ORDER_WINDOW:
+		if _order_id == 0 and shift_time_left > _priority_order_window():
 			_issue_priority_order()
 
 ## Host-only. Picks a random unlocked section that can take at least
@@ -1815,9 +1838,9 @@ func _issue_priority_order(forced_section := "", forced_qty := 0) -> void:
 	order_section = pick
 	order_needed = qty
 	order_stocked = 0
-	order_time_left = PRIORITY_ORDER_WINDOW
+	order_time_left = _priority_order_window()
 	orders_called_today += 1
-	print("[Main] Priority order #%d: stock %d in %s (%.0fs)" % [_order_id, qty, pick, PRIORITY_ORDER_WINDOW])
+	print("[Main] Priority order #%d: stock %d in %s (%.0fs)" % [_order_id, qty, pick, order_time_left])
 
 func _open_slots_in_section(section: Dictionary) -> int:
 	var n := 0
@@ -2533,7 +2556,10 @@ func _process(delta: float) -> void:
 			if store_open:
 				_restock_customers()
 		_tick_priority_orders(delta)
-		ambience.tick_host(delta)
+		# WEEK 17: no brownouts or spills during prep — their clocks (first
+		# event LIGHTS_FIRST_DELAY / SPILL_FIRST_DELAY in) start at opening.
+		if store_open:
+			ambience.tick_host(delta)
 		delivery.tick_host(delta)
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist

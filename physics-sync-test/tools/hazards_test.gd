@@ -69,8 +69,12 @@ func _initialize() -> void:
 	# tests written before that are about other systems and were written
 	# against a floor that opens stocked — they keep it. The solo sim and the
 	# delivery/prep tests play the real thing.
-	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync"]:
+	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync", "hazard-pause", "net-hazard-pause", "coop-sim"]:
 		main.opening_stock_fraction = 1.0
+	# WEEK 17: sweep hook for the priority-order window (solo sim tuning).
+	for a in args:
+		if a.begins_with("--order-window="):
+			main.priority_order_window_override = float(a.substr(15))
 	match mode:
 		"interact":
 			_run_interact.call_deferred()
@@ -99,6 +103,18 @@ func _initialize() -> void:
 				_run_boxsync_client.call_deferred()
 			else:
 				_run_boxsync_host.call_deferred()
+		"coop-sim":
+			if "--client" in args:
+				_run_coop_client.call_deferred()
+			else:
+				_run_solo.call_deferred()
+		"hazard-pause":
+			_run_hazard_pause.call_deferred()
+		"net-hazard-pause":
+			if "--client" in args:
+				_run_net_hazard_pause_client.call_deferred()
+			else:
+				_run_net_hazard_pause_host.call_deferred()
 		"prep":
 			_run_prep.call_deferred()
 		"net-prep":
@@ -1019,7 +1035,7 @@ func _run_orders() -> void:
 	main._issue_priority_order("Dry Goods", 3)
 	await wait(0.1) # a Main._process pass, so the banner has been drawn
 	check(main.order_section == "Dry Goods" and main.order_needed == 3, "O1: order open: %d in %s" % [main.order_needed, main.order_section])
-	check(main._order_label.visible and "Stock 3 more in Dry Goods" in main._order_label.text and "15s left" in main._order_label.text, "O1: banner: '%s'" % main._order_label.text)
+	check(main._order_label.visible and "Stock 3 more in Dry Goods" in main._order_label.text and ("%ds left" % int(main._priority_order_window())) in main._order_label.text, "O1: banner: '%s'" % main._order_label.text)
 	var wrong := await stock_one("Dairy/Frozen")
 	check(wrong != null and not wrong.has_meta("priority_order") and main.order_stocked == 0, "O1: stocking Dairy/Frozen doesn't count toward a Dry Goods order")
 	var sold0: int = main._total_sold() - main._sold_at_day_start
@@ -1063,7 +1079,7 @@ func _run_orders() -> void:
 	await sell(p1) # sold during the window — held pending
 	var ps_before: int = main.priority_sales_today
 	var pay_before: int = main._pay_today()
-	var lapsed := await wait_until(func(): return main.order_section == "", main.PRIORITY_ORDER_WINDOW + 1.0)
+	var lapsed := await wait_until(func(): return main.order_section == "", main._priority_order_window() + 1.0)
 	check(lapsed and main.orders_filled_today == 1 and main.orders_called_today == 2, "O2: window expired unfilled (filled %d of %d called)" % [main.orders_filled_today, main.orders_called_today])
 	check(main._pay_today() == pay_before, "O2: no penalty for missing it (pay %s -> %s)" % [main._format_money(pay_before), main._format_money(main._pay_today())])
 	await physics_frame
@@ -1142,7 +1158,7 @@ func _run_orders() -> void:
 	main._order_timer = 0.01
 	await wait(0.1)
 	check(main.order_section != "", "O4: the interval timer calls one out on its own (%s x%d)" % [main.order_section, main.order_needed])
-	check(is_equal_approx(main._order_timer, main.PRIORITY_ORDER_INTERVAL) or main._order_timer > main.PRIORITY_ORDER_INTERVAL - 1.0, "O4: next call-out %.0fs later" % main._order_timer)
+	check(is_equal_approx(main._order_timer, main._priority_order_interval()) or main._order_timer > main._priority_order_interval() - 1.0, "O4: next call-out %.0fs later" % main._order_timer)
 	main._clear_priority_order()
 	main.current_day = 4
 	main._order_timer = 0.01
@@ -1171,7 +1187,7 @@ func _run_orders() -> void:
 	check(absf(main.prep_time_left - 540.0) < 0.5 and not main.store_open, "O5: Day 6 opens closed, %.1fs of prep" % main.prep_time_left)
 	check(main.orders_called_today == 0 and main.orders_filled_today == 0 and main.priority_sales_today == 0, "O5: Day 6 order tallies reset")
 	check(main.priority_sales_week == week_bonus, "O5: week keeps its %d bonus sales" % main.priority_sales_week)
-	check(is_equal_approx(main._order_timer, main.PRIORITY_ORDER_INTERVAL) or main._order_timer > main.PRIORITY_ORDER_INTERVAL - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
+	check(is_equal_approx(main._order_timer, main._priority_order_interval()) or main._order_timer > main._priority_order_interval() - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
 	finish()
 
 ## ---------------------------------------------------------------------------
@@ -2518,12 +2534,12 @@ func _run_finale() -> void:
 	var real_day: int = main.current_day
 	for d in [1, 2, 3, 4, 5, 6]:
 		main.current_day = d
-		if main._selling_window() != base_shift or main._priority_order_interval() != main.PRIORITY_ORDER_INTERVAL:
+		if main._selling_window() != base_shift or main._priority_order_interval() != maxf(main.PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW):
 			day_numbers_ok = false
 	main.current_day = real_day
 	check(day_numbers_ok, "F0 Days 1-6: full selling window and order cadence are the pre-finale numbers")
 	check(main._current_shift_duration() == 540.0 + base_shift and main._prep_ceiling() == 540.0, "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
-	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main.PRIORITY_ORDER_INTERVAL and main._order_timer > main.PRIORITY_ORDER_INTERVAL - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main.PRIORITY_ORDER_INTERVAL])
+	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main._priority_order_interval() and main._order_timer > main._priority_order_interval() - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main._priority_order_interval()])
 	check(not main._finale_banner.visible and main.finale_banner_left == 0.0, "F0 Day 6: no FINAL SHIFT banner")
 	park_everything()
 	var lap6 := forklift_lap_pauses()
@@ -2557,8 +2573,8 @@ func _run_finale() -> void:
 	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "FINAL SHIFT", "F1 Day 7: FINAL SHIFT banner up as the shift starts")
 	check(main._prep_ceiling() == 720.0 and main._current_shift_duration() == 720.0 + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
 	check(main._selling_window() < base_shift, "F1 Day 7: tighter selling window than Day 6 — %.0fs < %.0fs" % [main._selling_window(), base_shift])
-	check(main._order_timer > main.FINALE_PRIORITY_ORDER_INTERVAL - 1.0 and main._order_timer <= main.FINALE_PRIORITY_ORDER_INTERVAL, "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main.FINALE_PRIORITY_ORDER_INTERVAL, main._order_timer])
-	check(main.FINALE_PRIORITY_ORDER_INTERVAL > main.PRIORITY_ORDER_WINDOW + 5.0, "F1: an order is always closed before the next is due (%.0f > %.0f)" % [main.FINALE_PRIORITY_ORDER_INTERVAL, main.PRIORITY_ORDER_WINDOW])
+	check(main._order_timer > main._priority_order_interval() - 1.0 and main._order_timer <= main._priority_order_interval() and main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main._priority_order_interval(), main._order_timer])
+	check(main._priority_order_interval() >= main._priority_order_window() + 5.0, "F1: an order is always closed before the next is due (gap %.0fs >= window %.0fs + 5)" % [main._priority_order_interval(), main._priority_order_window()])
 	# Banner vs every alert row, with all of them up at once.
 	main._watch_label.text = "MANAGER IS WATCHING — LOOK BUSY!  [|||||.....]"
 	main._watch_label.visible = true
@@ -3467,3 +3483,161 @@ func _run_net_prep_client() -> void:
 	check(why4 == "", "%s: NP4 auto-open on my screen%s" % [who, why4])
 	await _net_read("done.json", 60.0)
 	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 17 — HAZARDS PAUSE THROUGH PREP. The Produce forklift, the manager,
+## spills and the lights brownout are all off until the store opens (by the
+## sign or the ceiling); deliveries run through prep as before.
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=hazard-pause
+## Co-op (what each client sees):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --players=2 --test=net-hazard-pause &
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-hazard-pause
+
+## Snapshot of the four hazard systems as this peer sees them.
+func _hazard_view() -> Dictionary:
+	return {"fk": [fk().global_position.x, fk().global_position.y], "mgr": [mgr().global_position.x, mgr().global_position.y],
+		"spills": amb().spills.size(), "lights_id": amb().lights_event_id, "bright": amb().brightness}
+
+## Watches the hazards for `seconds` (this peer's own view): how far the
+## forklift and manager moved, most spills seen, any lights event, darkest.
+func _watch_hazards(seconds: float) -> Dictionary:
+	var fk0: Vector2 = fk().global_position
+	var m0: Vector2 = mgr().global_position
+	var out := {"fk_moved": 0.0, "mgr_moved": 0.0, "spills": 0, "lights": false, "darkest": 1.0, "watched": false}
+	var t := 0.0
+	while t < seconds:
+		await physics_frame
+		t += 1.0 / 60.0
+		out["fk_moved"] = maxf(out["fk_moved"], fk().global_position.distance_to(fk0))
+		out["mgr_moved"] = maxf(out["mgr_moved"], mgr().global_position.distance_to(m0))
+		out["spills"] = maxi(out["spills"], amb().spills.size())
+		out["lights"] = out["lights"] or amb().lights_event_id != 0
+		out["darkest"] = minf(out["darkest"], amb().brightness)
+		out["watched"] = out["watched"] or mgr().watch_peer != 0
+	return out
+
+func _run_hazard_pause() -> void:
+	await wait_until(func(): return main.shift_active and main.players.has(1), 20.0)
+	var day: int = main.current_day
+	check(fk().active and mgr().active and amb().lights_enabled() and amb().spills_enabled(), "H0: Day %d: forklift, manager, lights and spills are all on for today" % day)
+	main.prep_time_left = 1.0e9 # a long prep
+	# Stand idle in the hub in the manager's plain view: during prep that must
+	# not get anyone watched or written up.
+	player().teleport_to(mgr().global_position + Vector2(-120, 0))
+	await wait(0.3)
+	var d0: int = dl().deliveries_today
+	var dfk0: Vector2 = dfk().global_position
+	var h := await _watch_hazards(30.0)
+	print("HP  30s of prep: %s" % str(h))
+	check(not main.store_open, "H1: still closed after 30s of prep")
+	check(h["fk_moved"] < 1.0 and fk().rams_today == 0, "H1: Produce forklift parked all prep (moved %.1fpx, rams %d)" % [h["fk_moved"], fk().rams_today])
+	check(h["mgr_moved"] < 1.0 and not h["watched"] and main.writeups_today == 0, "H1: manager still (moved %.1fpx), never watched the idle player, no write-ups" % h["mgr_moved"])
+	check(h["spills"] == 0 and not h["lights"] and h["darkest"] == 1.0, "H1: no spills, no lights event, full brightness (%.2f)" % h["darkest"])
+	check(dl().deliveries_today > d0 and dfk().global_position.distance_to(dfk0) > 50.0, "H1: deliveries kept running: %d truck(s), delivery forklift moved" % dl().deliveries_today)
+	await shot("h1_prep_calm")
+	# --- H2: flip the sign (real key) -> everything starts.
+	await walk_to(main.STORE_SIGN_POS + Vector2(0, 45), 6.0, 30.0)
+	await tap(act + "interact")
+	await wait_until(func(): return main.store_open, 1.0)
+	check(main.store_open and main.store_opened_by == 1, "H2: sign flipped, store open")
+	var h2 := await _watch_hazards(maxf(amb().LIGHTS_FIRST_DELAY, amb().SPILL_FIRST_DELAY) + 8.0)
+	print("HP  after the sign: %s" % str(h2))
+	check(h2["fk_moved"] > 50.0, "H2: Produce forklift out on its patrol (moved %.0fpx)" % h2["fk_moved"])
+	check(h2["mgr_moved"] > 50.0, "H2: manager on his rounds (moved %.0fpx)" % h2["mgr_moved"])
+	check(h2["spills"] > 0 and h2["lights"] and h2["darkest"] < 1.0, "H2: spills (%d) and a lights event (darkest %.2f) once open" % [h2["spills"], h2["darkest"]])
+	await shot("h2_open_chaos")
+	# --- H3: next day, the ceiling opens it -> same.
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and not main.store_open, 5.0)
+	var h3a := await _watch_hazards(12.0)
+	check(h3a["fk_moved"] < 1.0 and h3a["mgr_moved"] < 1.0 and h3a["spills"] == 0 and not h3a["lights"], "H3: Day %d prep: all four quiet again %s" % [main.current_day, str(h3a)])
+	main.prep_time_left = 1.0
+	await wait_until(func(): return main.store_open, 3.0)
+	check(main.store_open and main.store_opened_by == 0, "H3: ceiling ran out, store open")
+	var h3 := await _watch_hazards(maxf(amb().LIGHTS_FIRST_DELAY, amb().SPILL_FIRST_DELAY) + 8.0)
+	check(h3["fk_moved"] > 50.0 and h3["mgr_moved"] > 50.0 and h3["spills"] > 0 and h3["lights"], "H3: after the ceiling's auto-open all four start: %s" % str(h3))
+	finish()
+
+func _run_net_hazard_pause_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	var dd := DirAccess.open("user://")
+	if dd and dd.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
+	check(main.players.size() == want, "net: %d players" % want)
+	main.prep_time_left = 1.0e9
+	var ids: Array = main.players.keys()
+	ids.sort()
+	# Each client stands idle in the manager's view during prep.
+	for k in ids.size():
+		main.players[ids[k]].rpc("teleport_to", mgr().global_position + Vector2(-120, -40 + 40 * k))
+	await wait(1.0)
+	_net_write("nh1_go.json", {})
+	var h := await _watch_hazards(25.0)
+	check(h["fk_moved"] < 1.0 and h["mgr_moved"] < 1.0 and h["spills"] == 0 and not h["lights"] and not h["watched"] and main.writeups_today == 0, "NH1 host: 25s of prep, all four hazards idle %s" % str(h))
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nh1_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NH1: %s saw a calm prep on its own screen: %s" % [main.player_display_name(id), r.get("h", {})])
+	# A client flips the sign.
+	var flipper: int = ids[1]
+	main.players[flipper].rpc("teleport_to", main.STORE_SIGN_POS + Vector2(0, 45))
+	await wait(0.8)
+	_net_write("nh2_go.json", {"flipper": flipper})
+	await wait_until(func(): return main.store_open, 8.0)
+	check(main.store_open and main.store_opened_by == flipper, "NH2: %s opened the store" % main.player_display_name(flipper))
+	var h2 := await _watch_hazards(maxf(amb().LIGHTS_FIRST_DELAY, amb().SPILL_FIRST_DELAY) + 8.0)
+	check(h2["fk_moved"] > 50.0 and h2["mgr_moved"] > 50.0 and h2["spills"] > 0 and h2["lights"], "NH2 host: all four started %s" % str(h2))
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nh2_%d.json" % id, 60.0)
+		check(r.get("ok", false), "NH2: %s saw all four start once open: %s" % [main.player_display_name(id), r.get("h", {})])
+	_net_write("done.json", {})
+	await wait(1.0)
+	finish()
+
+func _run_net_hazard_pause_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me)
+	await _net_read("nh1_go.json", 60.0)
+	var h := await _watch_hazards(20.0)
+	var ok: bool = h["fk_moved"] < 2.0 and h["mgr_moved"] < 2.0 and h["spills"] == 0 and not h["lights"] and h["darkest"] == 1.0 and not main._watch_label.visible
+	_net_write("nh1_%d.json" % me, {"ok": ok, "h": h})
+	check(ok, "%s: NH1 calm prep on my screen %s" % [who, str(h)])
+	var g2 := await _net_read("nh2_go.json", 60.0)
+	if int(g2.get("flipper", 0)) == me:
+		await wait_until(func(): return main.near_store_sign(player().global_position), 3.0)
+		await tap(act + "interact")
+	await wait_until(func(): return main.store_open, 8.0)
+	var h2 := await _watch_hazards(maxf(amb().LIGHTS_FIRST_DELAY, amb().SPILL_FIRST_DELAY) + 8.0)
+	var ok2: bool = h2["fk_moved"] > 50.0 and h2["mgr_moved"] > 50.0 and h2["spills"] > 0 and h2["lights"] and h2["darkest"] < 1.0
+	_net_write("nh2_%d.json" % me, {"ok": ok2, "h": h2})
+	check(ok2, "%s: NH2 all four started on my screen %s" % [who, str(h2)])
+	await _net_read("done.json", 60.0)
+	finish()
+
+## WEEK 17 — CO-OP SIM: the solo sim's brain on every peer, each driving its
+## own player by its own keys, all through the same days (the host runs the
+## solo sim's day loop and prints its per-day lines — orders filled/called
+## are crew-wide). For tuning the crew-size order window:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --days=5,6,7 --test=coop-sim &
+##   (x N-1) godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=coop-sim
+func _run_coop_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	while true:
+		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 1.0e9)
+		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
+		await _play_shift()
+		await wait_until(func(): return not main.shift_active or main.is_day_report_active(), 10.0)

@@ -203,15 +203,23 @@ func _physics_process(delta: float) -> void:
 	if not active:
 		return
 	var main = get_tree().current_scene
-	# Frozen for the end-of-day report (same PLAYTEST BUG FIX as Customer.gd/
-	# Player.gd/Shelf.gd) and before the first shift has actually started.
-	if main.is_day_report_active() or not main.shift_active:
+	if not _running(main):
 		velocity = Vector2.ZERO
 		return
 	_tick_cooldowns(delta)
 	_drive(delta)
 	target_position = position
 	target_rotation = rotation
+
+## Frozen for the end-of-day report (same PLAYTEST BUG FIX as Customer.gd/
+## Player.gd/Shelf.gd) and before the first shift has actually started.
+## WEEK 17: and through the prep phase — the Produce forklift's patrol is
+## part of the chaos that starts when the store opens (Main.gd's
+## open_store()); it sits parked at its home spot until then, and its
+## START_PAUSE counts from the opening. DeliveryForklift.gd overrides this:
+## deliveries run through prep.
+func _running(main) -> bool:
+	return not main.is_day_report_active() and main.shift_active and main.store_open
 
 func _drive(delta: float) -> void:
 	if _pause_timer > 0.0:

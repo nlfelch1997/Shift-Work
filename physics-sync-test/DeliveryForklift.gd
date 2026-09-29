@@ -73,6 +73,11 @@ func _ready() -> void:
 	add_child(_load_art)
 	_update_art()
 
+## WEEK 17: unlike the Produce forklift, deliveries keep running through the
+## prep phase (the store being closed is exactly when the stock arrives).
+func _running(main) -> bool:
+	return not main.is_day_report_active() and main.shift_active
+
 func reset_for_new_day() -> void:
 	super.reset_for_new_day()
 	if is_multiplayer_authority():
