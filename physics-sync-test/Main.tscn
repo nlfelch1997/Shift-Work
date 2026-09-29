@@ -172,6 +172,14 @@ rotation = 4.71238898
 position = Vector2(1820, 410)
 rotation = 4.71238898
 
+[node name="Shelf5" parent="Sections/DryGoods" instance=ExtResource("2")]
+position = Vector2(1320, 60)
+rotation = 3.14159265
+
+[node name="Shelf6" parent="Sections/DryGoods" instance=ExtResource("2")]
+position = Vector2(1560, 60)
+rotation = 3.14159265
+
 [node name="MeatDeli" type="Node2D" parent="Sections"]
 
 [node name="Shelf1" parent="Sections/MeatDeli" instance=ExtResource("2")]
@@ -190,6 +198,10 @@ modulate = Color(1.4, 0.75, 0.75, 1)
 [node name="Shelf4" parent="Sections/MeatDeli" instance=ExtResource("2")]
 position = Vector2(2660, 600)
 rotation = 3.14159265
+modulate = Color(1.4, 0.75, 0.75, 1)
+
+[node name="Shelf5" parent="Sections/MeatDeli" instance=ExtResource("2")]
+position = Vector2(2400, 1020)
 modulate = Color(1.4, 0.75, 0.75, 1)
 
 [node name="DairyFrozen" type="Node2D" parent="Sections"]
@@ -212,6 +224,10 @@ position = Vector2(740, 600)
 rotation = 3.14159265
 modulate = Color(0.75, 1.05, 1.35, 1)
 
+[node name="Shelf5" parent="Sections/DairyFrozen" instance=ExtResource("2")]
+position = Vector2(480, 1020)
+modulate = Color(0.75, 1.05, 1.35, 1)
+
 [node name="Bakery" type="Node2D" parent="Sections"]
 
 [node name="Shelf1" parent="Sections/Bakery" instance=ExtResource("2")]
@@ -230,6 +246,10 @@ modulate = Color(1.3, 1.05, 0.65, 1)
 [node name="Shelf4" parent="Sections/Bakery" instance=ExtResource("2")]
 position = Vector2(2660, 60)
 rotation = 3.14159265
+modulate = Color(1.3, 1.05, 0.65, 1)
+
+[node name="Shelf5" parent="Sections/Bakery" instance=ExtResource("2")]
+position = Vector2(2400, 480)
 modulate = Color(1.3, 1.05, 0.65, 1)
 
 [node name="CentralCheckout" type="Node2D" parent="."]

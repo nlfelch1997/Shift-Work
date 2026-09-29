@@ -560,6 +560,13 @@ func _try_interact() -> void:
 	if carried:
 		_interact_with(carried, my_id)
 		return
+	# WEEK 16: empty-handed at the Store sign while the store is still closed
+	# -> flip it open (Main.gd decides on the host). Checked before picking
+	# anything up, so a product lying by the sign can't swallow the press.
+	var main = get_tree().current_scene
+	if not main.store_open and main.shift_active and main.near_store_sign(global_position):
+		main.try_flip_sign()
+		return
 	var nearest := _find_nearest_free_carryable()
 	if nearest:
 		_interact_with(nearest, my_id)

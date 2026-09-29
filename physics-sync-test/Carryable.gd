@@ -55,6 +55,23 @@ const SMOOTHING_RATE := 15.0 # higher = snappier but less smooth; tune by feel
 const MAX_SPEED := 900.0
 
 @export var replication_interval := 0.0
+## WEEK 15 — authority only: a carrier just SET THIS DOWN (E / C), at its
+## final drop position, before physics has touched it. Not for throws. The
+## Storage unpack pad (Delivery.gd) listens so that "set down on the pad"
+## counts at once, even if another box set down beside it shoves it a moment
+## later. Keeps this component ignorant of what listens, like everything else
+## here.
+signal dropped
+## WEEK 15 — how far in front of its carrier a BIGGER-than-stock object rides
+## and is set down. 0 (every product, and the default) = the plain
+## CARRY_OFFSET, exactly as before. FOUND BY THE CO-OP DELIVERY TEST: the 30px
+## offset only clears the carrier's 28px body for a 28px product; a 44px
+## delivery box set down there overlapped its carrier by 6px, and the physics
+## engine threw it clear at ~840px/s — across the pad and into the wall. An
+## object with carry_distance set is kept that far out along whichever axis
+## it's facing most (carry_offset(): the distance grows toward diagonals, so
+## two axis-aligned squares never overlap at any facing).
+var carry_distance := 0.0
 
 var body: RigidBody2D # the object this component is attached to
 var target_position: Vector2
@@ -109,6 +126,13 @@ func _ready() -> void:
 	sync.set_multiplayer_authority(1) # set before entering the tree — see Player.gd
 	add_child(sync)
 
+## Where this object sits relative to its carrier, facing `facing`.
+func carry_offset(facing: float) -> Vector2:
+	if carry_distance <= 0.0:
+		return CARRY_OFFSET.rotated(facing)
+	var dir := Vector2.RIGHT.rotated(facing)
+	return dir * carry_distance / maxf(absf(dir.x), absf(dir.y))
+
 func _physics_process(_delta: float) -> void:
 	if not Net.is_active():
 		return
@@ -127,7 +151,7 @@ func _physics_process(_delta: float) -> void:
 				var facing: float = carrier.get("facing_angle")
 				if facing == null:
 					facing = 0.0
-				body.position = carrier.global_position + CARRY_OFFSET.rotated(facing)
+				body.position = carrier.global_position + carry_offset(facing)
 				body.rotation = 0.0
 			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
 			# position moved this tick (see the longer note on _rpc_set_carrier)
@@ -185,6 +209,15 @@ func _process(delta: float) -> void:
 	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
 	body.position = body.position.lerp(target_position, t)
 	body.rotation = lerp_angle(body.rotation, target_rotation, t)
+	# WEEK 15 FIX (found by the co-op delivery test, reproduced on the Week 14
+	# code too): setting a frozen RigidBody2D's position here never reached
+	# the physics server, and every physics tick the server wrote its own
+	# stale transform back — so once the host pushed or knocked a loose item,
+	# a client's copy crept a few px toward the new spot each frame, snapped
+	# back each tick, and settled nowhere near where the host had it (a box
+	# still on the pad on the client's screen, 160px away on the host's).
+	# Telling the server directly makes the smoothed pose stick.
+	PhysicsServer2D.body_set_state(body.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM, body.global_transform)
 
 ## A player who collided with this object calls this (locally if they're
 ## already the authority, over RPC otherwise) to actually move it.
@@ -333,7 +366,7 @@ func _rpc_set_carrier(id: int) -> void:
 				var facing: float = carrier.get("facing_angle")
 				if facing == null:
 					facing = 0.0
-				body.position = carrier.global_position + CARRY_OFFSET.rotated(facing)
+				body.position = carrier.global_position + carry_offset(facing)
 		body.collision_layer = 1
 		body.collision_mask = 1
 		if is_multiplayer_authority():
@@ -349,6 +382,8 @@ func _rpc_set_carrier(id: int) -> void:
 			body.linear_velocity = Vector2.ZERO
 			body.angular_velocity = 0.0
 			body.freeze = false
+			if old_carrier_id != 0:
+				dropped.emit()
 
 ## Same shape as _rpc_set_carrier(0) (releases the object) but also gives
 ## it velocity in the throw direction, instead of leaving it at rest.
@@ -372,7 +407,7 @@ func _rpc_throw(direction: Vector2) -> void:
 			var facing: float = carrier.get("facing_angle")
 			if facing == null:
 				facing = 0.0
-			body.position = carrier.global_position + CARRY_OFFSET.rotated(facing)
+			body.position = carrier.global_position + carry_offset(facing)
 	body.collision_layer = 1
 	body.collision_mask = 1
 	if is_multiplayer_authority():

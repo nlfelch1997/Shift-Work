@@ -258,7 +258,9 @@ func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority() or not active:
 		return
 	var main = get_tree().current_scene
-	if main.is_day_report_active() or not main.shift_active:
+	# WEEK 17: off for the prep phase too — no patrol, no "look busy" — until
+	# the store opens (Main.gd's open_store()). START_PAUSE counts from then.
+	if main.is_day_report_active() or not main.shift_active or not main.store_open:
 		return
 	_update_detection(delta, main)
 	writing_up = _caught_timer > 0.0

@@ -111,7 +111,12 @@ const SPILL_CLEAR_PLAYER := 130.0 # spawn clearances, from the spill's center
 const SPILL_CLEAR_FORKLIFT_LANE := 60.0 # + radius, either side of the lane
 const SPILL_CLEAR_SLOT := 45.0 # + radius
 const SPILL_CLEAR_SPILL := 50.0 # + both radii
-const SPILL_SPAWN_ATTEMPTS := 14
+## WEEK 16: 28 (was 14). The new wall shelves (Main.gd's WEEK 16 note) left
+## less open aisle, so more random picks land in front of a slot; with 14 tries
+## about a fifth of spill rounds found no spot at all (the round is skipped),
+## which quietly thinned Day 6+ spills. More tries restores the rate without
+## touching where a spill is allowed. Plumbing, not a balance knob.
+const SPILL_SPAWN_ATTEMPTS := 28
 const SPILL_COLOR := Color(0.55, 0.75, 0.35, 0.72) # something green and regrettable
 
 const Z_DARKNESS := 100
@@ -207,9 +212,10 @@ func _ready() -> void:
 ## The warning tells stay readable in the dark (see the header's FAIRNESS
 ## note). z_index is relative to the parent, and every parent here is at 0.
 func _mark_emissive() -> void:
-	var fk: Node = main.forklift
-	for n in ["Beacon", "BeepAnchor"]:
-		fk.get_node(n).z_index = Z_EMISSIVE
+	# WEEK 15: the Storage delivery forklift's tells too.
+	for fk in [main.forklift, main.delivery_forklift]:
+		for n in ["Beacon", "BeepAnchor"]:
+			fk.get_node(n).z_index = Z_EMISSIVE
 	var mgr: Node = main.manager
 	for n in ["AlertLabel", "NameLabel", "Facing/Cone"]:
 		mgr.get_node(n).z_index = Z_EMISSIVE
