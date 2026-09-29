@@ -3884,10 +3884,13 @@ func _run_box_cycle() -> void:
 	await wait(0.5)
 	never_open = true
 	main.prep_time_left = 1.0e9
+	# The day clock too: the trials outlast Day 7's 816s, and the end-of-day
+	# report freezes every player where they stand.
+	main.shift_time_left = 1.0e9
 	var d := dl()
 	d._truck_timer = 1.0e9
 	const TRIALS := 3
-	const BC_TIMEOUT := 240.0
+	var BC_TIMEOUT: float = float(OS.get_environment("BC_TIMEOUT")) if OS.get_environment("BC_TIMEOUT") != "" else 240.0
 	var all_t := []
 	for sec in (OS.get_environment("BC_SECTIONS").split(",") if OS.get_environment("BC_SECTIONS") != "" else main._unlocked_sections().map(func(x): return x["name"])):
 		var times := []
@@ -3900,10 +3903,6 @@ func _run_box_cycle() -> void:
 			steer(Vector2.ZERO)
 			await wait(0.3)
 			var spot: Vector2 = d.RECEIVING_SPOTS[3]
-			# Off the box's axis: started exactly on its approach point, the brain
-			# sometimes stood frozen there for a whole trial after an earlier
-			# trial timed out (seen on both codebases; cause not pinned down —
-			# harness only, the sims never start a trial there).
 			player().teleport_to(spot + Vector2(40, -150))
 			d.drop_box(spot, sec)
 			await wait(0.3)
