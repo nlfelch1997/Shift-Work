@@ -568,6 +568,8 @@ func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 			continue
 		if pick_slot(obj.global_position, obj).is_empty():
 			continue
+		if _teammate_closer(p, obj):
+			continue
 		var d := p.global_position.distance_to(obj.global_position)
 		if d < best_d:
 			best_d = d
@@ -900,12 +902,25 @@ func _loose_stockable() -> int:
 			n += 1
 	return n
 
+## WEEK 17 (co-op sim): leave it to a teammate who's nearer — without this,
+## every bot chases the same box/product and a crew does less than one bot.
+## No effect solo.
+func _teammate_closer(p: Node2D, obj: Node2D) -> bool:
+	var mine := p.global_position.distance_to(obj.global_position)
+	for id in main.players:
+		var q: Node2D = main.players[id]
+		if q != p and q.global_position.distance_to(obj.global_position) + 20.0 < mine:
+			return true
+	return false
+
 ## Nearest free box that isn't on the pad already.
 func _pick_box(p: Node2D) -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
 	for b in get_nodes_in_group("delivery_box"):
 		if b.is_queued_for_deletion() or b.get_node("Carryable").carrier_id != 0 or dl().on_pad(b.global_position):
+			continue
+		if _teammate_closer(p, b):
 			continue
 		var d := p.global_position.distance_to(b.global_position)
 		if d < best_d:
