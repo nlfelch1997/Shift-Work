@@ -231,6 +231,10 @@ func _recheck_occupied(i: int) -> void:
 		or obj.global_position.distance_to(slots[i].global_position) > LEAVE_RADIUS \
 		or obj.linear_velocity.length() > KNOCK_SPEED
 	if knocked:
+		# WEEK 19: knocked out of its slot (not picked up) — it's mess for the
+		# cleanup phase until it's back on a shelf (Cleanup.gd).
+		if carryable.carrier_id == 0:
+			obj.set_meta("knocked", true)
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
@@ -244,6 +248,8 @@ func _settle_check_empty(i: int, delta: float) -> void:
 	if _settle_timers[i] >= SETTLE_TIME:
 		_occupant[i] = candidate
 		filled[i] = true
+		if candidate.has_meta("knocked"):
+			candidate.remove_meta("knocked")
 		# WEEK 11 — the one place "an item was stocked" is decided, so it's
 		# where the manager's priority order hears about it (Main.gd's
 		# note_item_stocked() tags the item if it counts toward the order).
@@ -361,6 +367,8 @@ func wreck(from_pos: Vector2) -> bool:
 	if not is_multiplayer_authority() or wrecked:
 		return false
 	for i in slots.size():
+		if _occupant[i] != null and is_instance_valid(_occupant[i]):
+			_occupant[i].set_meta("knocked", true) # WEEK 19 cleanup mess
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0

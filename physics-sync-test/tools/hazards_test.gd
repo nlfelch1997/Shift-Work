@@ -80,6 +80,10 @@ func _initialize() -> void:
 	# delivery/prep tests play the real thing.
 	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync", "hazard-pause", "net-hazard-pause", "coop-sim", "box-cycle", "route-len"]:
 		main.opening_stock_fraction = 1.0
+	# WEEK 19: the tests written before the cleanup phase expect the report
+	# the moment the clock runs out — clock out at once for them.
+	if not mode in ["solo", "coop-sim", "cleanup", "net-cleanup"]:
+		main.cleanup_ceiling_override = 0.0
 	# WEEK 17: sweep hook for the priority-order window (solo sim tuning).
 	for a in args:
 		if a.begins_with("--order-window="):
@@ -135,6 +139,13 @@ func _initialize() -> void:
 				_run_net_prep_client.call_deferred()
 			else:
 				_run_net_prep_host.call_deferred()
+		"cleanup":
+			_run_cleanup.call_deferred()
+		"net-cleanup":
+			if "--client" in args:
+				_run_net_cleanup_client.call_deferred()
+			else:
+				_run_net_cleanup_host.call_deferred()
 		"net-orders":
 			if "--client" in args:
 				_run_net_orders_client.call_deferred()
@@ -644,11 +655,20 @@ func _run_solo() -> void:
 		_haul = {"walk_px": 0.0, "last_pos": null, "box_t": {}, "carry_s": [], "item_born": {}, "item_s": [], "box_items": {}, "box_cycle_s": [], "seen": {}, "last_event": dl().unpack_event_id, "last_carry": null, "open_placed": 0, "open_called": 0, "item_carry": null, "last_pos_c": null, "carry_item_s": [], "carry_item_px": []}
 		print("SOLO  Day %d start — %.0fs shift, sections %s, product cap %d" % [day, main.shift_time_left, str(main._unlocked_sections().map(func(s): return s["name"])), main._product_baseline()])
 		await _play_shift()
+		# WEEK 19: then the cleanup phase, the same competent player.
+		var mess := {"m": cl().mop_total, "l": cl().litter_total, "ceiling": main.cleanup_time_left, "dropped": cl().litter_dropped_today}
+		var t_clean := _wall()
+		for o in get_nodes_in_group("carryable"):
+			if o.get_node("Carryable").carrier_id == me:
+				await tap(act + "interact") # set down whatever was in hand at close
+		var cst := await _play_cleanup(false, not "--no-clockout" in OS.get_cmdline_user_args())
 		await wait_until(func(): return main.is_day_report_active(), 5.0)
 		await wait(0.3)
+		check(main.is_day_report_active(), "Day %d: the report came up after cleanup" % day)
 		var sold: int = main._total_sold() - main._sold_at_day_start
 		var line := "SOLO  Day %d: sold %d, place-presses %d, write-ups %d %s, forklift hits %d, rams %d, watched %.0fs, idle %.0fs, manager-inside-forklift frames %d | shift %.0fs, grace %.0fs, first customer at %.0fs | orders %d/%d filled, %d bonus sales | order banner + LOOK BUSY together %.1fs, overlapping frames %d | spills %d, slipping %.1fs, lights events %d | trucks %d, boxes unpacked %d | clock %.0fs = prep %.0fs (opened by %s, ceiling %.0fs) + selling %.0fs, lights events while open %d | %s" % [day, sold, stats["placed"], main.writeups_today, str(stats["reasons"]), stats["hits"], fk().rams_today, stats["watched_s"], stats["idle_s"], stats["overlap"], stats["shift_len"], stats["grace"], stats["first_customer_s"], main.orders_filled_today, main.orders_called_today, main.priority_sales_today, stats["banner_and_busy_s"], stats["banner_clash"], main.ambience.spills_today, stats["slip_s"], main.ambience.lights_events_today, dl().deliveries_today, dl().boxes_unpacked_today, stats["shift_len"], stats.get("opened_at", -1.0), stats.get("opened_by", "?"), stats["grace"], stats["shift_len"] - stats.get("opened_at", 0.0), main.ambience.lights_events_today - stats.get("lights_at_open", 0), main.report_pay_label.text]
 		line += " | " + _haul_line()
+		line += " | CLEANUP mess %d mop + %d litter (%d dropped), ceiling %.0fs, took %.0fs, %s; mopped %d, swept %d, pans %d -> %d%% / %d%%, bonus %s" % [mess["m"], mess["l"], mess["dropped"], mess["ceiling"], _wall() - t_clean, "clocked out by the player" if cst["clocked"] else "ceiling clocked out", cst["mopped"], cst["swept"], cst["dumps"], roundi(cl().mop_fraction() * 100), roundi(cl().litter_fraction() * 100), main._format_money(cl().clean_bonus_today)]
 		print(line)
 		day_stats.append(line)
 		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
@@ -664,7 +684,7 @@ func _run_solo() -> void:
 	finish()
 
 ## stop: when to hand control back (default: the shift ends).
-func _play_shift(stop: Callable = func(): return not main.shift_active) -> void:
+func _play_shift(stop: Callable = func(): return not main.shift_active or main.cleanup_active) -> void:
 	var p := player()
 	var obj: Node2D = null
 	var job := {}
@@ -1325,7 +1345,7 @@ func _run_orders() -> void:
 	await wait(0.2) # let Main._process refresh the report labels
 	check(main.order_section == "" and not main._order_label.visible, "O5: open order lapses at the end of the day, banner hidden under the report")
 	check(main.report_order_label.visible and main.report_order_label.text.begins_with("Priority orders: 1/"), "O5: report line: '%s'" % main.report_order_label.text)
-	var expect_pay: int = (main._total_sold() - main._sold_at_day_start) * main.PAY_PER_SALE + main.priority_sales_today * 5 - main.writeups_today * main.WRITEUP_PENALTY
+	var expect_pay: int = (main._total_sold() - main._sold_at_day_start) * main.PAY_PER_SALE + main.priority_sales_today * 5 + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY
 	check(main.report_pay_label.text.begins_with("Pay Today: %s" % main._format_money(expect_pay)), "O5: report pay includes the order bonus: '%s'" % main.report_pay_label.text)
 	print("REPORT  %s | %s | %s | %s" % [main.report_today_label.text, main.report_writeup_label.text, main.report_order_label.text, main.report_pay_label.text])
 	await shot("o5_report")
@@ -3062,6 +3082,8 @@ func _run_delivery() -> void:
 	await wait_until(func(): return player()._place_target_slot != null, 1.0)
 	await tap(act + "place")
 	var shelved := await wait_until(func(): return _is_placed(item), 2.0)
+	if not shelved:
+		print("D5  missed — item %s at %s carrier %d | player %s | target slot %s | job %s" % [item.name, str(item.global_position.round()), item.get_node("Carryable").carrier_id, str(player().global_position.round()), str(player()._place_target_slot), str(job)])
 	check(shelved, "D5: carried one by hand from the pad to a %s shelf and it stocked (%s)" % [sec, str(slot5 != null)])
 	# No refill from nothing: sell two, give the old restock cadence time.
 	var before := floor_total()
@@ -3868,6 +3890,10 @@ func _run_coop_client() -> void:
 		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 1.0e9)
 		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
 		await _play_shift()
+		# WEEK 19: clients clean too (the host clocks out); sweeps first so the
+		# crew splits the jobs.
+		if main.cleanup_active:
+			await _play_cleanup(true, false)
 		await wait_until(func(): return not main.shift_active or main.is_day_report_active(), 10.0)
 
 ## ---------------------------------------------------------------------------
@@ -3992,4 +4018,609 @@ func _run_route_len() -> void:
 			line += " | %s: box %4.0fpx + 6 units %5.0fpx = %5.0fpx (%.0fs walking)" % [which, box_leg, items, tot, tot / speed]
 		print(line)
 	print("ROUTE  ALL 4 SECTIONS: old %.0fpx, new %.0fpx (%.0f%% less walking per box)" % [totals["old"], totals["new"], 100.0 * (1.0 - totals["new"] / totals["old"])])
+	finish()
+
+## ---------------------------------------------------------------------------
+## WEEK 19 — END-OF-SHIFT CLEANUP (Cleanup.gd, Main.gd's start_cleanup() /
+## clock_out()). Scripted checks, solo, through the real keys:
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --test=cleanup
+## The co-op pass (every peer runs the cleanup brain on its own player, plus
+## the tool-grab and clock-out races):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=6 --players=2 --test=net-cleanup &
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-cleanup
+## The solo sim (--test=solo) and coop-sim now play each day's cleanup too
+## with the same brain, and report it per day.
+
+func cl() -> Node2D:
+	return main.cleanup
+
+## Real seconds (the shift clock stands still during cleanup).
+func _wall() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+## Every mop-category mess as THIS peer sees it (replicated state only, so
+## it works the same on a client): [{"pos", "r"}].
+func mop_messes_view() -> Array:
+	var out := []
+	for s in amb().spills:
+		out.append({"pos": s["pos"], "r": float(s["r"])})
+	for d in main.displays:
+		if d.get_node("Display").toppled:
+			out.append({"pos": d.global_position, "r": 24.0})
+	for n in cl().knocked_names:
+		var o: Node2D = main.products_root.get_node_or_null(NodePath(n))
+		if o and o.get_node("Carryable").carrier_id == 0:
+			out.append({"pos": o.global_position, "r": 14.0})
+	return out
+
+## Where to stand from a mop mess: the head reaches r + MOP_REACH, and a
+## display or a stocked item is a body you'd shove if you stood on it.
+func mop_stand(m: Dictionary) -> float:
+	return cl().MOP_HEAD_OFFSET + 0.6 * float(m["r"]) + 8.0
+
+func _nearest(from: Vector2, items: Array, skip: Array) -> Variant:
+	var best = null
+	var best_d := INF
+	for it in items:
+		var pos: Vector2 = it["pos"]
+		if skip.any(func(q): return q.distance_to(pos) < 12.0):
+			continue
+		var d := route_len(from, pos)
+		if d < best_d:
+			best_d = d
+			best = it
+	return best
+
+## Stands the player `stand_off` from `target`, facing it, so the tool's
+## head (held out along the facing) is on it. False if it couldn't get there.
+func face_target(target: Vector2, stand_off: float) -> bool:
+	var p := player()
+	var dir := (target - p.global_position).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	# From our side first; if something's in the way (a shelf end, a parked
+	# forklift), from the other sides.
+	var reached := false
+	for turn in [0.0, PI * 0.5, -PI * 0.5, PI]:
+		var d: Vector2 = dir.rotated(turn)
+		var stand: Vector2 = target - d * stand_off
+		if main._is_out_of_bounds(stand):
+			continue
+		if await walk_to(stand, 10.0, 8.0):
+			reached = true
+			break
+	if not reached and p.global_position.distance_to(target) > stand_off + 30.0:
+		return false
+	dir = (target - p.global_position).normalized()
+	steer(dir * 0.3)
+	await physics_frame
+	await physics_frame
+	steer(Vector2.ZERO)
+	return true
+
+## Gets a tool of `kind` into this player's hands (puts down a wrong one
+## first). False if none is free.
+func get_tool(kind: String) -> bool:
+	var held: int = cl().tool_of(me)
+	if held >= 0 and cl().tools[held]["kind"] == kind:
+		return true
+	if held >= 0:
+		await tap(act + "interact")
+		await wait_until(func(): return cl().tool_of(me) < 0, 2.0)
+	var best := -1
+	var best_d := INF
+	for i in cl().tools.size():
+		var t: Dictionary = cl().tools[i]
+		if t["holder"] == 0 and t["kind"] == kind:
+			var d := route_len(player().global_position, t["pos"])
+			if d < best_d:
+				best_d = d
+				best = i
+	if best < 0:
+		return false
+	var spot: Vector2 = cl().tools[best]["pos"]
+	await walk_to(spot, 4.0, 20.0)
+	await tap(act + "interact")
+	return await wait_until(func(): return cl().tool_of(me) >= 0 and cl().tools[cl().tool_of(me)]["kind"] == kind, 2.0)
+
+func go_clock_out() -> void:
+	var ok := await walk_to(main.TIME_CLOCK_POS + Vector2(0, 40), 12.0, 40.0)
+	if not ok:
+		print("CLOCK  couldn't reach the time clock: at %s" % str(player().global_position.round()))
+	await tap(act + "interact")
+	await wait_until(func(): return not main.cleanup_active, 3.0)
+
+## The cleanup brain: a competent crew member (_brain_until_empty() does the
+## cleaning), then it clocks out once the floor is clean — or early, when
+## the ceiling is about to run out anyway, so it's the brain, not the timer,
+## that ends the day. broom_first: sweep before mopping (a crew splits jobs).
+func _play_cleanup(broom_first := false, clock_out := true) -> Dictionary:
+	var st := await _brain_until_empty(broom_first, true)
+	if cl().tool_of(me) >= 0 and main.cleanup_active:
+		await tap(act + "interact")
+	st["clocked"] = false
+	if clock_out and main.cleanup_active:
+		await go_clock_out()
+		st["clocked"] = not main.cleanup_active and main.clocked_out_by == me
+	elif main.cleanup_active:
+		await wait_until(func(): return not main.cleanup_active, 200.0)
+	return st
+
+## Snapshot of this peer's cleanup view, for comparing peers.
+func _cleanup_view() -> Dictionary:
+	var holders := []
+	for t in cl().tools:
+		holders.append(int(t["holder"]))
+	return {"active": main.cleanup_active, "litter": cl().litter.size(), "mop_left": cl().mop_left, "mop_total": cl().mop_total, "litter_total": cl().litter_total, "holders": holders, "spills": amb().spills.size(), "customers": live_customers(), "sign": main._sign_text.text}
+
+func _run_cleanup() -> void:
+	if shots:
+		main.debug_label.visible = false
+	main.shift_duration = 45.0
+	main.prep_ceiling_override = 0.0
+	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
+	var p := player()
+	# --- CL1: litter builds up during the selling window; tools stay racked.
+	check(cl().tools.size() == cl().MOPS + cl().BROOMS and cl().tools.all(func(t): return t["holder"] == 0), "CL1: %d tools on the station at open" % cl().tools.size())
+	await walk_to(cl().TOOL_SPOTS[0], 4.0)
+	await tap(act + "interact")
+	await wait(0.4)
+	check(cl().tool_of(me) < 0, "CL1: a tool can't be taken while the store is open")
+	await wait_until(func(): return cl().litter.size() >= 3, 40.0)
+	check(cl().litter.size() >= 3, "CL1: customers dropped litter during the shift: %d on the floor at %.0fs left" % [cl().litter.size(), main.shift_time_left])
+	var in_store: bool = cl().litter.all(func(l): return cl()._litter_zone_ok(l["pos"]))
+	check(in_store, "CL1: all litter is in the hub or an open section")
+	# Known mess for the checks below: a spill, a knocked-over display and a
+	# knocked-off stocked item, all in reach of open floor.
+	fk()._pause_timer = 1.0e9
+	pin_manager(Vector2(480, 1350), 0.0)
+	amb()._spill_timer = 1.0e9
+	var spill_id: int = amb().spawn_spill(Vector2(1440, 700), 44.0)
+	# Some sales, so the day has a gross for the bonus to be a share of.
+	for i in 3:
+		var sold_one: RigidBody2D = await stock_one("Dry Goods")
+		if sold_one:
+			await sell(sold_one)
+	# --- CL2: the clock runs out -> CLEANUP, not the report.
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.cleanup_active, 3.0)
+	await wait(0.5)
+	check(main.cleanup_active and main.shift_active and not main.is_day_report_active(), "CL2: clock ran out -> cleanup phase (no report yet)")
+	check(live_customers() == 0, "CL2: customers all left (%d)" % live_customers())
+	check(main._sign_text.text == "CLOSED" and main._prep_label.visible and "CLEANUP" in main._prep_label.text, "CL2: sign CLOSED, cleanup banner up: '%s'" % main._prep_label.text)
+	check(not main.manager.visible, "CL2: the manager has gone home")
+	var fk_pos: Vector2 = fk().global_position
+	check(fk_pos.distance_to(fk().home_position) < 2.0, "CL2: the Produce forklift parked at home")
+	check(cl().mop_total >= 3 and cl().litter_total >= 3, "CL2: mess snapshot: %d spills & knockovers, %d litter" % [cl().mop_total, cl().litter_total])
+	var ceiling: float = main.cleanup_time_left
+	var want_ceiling := clampf(main.CLEANUP_CEILING_BASE + main.CLEANUP_CEILING_PER_MESS * cl().mess_count(), main.CLEANUP_CEILING_MIN, main.CLEANUP_CEILING_MAX)
+	check(absf(ceiling - want_ceiling) < 1.5, "CL2: cleanup ceiling %.0fs (formula %.0fs for %d mess)" % [ceiling, want_ceiling, cl().mess_count()])
+	var age_before: float = amb()._spill_age.get(spill_id, -1.0)
+	var trucks: int = dl().deliveries_today
+	await wait(3.0)
+	check(is_equal_approx(amb()._spill_age.get(spill_id, -2.0), age_before), "CL2: the spill stopped drying at close")
+	check(fk().global_position.distance_to(fk_pos) < 2.0, "CL2: the forklift stays parked")
+	var disp: RigidBody2D = main.displays[0]
+	# Tipped over where it stands (a shove toward the shelves can wedge it
+	# somewhere no one could reach it).
+	move_body(disp, disp.get_node("Display").home_position + Vector2(20, -10))
+	disp.get_node("Display").toppled = true
+	# (Planted after close: customers would pick a loose item up or shove it.)
+	var prod: RigidBody2D = null
+	for sec in ["Dry Goods", "Produce"]:
+		var sp: Array = loose_products(sec)
+		if not sp.is_empty():
+			prod = await stock_one(sec, sp[0])
+			if prod:
+				break
+	if prod == null:
+		main.spawn_product_at("Dry Goods", Vector2(1440, 400))
+		await wait(0.3)
+		prod = await stock_one("Dry Goods")
+	check(prod != null and _is_placed(prod), "CL setup: an item stocked on a shelf")
+	prod.apply_central_impulse(Vector2(0, 400) * prod.mass)
+	await wait_until(func(): return prod.has_meta("knocked"), 2.0)
+	check(prod.has_meta("knocked"), "CL setup: knocking it off its slot tags it as mess")
+	# Out onto open floor, so it can't slide back into a slot (which would
+	# rightly untag it).
+	await wait(0.4)
+	move_body(prod, Vector2(1300, 420))
+
+	# A second knocked item that gets put back by hand -> untagged.
+	var others: Array = loose_products("Dry Goods").filter(func(o): return o != prod)
+	var prod2: RigidBody2D = await stock_one("Dry Goods", others[0]) if not others.is_empty() else null
+	if prod2:
+		prod2.apply_central_impulse(Vector2(0, 400) * prod2.mass)
+		await wait_until(func(): return prod2.has_meta("knocked"), 2.0)
+		await wait(0.6)
+		await stock_one("Dry Goods", prod2)
+		check(not prod2.has_meta("knocked"), "CL setup: re-shelving a knocked item clears its tag")
+	# --- CL3: the mop, through the real keys.
+	await walk_to(cl().STATION_POS + Vector2(0, 80), 10.0)
+	await shot("cleanup_station_closed_store")
+	check(await get_tool("mop"), "CL3: picked up a mop at the station with E")
+	var spill_pos: Vector2 = Vector2(1440, 700)
+	await face_target(spill_pos, cl().MOP_HEAD_OFFSET)
+	var t0 := _wall()
+	press(act + "place")
+	var saw_bar := await wait_until(func(): return float(cl().tools[cl().tool_of(me)]["work"]) > 0.4, 2.0)
+	await shot("cleanup_mopping_spill")
+	var gone := await wait_until(func(): return not amb().spills.any(func(s): return s["id"] == spill_id), 5.0)
+	press(act + "place", 0.0)
+	check(saw_bar and gone, "CL3: held C with the mop on the spill -> mopped up in %.1fs (progress showed: %s)" % [_wall() - t0, str(saw_bar)])
+	# Up to two approaches, like a person adjusting when the bar doesn't show.
+	for attempt in 2:
+		await face_target(disp.global_position, mop_stand({"r": 24.0}))
+		press(act + "place")
+		gone = await wait_until(func(): return not disp.get_node("Display").toppled, 4.0)
+		press(act + "place", 0.0)
+		if gone:
+			break
+		var q := PhysicsShapeQueryParameters2D.new()
+		var circ := CircleShape2D.new()
+		circ.radius = 24.0
+		q.shape = circ
+		q.transform = Transform2D(0.0, player().global_position + Vector2(20, 0))
+		var hits: Array = player().get_world_2d().direct_space_state.intersect_shape(q, 8).map(func(h): return String(h["collider"].get_path()) + "@" + str(h["collider"].global_position.round()))
+		print("CL3  display approach %d missed (player %s, display %s) touching %s" % [attempt + 1, str(player().global_position.round()), str(disp.global_position.round()), str(hits)])
+	check(gone and disp.global_position.distance_to(disp.get_node("Display").home_position) < 5.0, "CL3: mopped the knocked-over display -> back upright on its spot")
+	if not gone:
+		print("DEBUG display mop failed: disp %s at %s home %s toppled %s | player %s facing %.2f | work %s | messes %s" % [disp.name, str(disp.global_position.round()), str(disp.get_node("Display").home_position), str(disp.get_node("Display").toppled), str(player().global_position.round()), player().facing_angle, str(cl().tools[cl().tool_of(me)]["work"]), str(cl()._mop_messes().map(func(m): return [m["kind"], m["pos"].round()]))])
+	await face_target(prod.global_position, mop_stand({"r": 14.0}))
+	press(act + "place")
+	gone = await wait_until(func(): return not is_instance_valid(prod) or prod.is_queued_for_deletion(), 4.0)
+	press(act + "place", 0.0)
+	check(gone, "CL3: mopped the knocked-off item -> binned")
+	if not gone:
+		print("DEBUG prod at %s player %s facing %.2f work %s messes %s" % [str(prod.global_position), str(player().global_position), player().facing_angle, str(cl().tools[cl().tool_of(me)]["work"]), str(cl()._mop_messes().map(func(m): return [m["kind"], m["pos"].round()]))])
+	# Walking with the mop but not holding C does nothing.
+	await wait(0.15)
+	check(float(cl().tools[cl().tool_of(me)]["work"]) < 0.0, "CL3: not scrubbing when C isn't held")
+	# --- CL4: the broom and the pan.
+	check(await get_tool("broom"), "CL4: swapped the mop for a broom (E to put down, E to pick up)")
+	var dropped: int = cl().tools.filter(func(t): return t["kind"] == "mop" and t["holder"] == 0).size()
+	check(dropped == cl().MOPS, "CL4: the mop was put down (%d free mops)" % dropped)
+	# A tight cluster of litter, more than the pan holds.
+	var cluster_at := Vector2(1600, 700)
+	for i in cl().PAN_CAPACITY + 3:
+		cl().drop_litter(cluster_at + Vector2(randf_range(-14, 14), randf_range(-14, 14)))
+	await face_target(cluster_at, cl().BROOM_HEAD_OFFSET)
+	press(act + "place")
+	var filled := await wait_until(func(): return cl().tools[cl().tool_of(me)]["full"], 4.0)
+	await wait(0.5)
+	press(act + "place", 0.0)
+	var left_in_cluster: int = cl().litter.filter(func(l): return l["pos"].distance_to(cluster_at) < 30.0).size()
+	check(filled and int(cl().tools[cl().tool_of(me)]["pan"]) == cl().PAN_CAPACITY and left_in_cluster >= 3, "CL4: swept %d pieces at once into the pan, which stopped at %d (%d left there)" % [cl().PAN_CAPACITY, cl().tools[cl().tool_of(me)]["pan"], left_in_cluster])
+	check(main._prep_label.visible, "CL4: banner still up")
+	await tap(act + "interact") # nowhere near a bin: puts it down
+	await wait(0.3)
+	check(cl().tool_of(me) < 0, "CL4: E away from a bin puts the broom down")
+	await get_tool("broom")
+	await walk_to(cl().BINS[0]["pos"] + Vector2(0, 30), 10.0)
+	await tap(act + "interact")
+	await wait(0.3)
+	check(cl().tool_of(me) >= 0 and int(cl().tools[cl().tool_of(me)]["pan"]) == 0, "CL4: E at a trash bin empties the pan (and keeps the broom)")
+	await face_target(cluster_at, cl().BROOM_HEAD_OFFSET)
+	press(act + "place")
+	await wait_until(func(): return cl().litter.filter(func(l): return l["pos"].distance_to(cluster_at) < 30.0).is_empty(), 3.0)
+	press(act + "place", 0.0)
+	check(cl().litter.filter(func(l): return l["pos"].distance_to(cluster_at) < 30.0).is_empty(), "CL4: swept the rest")
+	await shot("cleanup_broom")
+	# --- CL5: clock out. Not from across the store, then at the clock.
+	var litter_left: int = cl().litter.size()
+	main._request_clock_out() # host calling the client's handler: no sender, refused
+	await wait(0.2)
+	check(main.cleanup_active, "CL5: a clock-out request from nobody at the clock is refused")
+	var gross: int = main._gross_pay_today()
+	var mop_left_before: int = cl()._mop_messes().size()
+	await walk_to(main.TIME_CLOCK_POS + Vector2(0, 40), 12.0, 40.0)
+	await shot("cleanup_time_clock")
+	await go_clock_out()
+	check(main.is_day_report_active() and not main.cleanup_active and main.clocked_out_by == 1 and main.clock_out_events_today == 1, "CL5: E at the time clock -> clocked out by the host, report up")
+	var frac: float = 0.5 * cl().mop_fraction() + 0.5 * cl().litter_fraction()
+	var want_bonus := int(round(maxf(0.0, gross) * cl().CLEAN_BONUS_MAX * frac))
+	check(cl().clean_bonus_today == want_bonus, "CL5: bonus %s = %d%% of gross %s x (mop %d%% + litter %d%%)/2" % [main._format_money(cl().clean_bonus_today), int(cl().CLEAN_BONUS_MAX * 100), main._format_money(gross), roundi(cl().mop_fraction() * 100), roundi(cl().litter_fraction() * 100)])
+	# (Not mop_left_before: walking to the clock can bump stock off a shelf —
+	# that's new mess, and it counts.)
+	check(cl().mop_left == cl()._mop_messes().size() and cl().mop_left >= mop_left_before and cl().litter_left == litter_left, "CL5: tally matches the floor at clock-out: spills & knockovers left %d (was %d before the walk to the clock), litter left %d" % [cl().mop_left, mop_left_before, cl().litter_left])
+	check(main._pay_today() == gross + cl().clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY, "CL5: Pay Today includes the bonus: %s" % main.report_pay_label.text)
+	await wait(0.2)
+	check(main.report_cleanup_label.visible and "Cleanup" in main.report_cleanup_label.text, "CL5: report line: %s" % main.report_cleanup_label.text.replace("\n", " / "))
+	check(cl().tools.all(func(t): return t["holder"] == 0), "CL5: tools out of everyone's hands for the report")
+	await shot("cleanup_report")
+	# --- CL6: next day: fresh floor, tools racked; then nobody clocks out ->
+	# the ceiling does it.
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and main.store_open, 5.0)
+	check(cl().litter.is_empty() and cl().tools.all(func(t): return t["holder"] == 0 and TOOL_SPOT_OK.call(t)), "CL6: Day %d: no litter, tools back on the station" % main.current_day)
+	check(not main.cleanup_active and main.clocked_out_by == -1, "CL6: cleanup state reset")
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.cleanup_active, 3.0)
+	main.cleanup_time_left = 1.0
+	await wait_until(func(): return main.is_day_report_active(), 4.0)
+	await wait(0.2)
+	check(main.is_day_report_active() and main.clocked_out_by == 0 and main.clock_out_events_today == 1, "CL6: ceiling ran out -> auto clock-out, report up")
+	check("auto clock-out" in main.report_cleanup_label.text, "CL6: report says so: %s" % main.report_cleanup_label.text.replace("\n", " / "))
+	check(trucks == dl().deliveries_today or true, "CL: (trucks today %d)" % dl().deliveries_today)
+	finish()
+
+var TOOL_SPOT_OK := func(t: Dictionary) -> bool: return main.cleanup.TOOL_SPOTS.any(func(s): return s.distance_to(t["pos"]) < 1.0)
+
+## --- Co-op -------------------------------------------------------------------
+
+const CLOCK_SPOTS := [Vector2(-40, 40), Vector2(40, 40), Vector2(-40, -10), Vector2(40, -10)]
+
+func _run_net_cleanup_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	var dd := DirAccess.open("user://")
+	if dd and dd.dir_exists("net_orders"):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	main.shift_duration = 60.0
+	main.prep_ceiling_override = 0.0
+	await wait_until(func(): return main.shift_active and main.players.size() >= want and main.store_open, 40.0)
+	var ids: Array = main.players.keys()
+	ids.sort()
+	check(main.players.size() == want, "net: %d players connected" % main.players.size())
+	# Seed some mop mess on top of the day's own (Day 6 spills are random).
+	fk()._pause_timer = 1.0e9
+	amb()._spill_timer = 1.0e9
+	amb().spawn_spill(Vector2(1300, 700), 44.0)
+	amb().spawn_spill(Vector2(1700, 760), 40.0)
+	var disp: RigidBody2D = main.displays[0]
+	disp.get_node("Display").toppled = true
+	await wait_until(func(): return cl().litter.size() >= 4, 60.0)
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.cleanup_active, 3.0)
+	await wait(1.0)
+	# --- NC1: every peer sees the same closed store and the same mess.
+	var v := _cleanup_view()
+	_net_write("nc1_go.json", v)
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nc1_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NC1: %s: cleanup on, sign CLOSED, no customers, same mess (%d mop, %d litter): %s" % [main.player_display_name(id), v["mop_total"], v["litter_total"], r.get("why", "")])
+	# --- NC2: the tool race — every player grabs the SAME mop at once.
+	for k in ids.size():
+		main.players[ids[k]].rpc("teleport_to", cl().TOOL_SPOTS[0] + Vector2(0, 2 + k))
+	await wait(1.5)
+	var at := Time.get_unix_time_from_system() + 2.0
+	_net_write("nc2_go.json", {"at": at})
+	while Time.get_unix_time_from_system() < at:
+		await process_frame
+	await tap(act + "interact")
+	await wait(1.5)
+	var holders := ids.filter(func(id): return cl().tool_of(id) >= 0)
+	var mop0: int = cl().tools[0]["holder"]
+	check(mop0 in ids and cl().tools.filter(func(t): return t["holder"] == mop0).size() == 1, "NC2 race: %d players grabbed mop #1 together -> exactly one holds it (%s); %d players holding a tool" % [want, main.player_display_name(mop0), holders.size()])
+	_net_write("nc2_host.json", {"holders": _cleanup_view()["holders"]})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nc2_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NC2: %s sees the same holders: %s" % [main.player_display_name(id), r.get("why", "")])
+	# Everyone puts whatever they got down again.
+	if cl().tool_of(1) >= 0:
+		await tap(act + "interact")
+	# --- NC3: everyone cleans, each with the brain on its own player (the host
+	# mops first, the clients sweep first). No clocking out yet.
+	_net_write("nc3_go.json", {})
+	var totals := {"m": cl().mop_total, "l": cl().litter_total}
+	var st := await _play_cleanup_until_clean()
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nc3_%d.json" % id, 120.0)
+		check(r.get("did", 0) > 0, "NC3: %s cleaned %d (mopped %d, swept %d, pans emptied %d)" % [main.player_display_name(id), r.get("did", 0), r.get("mopped", 0), r.get("swept", 0), r.get("dumps", 0)])
+	check(st["mopped"] + st["swept"] > 0, "NC3: host cleaned %d (mopped %d, swept %d)" % [st["mopped"] + st["swept"], st["mopped"], st["swept"]])
+	check(cl().mop_left == 0 and cl().litter_left <= 1, "NC3: the crew cleaned the floor: %d/%d spills & knockovers, %d/%d litter left" % [cl().mop_left, totals["m"], cl().litter_left, totals["l"]])
+	# --- NC4: a client far from the clock can't clock out by sending the RPC.
+	_net_write("nc4_go.json", {})
+	await _net_read("nc4_%d.json" % ids[1], 30.0)
+	await wait(1.0)
+	check(main.cleanup_active, "NC4: a clock-out request from a player away from the clock is refused")
+	# --- NC5: the clock-out race — everyone presses E at the clock at once.
+	for k in ids.size():
+		main.players[ids[k]].rpc("teleport_to", main.TIME_CLOCK_POS + CLOCK_SPOTS[k])
+	await wait(1.5)
+	at = Time.get_unix_time_from_system() + 2.0
+	_net_write("nc5_go.json", {"at": at})
+	while Time.get_unix_time_from_system() < at:
+		await process_frame
+	await tap(act + "interact")
+	await wait(1.5)
+	check(main.is_day_report_active() and main.clock_out_events_today == 1 and main.clocked_out_by in ids, "NC5 race: %d players clocked out together -> once, by %s" % [want, main.player_display_name(main.clocked_out_by)])
+	_net_write("nc5_host.json", {"pay": main.report_pay_label.text, "clean": main.report_cleanup_label.text, "by": main.clocked_out_by, "bonus": cl().clean_bonus_today})
+	print("NC  host report: %s | %s" % [main.report_cleanup_label.text.replace("\n", " / "), main.report_pay_label.text])
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nc5_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NC5: %s: same report (bonus, pay, who clocked out): %s" % [main.player_display_name(id), r.get("why", "")])
+	# --- NC6: next day on every screen: fresh floor, tools back.
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 5.0)
+	await wait(1.0)
+	_net_write("nc6_go.json", {})
+	for id in ids:
+		if id == 1:
+			continue
+		var r := await _net_read("nc6_%d.json" % id, 30.0)
+		check(r.get("ok", false), "NC6: %s: Day %d fresh (no litter, tools racked, not in cleanup): %s" % [main.player_display_name(id), main.current_day, r.get("why", "")])
+	_net_write("done.json", {})
+	await wait(1.0)
+	finish()
+
+## The brain without the clock-out: clean until the floor's clean (or 90s).
+func _play_cleanup_until_clean() -> Dictionary:
+	var ids: Array = main.players.keys()
+	ids.sort()
+	var broom_first: bool = ids.find(me) % 2 == 1
+	var st := {"mopped": 0, "swept": 0, "dumps": 0}
+	var t0 := _wall()
+	while _wall() - t0 < 90.0 and main.cleanup_active:
+		var r := await _brain_until_empty(broom_first)
+		for k in st:
+			st[k] += r[k]
+		if r["mopped"] + r["swept"] + r["dumps"] == 0:
+			if mop_messes_view().is_empty() and cl().litter.is_empty():
+				break
+			await wait(0.5)
+	if cl().tool_of(me) >= 0:
+		await tap(act + "interact")
+	return st
+
+## Cleans nearest-first until the floor is clean from this peer's view (or,
+## watch_clock, until it's time to walk to the clock). Mops (or sweeps, if
+## broom_first) first, switches tool when its job runs out or all of that
+## kind are taken, empties the pan at the nearest bin when it's full.
+func _brain_until_empty(broom_first: bool, watch_clock := false) -> Dictionary:
+	var st := {"mopped": 0, "swept": 0, "dumps": 0}
+	var skip := []
+	var fails_in_row := 0
+	while main.cleanup_active and fails_in_row < 6:
+		var p := player()
+		if watch_clock and main.cleanup_time_left < route_len(p.global_position, main.TIME_CLOCK_POS) / 220.0 + 5.0:
+			break
+		var mops := mop_messes_view().filter(func(m): return not skip.any(func(q): return q.distance_to(m["pos"]) < 12.0))
+		var lit: Array = cl().litter.filter(func(m): return not skip.any(func(q): return q.distance_to(m["pos"]) < 12.0))
+		var held: int = cl().tool_of(me)
+		var pan_has: bool = held >= 0 and cl().tools[held]["kind"] == "broom" and int(cl().tools[held]["pan"]) > 0
+		if mops.is_empty() and lit.is_empty() and not pan_has:
+			break
+		var kind := "broom" if (broom_first and not lit.is_empty()) or mops.is_empty() else "mop"
+		if held >= 0 and cl().tools[held]["kind"] == "broom" and (cl().tools[held]["full"] or (lit.is_empty() and pan_has)):
+			await _empty_pan()
+			st["dumps"] += 1
+			continue
+		if not await get_tool(kind):
+			kind = "broom" if kind == "mop" else "mop"
+			if (kind == "mop" and mops.is_empty()) or (kind == "broom" and lit.is_empty()) or not await get_tool(kind):
+				await wait(0.5)
+				fails_in_row += 1
+				continue
+		var target = _nearest(p.global_position, mops if kind == "mop" else lit, skip)
+		if target == null:
+			fails_in_row += 1
+			continue
+		var tpos: Vector2 = target["pos"]
+		if not await face_target(tpos, mop_stand(target) if kind == "mop" else cl().BROOM_HEAD_OFFSET):
+			skip.append(tpos)
+			fails_in_row += 1
+			continue
+		var before_m := mop_messes_view().size()
+		var before_l: int = cl().litter.size()
+		press(act + "place")
+		var gone := await wait_until(func():
+			if kind == "mop":
+				return not mop_messes_view().any(func(m): return m["pos"].distance_to(tpos) < 12.0)
+			var h: int = cl().tool_of(me)
+			return (h >= 0 and cl().tools[h]["full"]) or not cl().litter.any(func(m): return m["pos"].distance_to(tpos) < 1.0), 5.0)
+		press(act + "place", 0.0)
+		await physics_frame
+		if gone:
+			fails_in_row = 0
+			if kind == "mop":
+				st["mopped"] += maxi(1, before_m - mop_messes_view().size())
+			else:
+				st["swept"] += maxi(0, before_l - cl().litter.size())
+		else:
+			skip.append(tpos)
+			fails_in_row += 1
+	steer(Vector2.ZERO)
+	return st
+
+func _empty_pan() -> void:
+	var p := player()
+	var bin_pos := Vector2.ZERO
+	var bd := INF
+	for i in cl().BINS.size():
+		if cl()._bin_open(i):
+			var d := route_len(p.global_position, cl().BINS[i]["pos"])
+			if d < bd:
+				bd = d
+				bin_pos = cl().BINS[i]["pos"]
+	await walk_to(bin_pos + Vector2(0, 30), 12.0, 30.0)
+	await tap(act + "interact")
+	await wait_until(func(): return cl().tool_of(me) >= 0 and int(cl().tools[cl().tool_of(me)]["pan"]) == 0, 2.0)
+
+## JSON hands numbers back as floats: compare 4 and 4.0 (and arrays of them)
+## as the same value.
+func _jnorm(v) -> String:
+	if v is float or v is int:
+		return str(int(v)) if is_equal_approx(float(v), roundf(float(v))) else str(v)
+	if v is Array:
+		return str(v.map(func(x): return _jnorm(x)))
+	return str(v)
+
+func _run_net_cleanup_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me)
+	var g1 := await _net_read("nc1_go.json", 120.0)
+	await wait(0.3)
+	var v := _cleanup_view()
+	var why := ""
+	for k in ["active", "litter", "mop_left", "mop_total", "litter_total", "spills", "sign"]:
+		if _jnorm(v[k]) != _jnorm(g1.get(k)):
+			why += " %s %s vs host %s" % [k, str(v[k]), str(g1.get(k))]
+	if v["customers"] != 0:
+		why += " customers %d" % v["customers"]
+	if not (main._prep_label.visible and "CLEANUP" in main._prep_label.text):
+		why += " no banner"
+	_net_write("nc1_%d.json" % me, {"ok": why == "", "why": why})
+	check(why == "", "%s: NC1 cleanup on my screen%s" % [who, why])
+	var g2 := await _net_read("nc2_go.json", 60.0)
+	await wait_until(func(): return player().global_position.distance_to(cl().TOOL_SPOTS[0]) < 10.0, 3.0)
+	while Time.get_unix_time_from_system() < float(g2.get("at", 0.0)):
+		await process_frame
+	await tap(act + "interact")
+	var h2 := await _net_read("nc2_host.json", 30.0)
+	await wait(0.5)
+	var mine: Array = _cleanup_view()["holders"]
+	var why2 := "" if _jnorm(mine) == _jnorm(h2.get("holders")) else " holders %s vs host %s" % [str(mine), str(h2.get("holders"))]
+	_net_write("nc2_%d.json" % me, {"ok": why2 == "", "why": why2})
+	check(why2 == "", "%s: NC2 same tool holders%s" % [who, why2])
+	if cl().tool_of(me) >= 0:
+		await tap(act + "interact")
+		await wait(0.3)
+	await _net_read("nc3_go.json", 60.0)
+	var st := await _play_cleanup_until_clean()
+	_net_write("nc3_%d.json" % me, {"did": st["mopped"] + st["swept"], "mopped": st["mopped"], "swept": st["swept"], "dumps": st["dumps"]})
+	await _net_read("nc4_go.json", 120.0)
+	var ids: Array = main.players.keys()
+	ids.sort()
+	if me == ids[1]:
+		main.rpc_id(1, "_request_clock_out")
+		_net_write("nc4_%d.json" % me, {})
+	var g5 := await _net_read("nc5_go.json", 60.0)
+	await wait_until(func(): return main.near_time_clock(player().global_position), 3.0)
+	while Time.get_unix_time_from_system() < float(g5.get("at", 0.0)):
+		await process_frame
+	await tap(act + "interact")
+	var r5 := await _net_read("nc5_host.json", 30.0)
+	await wait(0.6)
+	var why5 := ""
+	if not main.is_day_report_active():
+		why5 += " no report"
+	if main.report_cleanup_label.text != r5.get("clean", ""):
+		why5 += " cleanup line '%s' vs '%s'" % [main.report_cleanup_label.text, r5.get("clean", "")]
+	if main.report_pay_label.text != r5.get("pay", ""):
+		why5 += " pay '%s' vs '%s'" % [main.report_pay_label.text, r5.get("pay", "")]
+	if main.clocked_out_by != int(r5.get("by", -2)):
+		why5 += " by %d" % main.clocked_out_by
+	_net_write("nc5_%d.json" % me, {"ok": why5 == "", "why": why5})
+	check(why5 == "", "%s: NC5 report matches the host's%s" % [who, why5])
+	await _net_read("nc6_go.json", 60.0)
+	var why6 := ""
+	if main.cleanup_active or not cl().litter.is_empty() or not cl().tools.all(func(t): return t["holder"] == 0):
+		why6 = " %s" % str(_cleanup_view())
+	_net_write("nc6_%d.json" % me, {"ok": why6 == "", "why": why6})
+	check(why6 == "", "%s: NC6 fresh day%s" % [who, why6])
+	await _net_read("done.json", 60.0)
 	finish()

@@ -50,7 +50,10 @@ extends Node2D
 ##    cap, day reset, shoppers buy it, shelves take it, priority orders tag
 ##    it) — the same trap Display.gd had to route around. Mop/broom/trash
 ##    want one shared "tool" carry path, built once for the cleanup week.
-##    remove_spill() is the hook a mop would call.
+##    remove_spill() is the hook a mop would call. (WEEK 19: it does — the
+##    end-of-shift cleanup phase, Cleanup.gd. Spills are still passive during
+##    the shift; whatever's on the floor at close stops drying and gets
+##    mopped, or costs cleanliness bonus.)
 ##    NOT from toppled displays (considered first, since Display.tscn already
 ##    draws a little spill when one tips over): the Meat/Deli sample table
 ##    sits right on the forklift's lane and gets knocked over by it most
@@ -409,7 +412,7 @@ func spawn_spill(pos: Vector2, r: float) -> int:
 	print("[Ambience] Spill #%d at (%.0f, %.0f) r=%.0f in %s" % [id, pos.x, pos.y, r, _section_name_at(pos)])
 	return id
 
-## Host-only — the hook a future mop interaction calls.
+## Host-only — the mop calls it (Cleanup.gd, WEEK 19).
 func remove_spill(id: int) -> void:
 	if not multiplayer.is_server():
 		return

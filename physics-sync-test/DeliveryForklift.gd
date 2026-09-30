@@ -26,23 +26,14 @@ const DOCK_REACH_GAP := 6.0 # forks stop this short of the truck's back doors
 const SET_DOWN_PAUSE := 0.6
 const IDLE_PAUSE := 0.5 # re-check for work this often while parked
 const LOAD_REACH := 3.0 # how close to its load stop counts as "at the truck"
-## Warehouse pack (tile-B-04): orange counterbalance forklift, side view with
-## the forks pointing left (flipped for east), and the same truck from the front.
-const ART_SHEET := "res://assets/warehouse/tile-B-04.png"
-const ART_SIDE := Rect2i(99, 102, 91, 89)
-const ART_FRONT := Rect2i(204, 99, 71, 92)
-const ART_SCALE := 0.95
-
 ## Replicated (own synchronizer, see _ready()): the section of the box on the
 ## forks, "" when empty — drives the load sprite on every peer.
 var carrying := ""
 ## Diagnostic (host): boxes set down today.
 var drops_today := 0
 
-var _art: Sprite2D
 var _load_art: Sprite2D
 var _load_tag: Polygon2D
-var _facing_east := true
 var _load_key := ""
 
 func _ready() -> void:
@@ -59,15 +50,6 @@ func _ready() -> void:
 	sync.name = "DeliverySync" # explicit, identical name on every peer
 	sync.set_multiplayer_authority(1)
 	add_child(sync)
-	for n in ["ForkLeft", "ForkRight", "Body", "Stripes", "Mast", "Seat"]:
-		get_node(n).visible = false
-	_art = Sprite2D.new()
-	_art.name = "Art"
-	_art.texture = load(ART_SHEET)
-	_art.region_enabled = true
-	_art.scale = Vector2.ONE * ART_SCALE
-	add_child(_art)
-	move_child(_art, 0)
 	_load_art = Sprite2D.new()
 	_load_art.name = "LoadArt"
 	add_child(_load_art)
@@ -128,24 +110,13 @@ func _finish_leg() -> void:
 				carrying = ""
 				drops_today += 1
 
-func _process(delta: float) -> void:
-	super._process(delta)
-	_update_art()
-
-## Upright pack sprites whatever the collision box's rotation: side view for
-## east/west (flipped for east), front view heading south.
+## The truck itself is the base's pack sprite (Forklift.gd's _update_art());
+## this adds the box on the forks.
 func _update_art() -> void:
-	var dir := Vector2.RIGHT.rotated(rotation)
-	var front := dir.y > 0.7
-	if absf(dir.x) > 0.3:
-		_facing_east = dir.x > 0.0
-	_art.rotation = -rotation
-	_art.region_rect = Rect2(ART_FRONT if front else ART_SIDE)
-	_art.flip_h = _facing_east and not front
-	# Wheels on the collision box's footprint, the rest standing up from it.
-	_art.position = Vector2(0, -28).rotated(-rotation)
-	# The beacon on the cab roof, BEEP above it (both are the base's nodes).
-	$Beacon.position = Vector2(16, 0) + Vector2(0, -62).rotated(-rotation)
+	super._update_art()
+	if _load_art == null:
+		return
+	var front := Vector2.RIGHT.rotated(rotation).y > 0.7
 	_load_art.visible = carrying != ""
 	if carrying != "":
 		if _load_key != carrying:
