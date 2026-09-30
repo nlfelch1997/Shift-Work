@@ -5132,8 +5132,11 @@ func _check_shift_setup(tag: String) -> void:
 	check(c["levels"]["forklift"] == 0 or "Produce" in c["sections"], "%s: forklift only with Produce open" % tag)
 	var sell_want: float = main.shift_duration - (main.FINALE_SELLING_CUT if c["tight_clock"] else 0.0)
 	check(is_equal_approx(main._selling_window(), sell_want), "%s: selling window %.0fs (tight clock %s)" % [tag, main._selling_window(), c["tight_clock"]])
-	var day7: float = main.prep_ceiling_for(4) + main.shift_duration - main.FINALE_SELLING_CUT
-	check(main._current_shift_duration() <= day7 + 0.01, "%s: day clock %.0fs never longer than story Day 7's (%.0fs)" % [tag, main._current_shift_duration(), day7])
+	# Only with the real prep ceilings (--fast zeroes every day's prep, so a
+	# "Day 7" there is just its 96s-style cut, not the story's longest day).
+	if main.prep_ceiling_override < 0.0:
+		var day7: float = main.prep_ceiling_for(4) + main.shift_duration - main.FINALE_SELLING_CUT
+		check(main._current_shift_duration() <= day7 + 0.01, "%s: day clock %.0fs never longer than story Day 7's (%.0fs)" % [tag, main._current_shift_duration(), day7])
 	check(main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL if lv["orders"] >= 2 else main.PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "%s: priority order interval %.0fs (level %d)" % [tag, main._priority_order_interval(), lv["orders"]])
 
 ## After a played shift (host): what happened matches what the posting said.
