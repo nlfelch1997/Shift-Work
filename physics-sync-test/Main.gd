@@ -498,10 +498,11 @@ extends Node2D
 ##     OFFER_BANDS                        [1-2*], [3*], [4-5*] — one posting each
 ##     TIGHT_CLOCK_STARS                  4 (Day 7's 96s selling window)
 ##     Bucks: 1/sale, 4/order filled, +40% of those for a spotless close,
-##            -3/write-up, medal +5/+12/+25, x(1 + 0.15 per star above 1)
+##            -3/write-up (all per head in a crew), medal +5/+12/+25,
+##            x(1 + 0.15 per star above 1)
 ##     WEEK_COMPLETE_BUCKS                40
 ##     medal targets (gold): $150/300/400/420 by 1-4 sections, -4%/heat (floor
-##            45%), +35%/extra player; silver 70%, bronze 40%
+##            45%), +60%/extra player; silver 70%, bronze 40%
 ##     upgrades: see Endless.gd's UPGRADES (costs and effects)
 ##
 ##   STORAGE DELIVERIES — Delivery.gd (forklift driving: DeliveryForklift.gd)
@@ -2190,7 +2191,8 @@ func _fill_endless_report(today_sold: int) -> void:
 		var t: Array = p["targets"]
 		report_week_label.text = ("%s MEDAL" % EndlessScript.MEDAL_NAMES[medal] if medal > 0 else "No medal") + "  —  pay %s" % _format_money(int(p["score"]))
 		report_week_label.add_theme_color_override("font_color", MEDAL_COLORS[medal])
-		report_bucks_label.text = "Medal targets: bronze $%d · silver $%d · gold $%d\n+%d Break Room Bucks   ·   wallet now %d\n= (sales %d + orders %d + clean %d − write-ups %d + medal %d) × %.2f for %d★" % [t[0], t[1], t[2], p["total"], endless.wallet, p["sales"], p["orders"], p["clean"], -int(p["writeups"]), p["medal_bucks"], p["mult"], int(c.get("stars", 1))]
+		var per_head: String = "" if int(p.get("crew", 1)) <= 1 else "\n(sales, orders and write-ups count per head: crew of %d)" % int(p["crew"])
+		report_bucks_label.text = "Medal targets: bronze $%d · silver $%d · gold $%d\n+%d Break Room Bucks   ·   wallet now %d\n= (sales %d + orders %d + clean %d − write-ups %d + medal %d) × %.2f for %d★%s" % [t[0], t[1], t[2], p["total"], endless.wallet, p["sales"], p["orders"], p["clean"], -int(p["writeups"]), p["medal_bucks"], p["mult"], int(c.get("stars", 1)), per_head]
 	var rs: Dictionary = endless.run_stats
 	var m: Array = rs.get("medals", [0, 0, 0, 0])
 	report_run_label.text = "Endless run so far: %d shift(s) · %d sold · %d gold / %d silver / %d bronze · %d Bucks earned" % [int(rs.get("shifts", 0)), int(rs.get("sold", 0)), m[3], m[2], m[1], int(rs.get("bucks", 0))]

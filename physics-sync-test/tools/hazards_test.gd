@@ -5283,6 +5283,11 @@ func _run_endless_board() -> void:
 	var great: Dictionary = en().compute_payout(c, 35, 3, 1.0, 0, 380)
 	print("BOARD  payouts poor %s | ok %s | great %s" % [str(poor), str(ok_), str(great)])
 	check(poor["total"] < ok_["total"] and ok_["total"] < great["total"] and great["total"] >= 3 * maxi(1, poor["total"]), "B9: poor %d < ok %d < great %d Bucks" % [poor["total"], ok_["total"], great["total"]])
+	# Per head: a crew of 3 with three times the solo numbers earns about what
+	# one great solo player does (the medal is the crew's, whole).
+	var crew3 := {"targets": [100, 200, 300], "bucks_mult": 1.3, "crew": 3}
+	var great3: Dictionary = en().compute_payout(crew3, 105, 9, 1.0, 0, 380)
+	check(absi(int(great3["total"]) - int(great["total"])) <= 3, "B10: a crew of 3 selling 105 earns %d Bucks per shift — solo selling 35 earns %d" % [great3["total"], great["total"]])
 	finish()
 
 ## Solo: the whole loop, the brain playing every shift.

@@ -44,8 +44,8 @@ extends Node
 ## - BREAK ROOM BUCKS are the new spendable currency (the shop's). A shift
 ##   pays Bucks from the same three things the report already tracks — sales,
 ##   priority orders filled, cleanliness — minus write-ups, plus a medal bonus,
-##   times the shift's star multiplier (compute_payout()). A bad shift pays a
-##   little, a strong one a lot, a strong hard one the most.
+##   times the shift's star multiplier (compute_payout()); per head in a crew.
+##   A bad shift pays a little, a strong one a lot, a strong hard one the most.
 ##
 ## MULTIPLAYER: host-authoritative like everything else. The host rolls the
 ## board, takes the posting, scores the shift and applies purchases; any peer's
@@ -137,7 +137,11 @@ const TARGET_BASE_BY_SECTIONS := [150, 300, 400, 420] # $, gold-level, 1-4 open 
 const TARGET_SHARES := [0.4, 0.7, 1.0] # bronze, silver, gold
 const TARGET_HEAT_DISCOUNT := 0.04 # -4% per point of heat...
 const TARGET_HEAT_FLOOR := 0.45 # ...down to this
-const TARGET_PER_EXTRA_PLAYER := 0.35 # +35% per extra crew member
+## +60% per extra crew member. From the 3-player co-op run (4 full shifts):
+## crew score / the solo-calibrated gold was 0.4x, 5.6x, 1.6x, 3.1x — a crew
+## stocks faster, so it often opens early and sells far longer (Week 16's
+## unused-prep-becomes-selling rule). One bot run; wants human co-op numbers.
+const TARGET_PER_EXTRA_PLAYER := 0.6
 
 ## --- The Break Room shop. Crew-wide (every player gets it — pay is crew-wide
 ## too), permanent for the run. costs[i] = price of level i+1.
@@ -407,21 +411,28 @@ func buy(key: String) -> bool:
 ## --- Scoring -------------------------------------------------------------------
 
 ## Pure: the Bucks a finished shift pays, and why. score = the shift's Pay ($).
+## PER HEAD in a crew: sales, orders and write-ups are the crew's totals
+## divided by its size (the cleanliness share follows); the medal bonus is
+## the crew's, whole. Found by the 3-player co-op run: a crew that opened the
+## store early (Week 16's unused-prep-becomes-selling rule) sold 107 in one
+## shift and would have paid 226 Bucks — a solo shift paid 25-78, and the whole
+## shop costs 560. Per head, that shift pays ~110: still the best of the run.
 static func compute_payout(c: Dictionary, sold: int, orders_filled: int, clean_frac: float, writeups: int, score: int) -> Dictionary:
 	var targets: Array = c.get("targets", [0, 0, 0])
+	var crew := maxi(1, int(c.get("crew", 1)))
 	var medal := 0
 	for i in 3:
 		if score >= int(targets[i]):
 			medal = i + 1
-	var sales_b := sold * BUCKS_PER_SALE
-	var orders_b := orders_filled * BUCKS_PER_ORDER
+	var sales_b := int(round(float(sold * BUCKS_PER_SALE) / crew))
+	var orders_b := int(round(float(orders_filled * BUCKS_PER_ORDER) / crew))
+	var writeup_b := -int(round(float(writeups * BUCKS_PER_WRITEUP) / crew))
 	var clean_b := int(round(clampf(clean_frac, 0.0, 1.0) * BUCKS_CLEAN_SHARE * (sales_b + orders_b)))
-	var writeup_b := -writeups * BUCKS_PER_WRITEUP
 	var medal_b: int = MEDAL_BUCKS[medal]
 	var subtotal := maxi(0, sales_b + orders_b + clean_b + writeup_b + medal_b)
 	var mult := float(c.get("bucks_mult", 1.0))
 	return {
-		"medal": medal, "score": score, "targets": targets,
+		"medal": medal, "score": score, "targets": targets, "crew": crew,
 		"sales": sales_b, "orders": orders_b, "clean": clean_b, "writeups": writeup_b, "medal_bucks": medal_b,
 		"subtotal": subtotal, "mult": mult, "total": int(round(subtotal * mult)),
 	}
