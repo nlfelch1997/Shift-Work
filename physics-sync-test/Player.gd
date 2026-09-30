@@ -97,6 +97,10 @@ var _knockback_velocity := Vector2.ZERO
 ## still call try_drop()/try_throw() directly exactly as before.
 var _place_target_slot: Marker2D = null
 var _slip_timer := 0.0 # see _apply_move_input()
+## WEEK 19 — true while this player holds the place key (C) with a cleanup
+## tool in hand. Owner-written, replicated; the host does the mopping/
+## sweeping against it (Cleanup.gd's tick_cleanup()).
+var using_tool := false
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
@@ -148,7 +152,7 @@ func _ready() -> void:
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	for prop in [".:target_position", ".:facing_angle"]:
+	for prop in [".:target_position", ".:facing_angle", ".:using_tool"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -183,6 +187,7 @@ func _physics_process(delta: float) -> void:
 	# shape as Customer.gd's shove stun.
 	if _stun_timer > 0.0:
 		_stun_timer -= delta
+		using_tool = false
 		velocity = _knockback_velocity
 		_knockback_velocity = _knockback_velocity.move_toward(Vector2.ZERO, FORKLIFT_KNOCKBACK_DECEL * delta)
 		move_and_slide()
@@ -195,6 +200,7 @@ func _physics_process(delta: float) -> void:
 	var throw_pressed := false
 	var place_pressed := false
 	var defend_pressed := false
+	var place_held := false
 	if bot_mode:
 		dir = _bot_input(delta)
 		_bot_maybe_interact(delta)
@@ -207,17 +213,21 @@ func _physics_process(delta: float) -> void:
 		interact_pressed = Input.is_action_just_pressed("host_interact")
 		throw_pressed = Input.is_action_just_pressed("host_throw")
 		place_pressed = Input.is_action_just_pressed("host_place")
+		place_held = Input.is_action_pressed("host_place")
 		defend_pressed = Input.is_action_just_pressed("host_defend")
 	else:
 		dir = Input.get_vector("client_move_left", "client_move_right", "client_move_up", "client_move_down")
 		interact_pressed = Input.is_action_just_pressed("client_interact")
 		throw_pressed = Input.is_action_just_pressed("client_throw")
 		place_pressed = Input.is_action_just_pressed("client_place")
+		place_held = Input.is_action_pressed("client_place")
 		defend_pressed = Input.is_action_just_pressed("client_defend")
 	if dir.length() > 0.1:
 		_last_move_dir = dir.normalized()
 		facing_angle = _last_move_dir.angle()
 		$Polygon2D.rotation = facing_angle
+	var cleanup: Node = get_tree().current_scene.cleanup
+	using_tool = place_held and cleanup.tool_of(multiplayer.get_unique_id()) >= 0
 	if not bot_mode:
 		_update_place_target()
 	if throw_pressed:
@@ -560,10 +570,22 @@ func _try_interact() -> void:
 	if carried:
 		_interact_with(carried, my_id)
 		return
+	var main = get_tree().current_scene
+	# WEEK 19: the time clock in the break room ends the day — first, so a
+	# tool still in hand doesn't turn the press into "put it down" (tools go
+	# back to the station at clock-out anyway)...
+	if main.cleanup_active and main.near_time_clock(global_position):
+		main.try_clock_out()
+		return
+	# ...then a cleanup tool in hand (put it down / empty the pan), or one
+	# within reach once the store's closed — before stock, so a product lying
+	# at the tool station can't swallow the press.
+	if main.cleanup.wants_interact(my_id, global_position):
+		main.cleanup.try_interact()
+		return
 	# WEEK 16: empty-handed at the Store sign while the store is still closed
 	# -> flip it open (Main.gd decides on the host). Checked before picking
 	# anything up, so a product lying by the sign can't swallow the press.
-	var main = get_tree().current_scene
 	if not main.store_open and main.shift_active and main.near_store_sign(global_position):
 		main.try_flip_sign()
 		return

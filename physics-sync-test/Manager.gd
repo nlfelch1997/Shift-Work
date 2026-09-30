@@ -260,7 +260,8 @@ func _physics_process(delta: float) -> void:
 	var main = get_tree().current_scene
 	# WEEK 17: off for the prep phase too — no patrol, no "look busy" — until
 	# the store opens (Main.gd's open_store()). START_PAUSE counts from then.
-	if main.is_day_report_active() or not main.shift_active or not main.store_open:
+	# WEEK 19: and he's gone home for the cleanup phase.
+	if main.is_day_report_active() or not main.shift_active or not main.store_open or main.cleanup_active:
 		return
 	_update_detection(delta, main)
 	writing_up = _caught_timer > 0.0

@@ -238,7 +238,8 @@ func _tick_truck(delta: float) -> void:
 	_truck_timer -= delta
 	match _truck_state:
 		TRUCK_AWAY:
-			if _truck_timer <= 0.0:
+			# WEEK 19: no deliveries once the store has closed for cleanup.
+			if _truck_timer <= 0.0 and not main.cleanup_active:
 				start_delivery()
 		TRUCK_ARRIVING:
 			truck_offset = maxf(0.0, truck_offset - TRUCK_AWAY_OFFSET / TRUCK_ARRIVE_TIME * delta)

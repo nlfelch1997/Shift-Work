@@ -375,6 +375,19 @@ extends Node2D
 ## Produce's sale bin moved out of the alcove its pad sits in, to the
 ## alcove's east side (2400,690 -> 2520,700).
 ##
+## WEEK 19 — END-OF-SHIFT CLEANUP (Cleanup.gd, built in _ready()). The prep
+## phase's shape, inverted. When the day's clock (prep ceiling + selling
+## window, unchanged) runs out, the store CLOSES instead of the report coming
+## up: customers leave, priority orders and the lights/spill clocks stop, the
+## Produce forklift parks and the manager goes home, and no more trucks come.
+## The crew mops and sweeps (Cleanup.gd has the mess, tools and scoring),
+## then anyone clocks out at the time clock in the break room (clock_out(),
+## host-authoritative, replicated; simultaneous presses clock out once) — or
+## the CLEANUP CEILING (_cleanup_ceiling(), sized to the mess at close) does
+## it for them. Clocking out scores the cleanup, adds its bonus to the day's
+## pay, and raises the end-of-day report exactly as the clock used to.
+## Cleanliness is a pay BONUS, never a fail state.
+##
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -394,6 +407,16 @@ extends Node2D
 ##        Day 5-6 540+111=651s, Day 7 720+96=816s. Opening early (the Store
 ##        sign) moves the unused ceiling into selling; the clock never changes.
 ##     STORE_SIGN_POS / STORE_SIGN_RANGE   (1610,1115) / 70 px
+##
+##   CLEANUP (WEEK 19) — Main.gd (the rest in Cleanup.gd)
+##     CLEANUP_CEILING_BASE / _PER_MESS   40 s + 4 s per mess item at close
+##     CLEANUP_CEILING_MIN / _MAX         60 / 180 s
+##     TIME_CLOCK_POS / TIME_CLOCK_RANGE   (880,300) break room / 70 px
+##     Cleanup.gd LITTER_RATE_PER_CUSTOMER 1/60 per customer-second in the store
+##     Cleanup.gd CLEAN_BONUS_MAX           0.25 (+25% of gross pay, split
+##                                          evenly: spills & knockovers / litter)
+##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied at a trash bin
+##     Cleanup.gd MOP_TIME_* / SWEEP_TIME   spill ~2.1-2.6 s, display 1.6, stock 0.8 / 0.45 s
 ##
 ##   DAY GATING — Main.gd
 ##     SECTIONS required_day              Meat/Deli 3 (+ forklift), Dairy/Frozen 5, Bakery 7
@@ -593,6 +616,7 @@ const PlayerScene := preload("res://Player.tscn")
 const AmbienceScript := preload("res://Ambience.gd")
 const DeliveryScript := preload("res://Delivery.gd")
 const DeliveryForkliftScript := preload("res://DeliveryForklift.gd")
+const CleanupScript := preload("res://Cleanup.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
@@ -782,6 +806,7 @@ var _order_result_text := ""
 var _order_result_timer := 0.0
 var _order_result_filled := false
 var report_order_label: Label
+var report_cleanup_label: Label
 
 ## --- Week 4/5B/6 shift-economy placeholders — every number below is a
 ## guess to make the system testable, not a tuned value. Flagging for
@@ -952,6 +977,26 @@ const RESTOCK_CHECK_INTERVAL := 3.0
 const PREP_CEILING_BASE := 180.0
 const PREP_CEILING_PER_SECTION := 180.0
 
+## WEEK 19 — the cleanup ceiling: how long the closed store waits for someone
+## to clock out before it clocks everyone out itself. Doesn't scale with the
+## day tier the way prep does — it's sized to the mess actually on the floor
+## at close (Cleanup.gd's mess_count(): spills/knockovers + litter), so a
+## tidy Day 2 isn't a long wait and a wrecked Day 7 has room to be put right.
+## At roughly one mess item per 4s of one player's work (walk + scrub), the
+## ceiling covers about everything for one player; a crew has slack.
+const CLEANUP_CEILING_BASE := 40.0
+const CLEANUP_CEILING_PER_MESS := 4.0
+const CLEANUP_CEILING_MIN := 60.0
+const CLEANUP_CEILING_MAX := 180.0
+## --cleanup-seconds=N replaces the formula; 0 clocks out the moment the store
+## closes (the tests written before cleanup existed use it).
+var cleanup_ceiling_override := -1.0
+
+func _cleanup_ceiling() -> float:
+	if cleanup_ceiling_override >= 0.0:
+		return cleanup_ceiling_override
+	return clampf(CLEANUP_CEILING_BASE + CLEANUP_CEILING_PER_MESS * cleanup.mess_count(), CLEANUP_CEILING_MIN, CLEANUP_CEILING_MAX)
+
 ## --prep-seconds=N replaces the formula (a quick playtest of the selling
 ## window, and the tests written before the prep phase existed, use 0).
 var prep_ceiling_override := -1.0
@@ -1037,6 +1082,8 @@ var ambience: Node2D
 ## (DeliveryForklift.gd), both built in _ready().
 var delivery: Node2D
 var delivery_forklift: CharacterBody2D
+## WEEK 19 — end-of-shift cleanup (Cleanup.gd), built in _ready().
+var cleanup: Node2D
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -1079,6 +1126,12 @@ var store_open := false
 var prep_time_left := 0.0
 var store_opened_by := -1 # -1 = not opened yet today
 var store_opened_at := 0.0 # shift_time_left when it opened
+## WEEK 19 — the cleanup phase (see the WEEK 19 note). Host-written,
+## replicated (DaySync). clocked_out_by: who clocked out (0 = the ceiling did,
+## -1 = not yet today).
+var cleanup_active := false
+var cleanup_time_left := 0.0
+var clocked_out_by := -1
 var _product_spawn_index := 0
 var _customer_spawn_index := 0
 ## Unique synthetic carry-id pool for customers — decremented (stays
@@ -1124,6 +1177,12 @@ func _ready() -> void:
 	ambience = AmbienceScript.new()
 	ambience.name = "Ambience"
 	add_child(ambience)
+	# After Ambience, so its litter layer sits just above the spills' (both
+	# go right after RoomBackgrounds; the later one lands first).
+	cleanup = CleanupScript.new()
+	cleanup.name = "Cleanup"
+	add_child(cleanup)
+	move_child(cleanup, $Players.get_index())
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
@@ -1146,7 +1205,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1173,6 +1232,7 @@ func _ready() -> void:
 	report_layer.layer = UI_LAYER_REPORT
 	_build_alert_layer()
 	_build_store_sign()
+	_build_time_clock()
 
 	_parse_cli_args()
 
@@ -1186,6 +1246,8 @@ func _parse_cli_args() -> void:
 			bot_run_seconds = float(arg.substr("--duration=".length()))
 		elif arg.begins_with("--shift-seconds="):
 			shift_duration = float(arg.substr("--shift-seconds=".length()))
+		elif arg.begins_with("--cleanup-seconds="):
+			cleanup_ceiling_override = float(arg.substr("--cleanup-seconds=".length()))
 		elif arg.begins_with("--prep-seconds="):
 			prep_ceiling_override = float(arg.substr("--prep-seconds=".length()))
 		elif arg.begins_with("--bot-roles="):
@@ -1382,6 +1444,8 @@ func _on_peer_disconnected(id: int) -> void:
 	print("[Main] Peer disconnected: %d" % id)
 	if multiplayer.is_server() and players.has(id):
 		players[id].queue_free()
+	if multiplayer.is_server():
+		cleanup.drop_tools_of(id)
 	players.erase(id)
 	# Queried live, not via the cached carryable_objects list above — Week 4
 	# products spawn dynamically after _ready() already ran once, so a
@@ -1494,6 +1558,10 @@ func _start_shift() -> void:
 	manager.reset_for_new_day()
 	ambience.reset_for_new_day()
 	delivery.reset_for_new_day()
+	cleanup.reset_for_new_day()
+	cleanup_active = false
+	cleanup_time_left = 0.0
+	clocked_out_by = -1
 	writeups_today = 0
 	writeups_by_peer = {}
 	_clear_priority_order()
@@ -1509,6 +1577,7 @@ func _start_shift() -> void:
 	store_open = false
 	store_opened_by = -1
 	store_open_events_today = 0
+	clock_out_events_today = 0
 	prep_time_left = _prep_ceiling()
 	_restock_timer = 0.0
 	_reset_players_to_break_room()
@@ -1639,13 +1708,18 @@ func _build_store_sign() -> void:
 ## Every peer, every frame: the sign's face, its E hint (only for my own
 ## player standing at it), the prep countdown banner, the STORE OPEN line.
 func _update_store_sign(delta: float) -> void:
-	var closed := shift_active and not store_open
+	var closed := shift_active and (not store_open or cleanup_active)
 	_sign_board.color = Color(0.75, 0.12, 0.1) if closed else Color(0.1, 0.55, 0.2)
 	_sign_text.text = "CLOSED" if closed else "OPEN"
 	var me := multiplayer.get_unique_id() if Net.is_active() else 0
-	_sign_hint.visible = closed and players.has(me) and near_store_sign(players[me].global_position)
+	_sign_hint.visible = closed and not cleanup_active and players.has(me) and near_store_sign(players[me].global_position)
 	_open_banner_t = maxf(0.0, _open_banner_t - delta)
-	if closed and not _day_report_active:
+	_update_time_clock(me)
+	if cleanup_active and not _day_report_active:
+		_prep_label.visible = true
+		_prep_label.add_theme_color_override("font_color", Color(0.55, 0.9, 1))
+		_prep_label.text = "CLEANUP — store closed. Mop & sweep, then clock out in the break room (auto in %d:%02d).  Spills & knockovers %d/%d  ·  Litter %d/%d" % [int(cleanup_time_left) / 60, int(cleanup_time_left) % 60, cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, cleanup.litter_total - cleanup.litter_left, cleanup.litter_total]
+	elif closed and not _day_report_active:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
 		_prep_label.text = "PREP — store closed. Opens by itself in %d:%02d. Flip the sign at the entrance to open early." % [int(prep_time_left) / 60, int(prep_time_left) % 60]
@@ -1672,6 +1746,106 @@ func open_store(by_peer: int) -> void:
 	_order_timer = PRIORITY_ORDER_FIRST_AFTER_OPEN
 	print("[Main] Store OPEN on Day %d — %s, %.0fs of prep left unused, %.0fs to sell" % [current_day, "sign flipped by %s" % player_display_name(by_peer) if by_peer != 0 else "prep ceiling ran out", prep_time_left, shift_time_left])
 	prep_time_left = 0.0
+
+## --- WEEK 19: the cleanup phase and the time clock ----------------------------
+
+## Host-only: the day's clock ran out. Closes the store and starts cleanup.
+func start_cleanup() -> void:
+	if not multiplayer.is_server() or not shift_active or cleanup_active or _day_report_active:
+		return
+	cleanup_active = true
+	_despawn_all_customers()
+	# An order still open lapses (no bonus, no penalty), as it did at the
+	# old end of shift.
+	_clear_priority_order()
+	ambience.end_shift() # lights back on; spills stop drying (no more ticks)
+	# The Produce forklift parks at home; the manager clocks off.
+	forklift.reset_for_new_day()
+	manager.watch_peer = 0
+	manager.watch_level = 0.0
+	cleanup.begin_cleanup()
+	cleanup_time_left = _cleanup_ceiling()
+	print("[Main] Store CLOSED on Day %d — cleanup: %.0fs ceiling, %d mess on the floor" % [current_day, cleanup_time_left, cleanup.mess_count()])
+	if cleanup_time_left <= 0.0:
+		clock_out(0)
+
+## Host-only. by_peer = who clocked out; 0 = the cleanup ceiling ran out.
+## Scores the cleanup (its bonus goes into Pay Today) and raises the report.
+func clock_out(by_peer: int) -> void:
+	if not multiplayer.is_server() or not cleanup_active or _day_report_active:
+		return
+	clocked_out_by = by_peer
+	cleanup.finish_cleanup(_gross_pay_today())
+	cleanup_active = false
+	cleanup_time_left = 0.0
+	clock_out_events_today += 1
+	print("[Main] Clocked out on Day %d — %s" % [current_day, "by %s" % player_display_name(by_peer) if by_peer != 0 else "cleanup ceiling ran out"])
+	_end_shift()
+
+## Host diagnostic, like store_open_events_today: must only ever be 0 or 1.
+var clock_out_events_today := 0
+
+## At the break room's time clock — the supermarket pack's card kiosk.
+const TIME_CLOCK_POS := Vector2(880.0, 300.0)
+const TIME_CLOCK_RANGE := 70.0
+const TIME_CLOCK_REGION := Rect2i(240, 685, 44, 80)
+var _clock_hint: Label
+
+func near_time_clock(pos: Vector2) -> bool:
+	return pos.distance_to(TIME_CLOCK_POS) <= TIME_CLOCK_RANGE
+
+## Any peer: the local player pressed E at the time clock.
+func try_clock_out() -> void:
+	if multiplayer.is_server():
+		clock_out(multiplayer.get_unique_id())
+	else:
+		rpc_id(1, "_request_clock_out")
+
+@rpc("any_peer", "reliable")
+func _request_clock_out() -> void:
+	if not multiplayer.is_server():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	# Where the HOST sees the sender — no clocking out from across the store.
+	if players.has(sender) and near_time_clock(players[sender].global_position):
+		clock_out(sender)
+
+func _build_time_clock() -> void:
+	var node := Node2D.new()
+	node.name = "TimeClock"
+	node.position = TIME_CLOCK_POS
+	add_child(node)
+	move_child(node, $Players.get_index())
+	var kiosk := Sprite2D.new()
+	kiosk.texture = load(SIGN_SHEET)
+	kiosk.region_enabled = true
+	kiosk.region_rect = Rect2(TIME_CLOCK_REGION)
+	kiosk.scale = Vector2(0.8, 0.8)
+	kiosk.position = Vector2(0, -20)
+	node.add_child(kiosk)
+	var label := Label.new()
+	label.text = "TIME CLOCK"
+	label.position = Vector2(-50, 16)
+	label.size = Vector2(100, 16)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2))
+	node.add_child(label)
+	_clock_hint = Label.new()
+	_clock_hint.text = "E: clock out"
+	_clock_hint.position = Vector2(-80, -76)
+	_clock_hint.size = Vector2(160, 24)
+	_clock_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_hint.add_theme_font_size_override("font_size", 15)
+	_clock_hint.add_theme_color_override("font_color", Color(0.55, 0.9, 1))
+	_clock_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_clock_hint.add_theme_constant_override("shadow_offset_x", 1)
+	_clock_hint.add_theme_constant_override("shadow_offset_y", 1)
+	_clock_hint.visible = false
+	node.add_child(_clock_hint)
+
+func _update_time_clock(me: int) -> void:
+	_clock_hint.visible = cleanup_active and not _day_report_active and players.has(me) and near_time_clock(players[me].global_position)
 
 ## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
 ## nothing previously reset shelf-fill state or the physical product pool
@@ -1797,11 +1971,17 @@ func player_display_name(peer_id: int) -> String:
 
 ## WEEK 11: a priority-order sale is already in the sold count at
 ## PAY_PER_SALE, so it only adds the multiplier's extra on top.
+## WEEK 19: plus the cleanup bonus (0 until clock-out), a share of the gross.
 func _pay_today() -> int:
-	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE + _priority_bonus(priority_sales_today) - writeups_today * WRITEUP_PENALTY
+	return _gross_pay_today() + cleanup.clean_bonus_today - writeups_today * WRITEUP_PENALTY
 
 func _pay_week() -> int:
-	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) - writeups_week * WRITEUP_PENALTY
+	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week - writeups_week * WRITEUP_PENALTY
+
+## Sales plus the priority-order extra — the day's pay before write-ups and
+## before the cleanup bonus (which is a share of this).
+func _gross_pay_today() -> int:
+	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE + _priority_bonus(priority_sales_today)
 
 func _priority_bonus(sales: int) -> int:
 	return int(round(sales * PAY_PER_SALE * (PRIORITY_ORDER_MULTIPLIER - 1.0)))
@@ -2055,6 +2235,14 @@ func _build_alert_layer() -> void:
 	report_order_label.visible = false
 	report_pay_label.add_sibling(report_order_label)
 	report_pay_label.get_parent().move_child(report_order_label, report_pay_label.get_index())
+	# WEEK 19 — the cleanup line, right above Pay too.
+	report_cleanup_label = Label.new()
+	report_cleanup_label.name = "CleanupLabel"
+	report_cleanup_label.add_theme_font_size_override("font_size", 18)
+	report_cleanup_label.add_theme_color_override("font_color", Color(0.55, 0.9, 1, 1))
+	report_cleanup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	report_pay_label.add_sibling(report_cleanup_label)
+	report_pay_label.get_parent().move_child(report_cleanup_label, report_pay_label.get_index())
 
 ## Every peer, every frame: the LOOK BUSY warning for whoever the manager is
 ## watching (only shown on that player's own screen — everyone else sees
@@ -2543,6 +2731,7 @@ func _process(delta: float) -> void:
 		report_writeup_label.text = "Write-ups: %d  (%s docked)%s" % [writeups_today, _format_money(writeups_today * WRITEUP_PENALTY), ("  —  " + ", ".join(who)) if not who.is_empty() else ""]
 		report_pay_label.text = "Pay Today: %s   |   Week: %s" % [_format_money(_pay_today()), _format_money(_pay_week())]
 		report_order_label.visible = current_day >= PRIORITY_ORDER_START_DAY
+		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
 
 	var connected := Net.is_active()
@@ -2561,10 +2750,17 @@ func _process(delta: float) -> void:
 	# see _ready()'s _day_sync comment for why an un-replicated
 	# shift_active/shift_time_left became a real bug once a shift could
 	# actually END and transition, not just count down forever.
+	# WEEK 19: the clock running out closes the store for cleanup; the report
+	# comes at clock-out (clock_out()).
 	if multiplayer.is_server() and shift_active and shift_time_left > 0.0:
 		shift_time_left = max(0.0, shift_time_left - delta)
 		if shift_time_left <= 0.0:
-			_end_shift()
+			start_cleanup()
+	if multiplayer.is_server() and cleanup_active:
+		cleanup_time_left = maxf(0.0, cleanup_time_left - delta)
+		cleanup.tick_cleanup(delta)
+		if cleanup_time_left <= 0.0:
+			clock_out(0)
 	# Population maintenance — only the host actually spawns anything (both
 	# _restock_* functions no-op their spawning on non-authority peers via
 	# the spawners themselves being authority-driven), but the timer is
@@ -2581,13 +2777,17 @@ func _process(delta: float) -> void:
 			_restock_timer = RESTOCK_CHECK_INTERVAL
 			_rescue_stranded_products()
 			# No customers until the store is open (WEEK 16 prep phase).
-			if store_open and not test_hold_customers:
+			if store_open and not cleanup_active and not test_hold_customers:
 				_restock_customers()
-		_tick_priority_orders(delta)
+		if not cleanup_active:
+			_tick_priority_orders(delta)
 		# WEEK 17: no brownouts or spills during prep — their clocks (first
 		# event LIGHTS_FIRST_DELAY / SPILL_FIRST_DELAY in) start at opening.
-		if store_open:
+		# WEEK 19: nor during cleanup — and with no ticks, the spills on the
+		# floor at close stop drying, so they're there to be mopped.
+		if store_open and not cleanup_active:
 			ambience.tick_host(delta)
+			cleanup.tick_selling(delta)
 		delivery.tick_host(delta)
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist
@@ -2626,8 +2826,10 @@ func _process(delta: float) -> void:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
 	if delivery.active:
 		lines.append("DELIVERY truck %s (%d on it) | boxes out %d | unpacked today %d" % ["at the dock" if delivery.truck_parked() else ("away" if delivery.truck_offset >= delivery.TRUCK_AWAY_OFFSET else "moving"), delivery.truck_load.size(), delivery.boxes_waiting(), delivery.boxes_unpacked_today])
-	if shift_active:
-		lines.append("STORE %s" % ("OPEN" if store_open else "CLOSED — prep, opens by itself in %.0fs" % prep_time_left))
+	if cleanup_active:
+		lines.append("CLEANUP — auto clock-out in %.0fs | spills & knockovers left %d/%d | litter left %d/%d" % [cleanup_time_left, cleanup.mop_left, cleanup.mop_total, cleanup.litter_left, cleanup.litter_total])
+	elif shift_active:
+		lines.append("STORE %s | litter on the floor: %d" % ["OPEN" if store_open else "CLOSED — prep, opens by itself in %.0fs" % prep_time_left, cleanup.litter.size()])
 	if ambience.active:
 		lines.append("LIGHTS %s  |  SPILLS on the floor: %d" % ["FLICKERING (%.0f%%)" % (ambience.brightness * 100.0) if ambience.brightness < 1.0 or ambience.event_playing() else "ok", ambience.spills.size()])
 	if order_section != "":
@@ -2649,3 +2851,6 @@ func _process(delta: float) -> void:
 	# priority order one frame late (clients were fine, they get it by sync).
 	_update_alert_layer(delta)
 	_update_store_sign(delta)
+	# WEEK 19: the manager goes home at close (every peer, from the
+	# replicated flag; his rounds stop in Manager.gd).
+	manager.visible = manager.active and not cleanup_active

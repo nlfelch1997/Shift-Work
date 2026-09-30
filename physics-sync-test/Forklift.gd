@@ -242,7 +242,7 @@ func _physics_process(delta: float) -> void:
 ## START_PAUSE counts from the opening. DeliveryForklift.gd overrides this:
 ## deliveries run through prep.
 func _running(main) -> bool:
-	return not main.is_day_report_active() and main.shift_active and main.store_open
+	return not main.is_day_report_active() and main.shift_active and main.store_open and not main.cleanup_active
 
 func _drive(delta: float) -> void:
 	if _pause_timer > 0.0:
