@@ -496,7 +496,9 @@ extends Node2D
 ##     hazard levels                      0 off / 1 Days 3-6 numbers / 2 Day 7 numbers
 ##     stars from heat (levels + extra sections, 0-13)  2* at 3, 3* at 6, 4* at 9, 5* at 11
 ##     OFFER_BANDS                        [1-2*], [3*], [4-5*] — one posting each
-##     TIGHT_CLOCK_STARS                  4 (Day 7's 96s selling window)
+##     TIGHT_CLOCK_STARS                  4 (Day 7's 96s selling window); also any
+##                                         posting with all four sections open
+##                                         (keeps every shift <= Day 7's 816s)
 ##     Bucks: 1/sale, 4/order filled, +40% of those for a spotless close,
 ##            -3/write-up (all per head in a crew), medal +5/+12/+25,
 ##            x(1 + 0.15 per star above 1)

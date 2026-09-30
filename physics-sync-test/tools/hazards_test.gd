@@ -5132,7 +5132,8 @@ func _check_shift_setup(tag: String) -> void:
 	check(c["levels"]["forklift"] == 0 or "Produce" in c["sections"], "%s: forklift only with Produce open" % tag)
 	var sell_want: float = main.shift_duration - (main.FINALE_SELLING_CUT if c["tight_clock"] else 0.0)
 	check(is_equal_approx(main._selling_window(), sell_want), "%s: selling window %.0fs (tight clock %s)" % [tag, main._selling_window(), c["tight_clock"]])
-	check(main._prep_ceiling() <= main.prep_ceiling_for(4) + 0.01 and main._current_shift_duration() <= main.prep_ceiling_for(4) + main.shift_duration + 0.01, "%s: day clock %.0fs never longer than story Day 7's max (%.0fs)" % [tag, main._current_shift_duration(), main.prep_ceiling_for(4) + main.shift_duration])
+	var day7: float = main.prep_ceiling_for(4) + main.shift_duration - main.FINALE_SELLING_CUT
+	check(main._current_shift_duration() <= day7 + 0.01, "%s: day clock %.0fs never longer than story Day 7's (%.0fs)" % [tag, main._current_shift_duration(), day7])
 	check(main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL if lv["orders"] >= 2 else main.PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "%s: priority order interval %.0fs (level %d)" % [tag, main._priority_order_interval(), lv["orders"]])
 
 ## After a played shift (host): what happened matches what the posting said.
@@ -5145,9 +5146,9 @@ func _check_shift_outcome(tag: String) -> Dictionary:
 	check(lv["manager"] > 0 or main.writeups_today == 0, "%s: manager level %d -> %d write-ups (none if off)" % [tag, lv["manager"], main.writeups_today])
 	check(lv["forklift"] > 0 or fk().rams_today == 0, "%s: forklift level %d -> %d rams (none if off)" % [tag, lv["forklift"], fk().rams_today])
 	if played_open >= 60.0:
-		check(lv["orders"] == 0 or main.orders_called_today > 0, "%s: orders on -> %d called in %.0fs of selling" % [tag, main.orders_called_today, played_open])
-		check(lv["lights"] == 0 or amb().lights_events_today > 0, "%s: lights on -> %d events" % [tag, amb().lights_events_today])
-		check(lv["spills"] == 0 or amb().spills_today > 0, "%s: spills on -> %d" % [tag, amb().spills_today])
+		check(lv["orders"] == 0 or main.orders_called_today > 0, "%s: orders level %d -> %d called in %.0fs of selling (some if on)" % [tag, lv["orders"], main.orders_called_today, played_open])
+		check(lv["lights"] == 0 or amb().lights_events_today > 0, "%s: lights level %d -> %d events (some if on)" % [tag, lv["lights"], amb().lights_events_today])
+		check(lv["spills"] == 0 or amb().spills_today > 0, "%s: spills level %d -> %d (some if on)" % [tag, lv["spills"], amb().spills_today])
 	# The payout: recomputed here from the report's own numbers.
 	var sold: int = main._total_sold() - main._sold_at_day_start
 	var clean: float = 0.5 * cl().mop_fraction() + 0.5 * cl().litter_fraction()
@@ -5242,7 +5243,7 @@ func _run_endless_board() -> void:
 			sigs[o["sig"]] = true
 			if o["levels"]["forklift"] > 0 and not "Produce" in o["sections"]:
 				fk_without_produce += 1
-			if o["tight_clock"] != (o["stars"] >= en().TIGHT_CLOCK_STARS):
+			if o["tight_clock"] != (o["stars"] >= en().TIGHT_CLOCK_STARS or o["sections"].size() == 3):
 				tight_wrong += 1
 			for s in o["sections"]:
 				sec_hist[s] = sec_hist.get(s, 0) + 1
@@ -5257,7 +5258,17 @@ func _run_endless_board() -> void:
 	check(bad == 0, "B1: every posting's stars in its band and matching its heat (%d bad of %d)" % [bad, BOARDS * 3])
 	check(dup < BOARDS / 100, "B2: postings on one board almost never repeat (%d duplicate pairs in %d boards)" % [dup, BOARDS])
 	check(fk_without_produce == 0, "B3: never a forklift without Produce open (%d)" % fk_without_produce)
-	check(tight_wrong == 0, "B4: tight clock exactly on 4-5 star postings (%d wrong)" % tight_wrong)
+	check(tight_wrong == 0, "B4: tight clock exactly on 4-5 star or all-sections postings (%d wrong)" % tight_wrong)
+	# No posting's day may run longer than story Day 7's (prep ceiling + selling).
+	var day7: float = main.prep_ceiling_for(4) + main.shift_duration - main.FINALE_SELLING_CUT
+	var too_long := 0
+	for n in 500:
+		en().roll_offers()
+		for o in en().offers:
+			var clock: float = main.prep_ceiling_for(1 + o["sections"].size()) + main.shift_duration - (main.FINALE_SELLING_CUT if o["tight_clock"] else 0.0)
+			if clock > day7 + 0.01:
+				too_long += 1
+	check(too_long == 0, "B4b: no posting's day runs longer than story Day 7's %.0fs (%d over in 1500)" % [day7, too_long])
 	check(targets_bad == 0, "B5: medal targets positive and bronze < silver < gold for crews of 1-4 (%d bad)" % targets_bad)
 	var all_levels := true
 	for k in en().HAZARDS:

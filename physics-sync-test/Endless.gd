@@ -29,7 +29,7 @@ extends Node
 ## Produce's aisle, so it can only run when Produce is open. A shift is never
 ## longer than the story's longest day: prep ceiling by open sections (max
 ## 12 min = Day 7) + the 111s selling window, cut to Day 7's 96s ("tight
-## clock") on 4-5 star shifts.
+## clock") on 4-5 star shifts and whenever all four sections are open.
 ##
 ## DIFFICULTY READ (the preview's stars): heat = sum of hazard levels (0-10)
 ## + extra sections open (0-3), 0-13, bucketed by STAR_HEAT_MIN into 1-5
@@ -94,7 +94,10 @@ const OFFER_BANDS := [[1, 2], [3, 3], [4, 5]]
 const STAR_HEAT_MIN := [3, 6, 9, 11]
 const STAR_WORDS := ["", "EASY", "STEADY", "BUSY", "HECTIC", "NIGHTMARE"]
 ## 4-5 star shifts sell for Day 7's 96s instead of 111s (Main.gd's
-## FINALE_SELLING_CUT) — the one clock lever, and it only ever SHORTENS.
+## FINALE_SELLING_CUT) — the one clock lever, and it only ever SHORTENS. So do
+## postings with every section open, whatever their stars: all four sections
+## is Day 7's 12-minute prep ceiling, and with a 111s window that day would run
+## 15s past Day 7's own 816s — no shift may be longer than the story's longest.
 const TIGHT_CLOCK_STARS := 4
 ## Flavor only — names never imply a hazard the posting doesn't have.
 const SHIFT_NAMES := [
@@ -335,7 +338,7 @@ func _make_offer(lo: int, hi: int) -> Dictionary:
 		"levels": levels,
 		"heat": heat,
 		"stars": stars,
-		"tight_clock": stars >= TIGHT_CLOCK_STARS,
+		"tight_clock": stars >= TIGHT_CLOCK_STARS or ordered.size() == OPTIONAL_SECTIONS.size(),
 		"bucks_mult": snappedf(1.0 + BUCKS_MULT_PER_STAR * (stars - 1), 0.01),
 		"sig": "%s|%s" % [str(ordered), str(HAZARDS.map(func(k): return levels[k]))],
 	}
