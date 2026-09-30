@@ -63,3 +63,10 @@ func configure(current_day: int) -> void:
 	body.get_node("Locked").visible = not unlocked
 	body.get_node("Locked/Label").text = "LOCKED — opens Day %d" % required_day
 	print("[%s] required_day=%d current_day=%d -> %s" % [body.name, required_day, current_day, "OPEN" if unlocked else "LOCKED"])
+
+## WEEK 21 — endless shifts: open or closed by the taken posting, not a day.
+func configure_open(open: bool, closed_text: String) -> void:
+	collision.disabled = open
+	body.get_node("Locked").visible = not open
+	body.get_node("Locked/Label").text = closed_text
+	print("[%s] endless shift -> %s" % [body.name, "OPEN" if open else "CLOSED"])

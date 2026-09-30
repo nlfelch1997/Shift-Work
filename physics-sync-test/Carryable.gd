@@ -81,6 +81,18 @@ var target_rotation: float
 ## reliable broadcast RPCs below, same "one-shot events get reliable RPCs,
 ## not sync properties" reasoning as request_push.
 var carrier_id: int = 0
+## WEEK 21 — the Back Brace upgrade (Endless.gd's carry_capacity()) lets a
+## player hold more than one product. carry_seq orders a carrier's stack: set
+## from a per-process counter as each pickup RPC lands, and reliable RPCs from
+## the host land in the same order on every peer, so "the newest one" (the
+## top of the stack, what E/C/F act on) is the same item everywhere.
+var carry_seq := 0
+static var _seq_counter := 0
+## Pixels each item above the bottom of a stack is drawn (screen-up).
+const STACK_STEP := 9.0
+## Side-to-side spacing of an armful set down at once (a product is 28px).
+const ARMFUL_SPREAD := 34.0
+var _drop_side := 0 # host, for the one drop being processed (see try_drop())
 
 func _ready() -> void:
 	body = get_parent()
@@ -151,7 +163,7 @@ func _physics_process(_delta: float) -> void:
 				var facing: float = carrier.get("facing_angle")
 				if facing == null:
 					facing = 0.0
-				body.position = carrier.global_position + carry_offset(facing)
+				body.position = carrier.global_position + carry_offset(facing) + Vector2(0.0, -STACK_STEP * _stack_index())
 				body.rotation = 0.0
 			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
 			# position moved this tick (see the longer note on _rpc_set_carrier)
@@ -248,11 +260,14 @@ func try_pickup(requester_id: int, requester_pos: Vector2) -> void:
 	else:
 		rpc_id(get_multiplayer_authority(), "_request_pickup", requester_id, requester_pos)
 
-func try_drop(requester_id: int) -> void:
+## side (WEEK 21): 0 = straight ahead, as always; n > 0 = setting down an
+## armful — item n lands n steps to the side (alternating), so the armful
+## doesn't land in one overlapping pile the physics engine flings apart.
+func try_drop(requester_id: int, side := 0) -> void:
 	if is_multiplayer_authority():
-		_validate_drop(requester_id)
+		_validate_drop(requester_id, side)
 	else:
-		rpc_id(get_multiplayer_authority(), "_request_drop", requester_id)
+		rpc_id(get_multiplayer_authority(), "_request_drop", requester_id, side)
 
 func try_throw(requester_id: int, direction: Vector2) -> void:
 	if is_multiplayer_authority():
@@ -267,10 +282,10 @@ func _request_pickup(requester_id: int, requester_pos: Vector2) -> void:
 	_validate_pickup(requester_id, requester_pos)
 
 @rpc("any_peer", "reliable")
-func _request_drop(requester_id: int) -> void:
+func _request_drop(requester_id: int, side: int) -> void:
 	if not is_multiplayer_authority():
 		return
-	_validate_drop(requester_id)
+	_validate_drop(requester_id, side)
 
 @rpc("any_peer", "reliable")
 func _request_throw(requester_id: int, direction: Vector2) -> void:
@@ -278,7 +293,37 @@ func _request_throw(requester_id: int, direction: Vector2) -> void:
 		return
 	_validate_throw(requester_id, direction)
 
+## WEEK 21 — how many of this item's carrier's other items sit below it.
+func _stack_index() -> int:
+	var n := 0
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		var c: Node = obj.get_node("Carryable")
+		if c != self and c.carrier_id == carrier_id and c.carry_seq < carry_seq:
+			n += 1
+	return n
+
+## WEEK 21 — host: may this PLAYER take one more item? Their capacity (1, or
+## more with the Back Brace), and a delivery box is always a one-item load —
+## no stacking a box, or onto one. Customers (negative ids) always hold one
+## at most by their own AI.
+func _player_has_room(requester_id: int) -> bool:
+	if requester_id <= 0:
+		return true
+	var held := 0
+	var holds_box := false
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.get_node("Carryable").carrier_id == requester_id:
+			held += 1
+			holds_box = holds_box or obj.is_in_group("delivery_box")
+	if held == 0:
+		return true
+	if holds_box or body.is_in_group("delivery_box"):
+		return false
+	return held < get_tree().current_scene.endless.carry_capacity()
+
 func _validate_pickup(requester_id: int, requester_pos: Vector2) -> void:
+	if not _player_has_room(requester_id):
+		return
 	if carrier_id != 0:
 		return # already held — first request wins, rest are silently ignored
 	if requester_pos.distance_to(body.position) > PICKUP_RANGE:
@@ -286,9 +331,10 @@ func _validate_pickup(requester_id: int, requester_pos: Vector2) -> void:
 	_notify_manager("note_work", requester_id)
 	rpc("_rpc_set_carrier", requester_id)
 
-func _validate_drop(requester_id: int) -> void:
+func _validate_drop(requester_id: int, side := 0) -> void:
 	if carrier_id != requester_id:
 		return # only the current carrier may drop it
+	_drop_side = side
 	_notify_manager("note_work", requester_id)
 	rpc("_rpc_set_carrier", 0)
 
@@ -346,6 +392,9 @@ func _rpc_set_carrier(id: int) -> void:
 	var old_carrier_id := carrier_id
 	carrier_id = id
 	if id != 0:
+		_seq_counter += 1
+		carry_seq = _seq_counter
+	if id != 0:
 		body.linear_velocity = Vector2.ZERO
 		body.angular_velocity = 0.0
 		body.freeze = true
@@ -367,6 +416,9 @@ func _rpc_set_carrier(id: int) -> void:
 				if facing == null:
 					facing = 0.0
 				body.position = carrier.global_position + carry_offset(facing)
+				if _drop_side > 0:
+					body.position += Vector2.DOWN.rotated(facing) * ARMFUL_SPREAD * ceili(_drop_side / 2.0) * (1.0 if _drop_side % 2 == 1 else -1.0)
+		_drop_side = 0
 		body.collision_layer = 1
 		body.collision_mask = 1
 		if is_multiplayer_authority():

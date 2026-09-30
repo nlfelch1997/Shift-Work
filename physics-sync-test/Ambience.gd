@@ -229,16 +229,28 @@ func _mark_emissive() -> void:
 				prompt.z_index = Z_EMISSIVE
 
 func configure(day: int, is_finale := false) -> void:
-	finale = is_finale
-	active = day >= LIGHTS_START_DAY or day >= SPILLS_START_DAY
+	var lvl := 2 if is_finale else 1
+	configure_levels(lvl if day >= LIGHTS_START_DAY else 0, lvl if day >= SPILLS_START_DAY else 0)
+
+## WEEK 21 — the lights and the spills each get their own level (0 off, 1
+## normal, 2 the Day 7 numbers) from Main.gd's hazard_levels(): the story's
+## Day 6+ gates, or an endless posting, which can run one without the other.
+var lights_level := 0
+var spills_level := 0
+
+func configure_levels(lights: int, spills_lvl: int) -> void:
+	lights_level = lights
+	spills_level = spills_lvl
+	finale = lights >= 2 or spills_lvl >= 2
+	active = lights > 0 or spills_lvl > 0
 	if not active:
 		_clear_local()
 
 func lights_enabled() -> bool:
-	return active and main.current_day >= LIGHTS_START_DAY
+	return active and lights_level > 0
 
 func spills_enabled() -> bool:
-	return active and main.current_day >= SPILLS_START_DAY
+	return active and spills_level > 0
 
 ## Host-only, from Main.gd's _start_shift().
 func reset_for_new_day() -> void:
@@ -288,7 +300,7 @@ func start_lights_event() -> void:
 	lights_events_today += 1
 	var pattern := build_pattern(lights_event_seed)
 	_lights_clear_timer = pattern[-1][0] + 0.5
-	_lights_timer = pattern[-1][0] + (randf_range(FINALE_LIGHTS_INTERVAL_MIN, FINALE_LIGHTS_INTERVAL_MAX) if finale else randf_range(LIGHTS_INTERVAL_MIN, LIGHTS_INTERVAL_MAX))
+	_lights_timer = pattern[-1][0] + (randf_range(FINALE_LIGHTS_INTERVAL_MIN, FINALE_LIGHTS_INTERVAL_MAX) if lights_level >= 2 else randf_range(LIGHTS_INTERVAL_MIN, LIGHTS_INTERVAL_MAX))
 	print("[Ambience] Lights event #%d (%.1fs)" % [lights_event_id, pattern[-1][0]])
 
 ## Deterministic from the seed alone, so every peer builds the same one.
@@ -335,7 +347,7 @@ func event_playing() -> bool:
 ## --- Spills ------------------------------------------------------------------
 
 func spill_cap() -> int:
-	return SPILL_MAX + (FINALE_SPILL_MAX_BONUS if finale else 0) + SPILL_MAX_PER_EXTRA_PLAYER * maxi(0, main.players.size() - 1)
+	return SPILL_MAX + (FINALE_SPILL_MAX_BONUS if spills_level >= 2 else 0) + SPILL_MAX_PER_EXTRA_PLAYER * maxi(0, main.players.size() - 1)
 
 func _tick_spills(delta: float) -> void:
 	var changed := false
@@ -362,7 +374,7 @@ func _tick_spills(delta: float) -> void:
 		spills = keep
 	_spill_timer -= delta
 	if _spill_timer <= 0.0:
-		_spill_timer = randf_range(FINALE_SPILL_INTERVAL_MIN, FINALE_SPILL_INTERVAL_MAX) if finale else randf_range(SPILL_INTERVAL_MIN, SPILL_INTERVAL_MAX)
+		_spill_timer = randf_range(FINALE_SPILL_INTERVAL_MIN, FINALE_SPILL_INTERVAL_MAX) if spills_level >= 2 else randf_range(SPILL_INTERVAL_MIN, SPILL_INTERVAL_MAX)
 		if spills.size() < spill_cap():
 			var pos = pick_spill_spot()
 			if pos != null:
