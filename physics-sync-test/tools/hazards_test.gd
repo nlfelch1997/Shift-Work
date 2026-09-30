@@ -1345,7 +1345,7 @@ func _run_orders() -> void:
 	await wait(0.2) # let Main._process refresh the report labels
 	check(main.order_section == "" and not main._order_label.visible, "O5: open order lapses at the end of the day, banner hidden under the report")
 	check(main.report_order_label.visible and main.report_order_label.text.begins_with("Priority orders: 1/"), "O5: report line: '%s'" % main.report_order_label.text)
-	var expect_pay: int = (main._total_sold() - main._sold_at_day_start) * main.PAY_PER_SALE + main.priority_sales_today * 5 - main.writeups_today * main.WRITEUP_PENALTY
+	var expect_pay: int = (main._total_sold() - main._sold_at_day_start) * main.PAY_PER_SALE + main.priority_sales_today * 5 + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY
 	check(main.report_pay_label.text.begins_with("Pay Today: %s" % main._format_money(expect_pay)), "O5: report pay includes the order bonus: '%s'" % main.report_pay_label.text)
 	print("REPORT  %s | %s | %s | %s" % [main.report_today_label.text, main.report_writeup_label.text, main.report_order_label.text, main.report_pay_label.text])
 	await shot("o5_report")
@@ -4152,6 +4152,8 @@ func _cleanup_view() -> Dictionary:
 	return {"active": main.cleanup_active, "litter": cl().litter.size(), "mop_left": cl().mop_left, "mop_total": cl().mop_total, "litter_total": cl().litter_total, "holders": holders, "spills": amb().spills.size(), "customers": live_customers(), "sign": main._sign_text.text}
 
 func _run_cleanup() -> void:
+	if shots:
+		main.debug_label.visible = false
 	main.shift_duration = 45.0
 	main.prep_ceiling_override = 0.0
 	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
@@ -4232,12 +4234,15 @@ func _run_cleanup() -> void:
 		await stock_one("Dry Goods", prod2)
 		check(not prod2.has_meta("knocked"), "CL setup: re-shelving a knocked item clears its tag")
 	# --- CL3: the mop, through the real keys.
+	await walk_to(cl().STATION_POS + Vector2(0, 80), 10.0)
+	await shot("cleanup_station_closed_store")
 	check(await get_tool("mop"), "CL3: picked up a mop at the station with E")
 	var spill_pos: Vector2 = Vector2(1440, 700)
 	await face_target(spill_pos, cl().MOP_HEAD_OFFSET)
 	var t0 := _wall()
 	press(act + "place")
-	var saw_bar := await wait_until(func(): return float(cl().tools[cl().tool_of(me)]["work"]) > 0.2, 2.0)
+	var saw_bar := await wait_until(func(): return float(cl().tools[cl().tool_of(me)]["work"]) > 0.4, 2.0)
+	await shot("cleanup_mopping_spill")
 	var gone := await wait_until(func(): return not amb().spills.any(func(s): return s["id"] == spill_id), 5.0)
 	press(act + "place", 0.0)
 	check(saw_bar and gone, "CL3: held C with the mop on the spill -> mopped up in %.1fs (progress showed: %s)" % [_wall() - t0, str(saw_bar)])
@@ -4247,7 +4252,7 @@ func _run_cleanup() -> void:
 	press(act + "place", 0.0)
 	check(gone and disp.global_position.distance_to(disp.get_node("Display").home_position) < 5.0, "CL3: mopped the knocked-over display -> back upright on its spot")
 	if not gone:
-		print("DEBUG disp %s at %s home %s toppled %s | player %s facing %.2f | work %s | messes %s" % [disp.name, str(disp.global_position.round()), str(disp.get_node("Display").home_position), str(disp.get_node("Display").toppled), str(player().global_position.round()), player().facing_angle, str(cl().tools[cl().tool_of(me)]["work"]), str(cl()._mop_messes().map(func(m): return [m["kind"], m["pos"].round()]))])
+		print("DEBUG display mop failed: disp %s at %s home %s toppled %s | player %s facing %.2f | work %s | messes %s" % [disp.name, str(disp.global_position.round()), str(disp.get_node("Display").home_position), str(disp.get_node("Display").toppled), str(player().global_position.round()), player().facing_angle, str(cl().tools[cl().tool_of(me)]["work"]), str(cl()._mop_messes().map(func(m): return [m["kind"], m["pos"].round()]))])
 	await face_target(prod.global_position, mop_stand({"r": 14.0}))
 	press(act + "place")
 	gone = await wait_until(func(): return not is_instance_valid(prod) or prod.is_queued_for_deletion(), 4.0)
@@ -4295,6 +4300,8 @@ func _run_cleanup() -> void:
 	check(main.cleanup_active, "CL5: a clock-out request from nobody at the clock is refused")
 	var gross: int = main._gross_pay_today()
 	var mop_left_before: int = cl()._mop_messes().size()
+	await walk_to(main.TIME_CLOCK_POS + Vector2(0, 40), 12.0, 40.0)
+	await shot("cleanup_time_clock")
 	await go_clock_out()
 	check(main.is_day_report_active() and not main.cleanup_active and main.clocked_out_by == 1 and main.clock_out_events_today == 1, "CL5: E at the time clock -> clocked out by the host, report up")
 	var frac: float = 0.5 * cl().mop_fraction() + 0.5 * cl().litter_fraction()
@@ -4528,6 +4535,15 @@ func _empty_pan() -> void:
 	await tap(act + "interact")
 	await wait_until(func(): return cl().tool_of(me) >= 0 and int(cl().tools[cl().tool_of(me)]["pan"]) == 0, 2.0)
 
+## JSON hands numbers back as floats: compare 4 and 4.0 (and arrays of them)
+## as the same value.
+func _jnorm(v) -> String:
+	if v is float or v is int:
+		return str(int(v)) if is_equal_approx(float(v), roundf(float(v))) else str(v)
+	if v is Array:
+		return str(v.map(func(x): return _jnorm(x)))
+	return str(v)
+
 func _run_net_cleanup_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
@@ -4538,7 +4554,7 @@ func _run_net_cleanup_client() -> void:
 	var v := _cleanup_view()
 	var why := ""
 	for k in ["active", "litter", "mop_left", "mop_total", "litter_total", "spills", "sign"]:
-		if str(v[k]) != str(g1.get(k)):
+		if _jnorm(v[k]) != _jnorm(g1.get(k)):
 			why += " %s %s vs host %s" % [k, str(v[k]), str(g1.get(k))]
 	if v["customers"] != 0:
 		why += " customers %d" % v["customers"]
@@ -4554,7 +4570,7 @@ func _run_net_cleanup_client() -> void:
 	var h2 := await _net_read("nc2_host.json", 30.0)
 	await wait(0.5)
 	var mine: Array = _cleanup_view()["holders"]
-	var why2 := "" if str(mine) == str(h2.get("holders")) else " holders %s vs host %s" % [str(mine), str(h2.get("holders"))]
+	var why2 := "" if _jnorm(mine) == _jnorm(h2.get("holders")) else " holders %s vs host %s" % [str(mine), str(h2.get("holders"))]
 	_net_write("nc2_%d.json" % me, {"ok": why2 == "", "why": why2})
 	check(why2 == "", "%s: NC2 same tool holders%s" % [who, why2])
 	if cl().tool_of(me) >= 0:

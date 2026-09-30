@@ -173,7 +173,7 @@ func _ready() -> void:
 	_litter_root = Node2D.new()
 	_litter_root.name = "Litter"
 	main.add_child(_litter_root)
-	main.move_child(_litter_root, main.get_node("RoomBackgrounds").get_index() + 1)
+	main.move_child(_litter_root, main.get_node("Spills").get_index() + 1)
 	_marker_root = Node2D.new()
 	_marker_root.name = "MessMarkers"
 	_marker_root.z_index = 5
@@ -312,7 +312,6 @@ func tick_cleanup(delta: float) -> void:
 				if r[1] > 0:
 					t["pan"] = int(t["pan"]) + int(r[1])
 					changed = true
-				full = int(t["pan"]) >= PAN_CAPACITY
 		if t["kind"] == "broom":
 			full = int(t["pan"]) >= PAN_CAPACITY
 		if not is_equal_approx(float(t["work"]), work) or t["full"] != full:
@@ -571,10 +570,16 @@ func _build_station() -> void:
 func _build_tool_node(kind: String) -> Node2D:
 	var node := Node2D.new()
 	node.name = "Mop" if kind == "mop" else "Broom"
+	# The tool itself under "Art" (it wiggles while working); the progress
+	# bar on the node, so it stays level and readable.
+	var art := Node2D.new()
+	art.name = "Art"
+	art.scale = Vector2(1.35, 1.35)
+	node.add_child(art)
 	var handle := Polygon2D.new()
 	handle.polygon = PackedVector2Array([Vector2(-1.5, -34), Vector2(1.5, -34), Vector2(1.5, 0), Vector2(-1.5, 0)])
 	handle.color = Color(0.55, 0.38, 0.2) if kind == "broom" else Color(0.75, 0.75, 0.8)
-	node.add_child(handle)
+	art.add_child(handle)
 	var head := Polygon2D.new()
 	head.name = "Head"
 	if kind == "mop":
@@ -583,30 +588,31 @@ func _build_tool_node(kind: String) -> Node2D:
 		var band := Polygon2D.new()
 		band.polygon = PackedVector2Array([Vector2(-9, -3), Vector2(9, -3), Vector2(9, 1), Vector2(-9, 1)])
 		band.color = Color(0.2, 0.45, 0.85)
-		node.add_child(head)
-		node.add_child(band)
+		art.add_child(head)
+		art.add_child(band)
 	else:
 		head.polygon = PackedVector2Array([Vector2(-4, 0), Vector2(4, 0), Vector2(11, 12), Vector2(-11, 12)])
 		head.color = Color(0.9, 0.75, 0.35)
-		node.add_child(head)
+		art.add_child(head)
 		var pan := Polygon2D.new()
 		pan.name = "Pan"
 		pan.polygon = PackedVector2Array([Vector2(8, 6), Vector2(20, 6), Vector2(20, 16), Vector2(8, 16)])
 		pan.color = Color(0.25, 0.3, 0.35)
-		node.add_child(pan)
+		art.add_child(pan)
 		var fill := Polygon2D.new()
 		fill.name = "Fill"
 		fill.polygon = PackedVector2Array([Vector2(9, 15), Vector2(19, 15), Vector2(19, 7), Vector2(9, 7)])
 		fill.color = Color(0.6, 0.5, 0.35)
-		node.add_child(fill)
+		art.add_child(fill)
 	var bar_bg := Polygon2D.new()
 	bar_bg.name = "BarBg"
-	bar_bg.polygon = PackedVector2Array([Vector2(-16, -46), Vector2(16, -46), Vector2(16, -41), Vector2(-16, -41)])
+	bar_bg.polygon = PackedVector2Array([Vector2(-20, -50), Vector2(20, -50), Vector2(20, -42), Vector2(-20, -42)])
 	bar_bg.color = Color(0, 0, 0, 0.7)
 	node.add_child(bar_bg)
 	var bar := Polygon2D.new()
 	bar.name = "Bar"
-	bar.polygon = PackedVector2Array([Vector2(-15, -45), Vector2(15, -45), Vector2(15, -42), Vector2(-15, -42)])
+	bar.polygon = PackedVector2Array([Vector2(0, -49), Vector2(38, -49), Vector2(38, -43), Vector2(0, -43)])
+	bar.position = Vector2(-19, 0) # grows rightward from the left edge
 	bar.color = Color(0.4, 1, 0.5)
 	node.add_child(bar)
 	return node
@@ -645,10 +651,10 @@ func _process(_delta: float) -> void:
 			node.position = p.global_position + dir * (MOP_HEAD_OFFSET if t["kind"] == "mop" else BROOM_HEAD_OFFSET) + Vector2(0, -8)
 			node.z_index = Z_HELD
 			var working := float(t["work"]) >= 0.0
-			node.rotation = sin(Time.get_ticks_msec() * 0.02) * 0.35 if working else 0.0
+			node.get_node("Art").rotation = sin(Time.get_ticks_msec() * 0.02) * 0.35 if working else 0.0
 		else:
 			node.position = t["pos"]
-			node.rotation = 0.0
+			node.get_node("Art").rotation = 0.0
 			node.z_index = Z_ON_FLOOR
 		var work := float(t["work"])
 		node.get_node("Bar").visible = work >= 0.0 and work < 1.0
@@ -657,7 +663,7 @@ func _process(_delta: float) -> void:
 			node.get_node("Bar").scale.x = clampf(work, 0.05, 1.0)
 		if t["kind"] == "broom":
 			var k := clampf(float(t["pan"]) / PAN_CAPACITY, 0.0, 1.0)
-			var fill: Polygon2D = node.get_node("Fill")
+			var fill: Polygon2D = node.get_node("Art/Fill")
 			fill.visible = k > 0.0
 			fill.scale = Vector2(1.0, k)
 			fill.position = Vector2(0, 15.0 * (1.0 - k))
@@ -695,6 +701,8 @@ func _update_hint(me: int, cleanup: bool) -> void:
 	if not cleanup or not main.players.has(me) or main.is_day_report_active():
 		return
 	var p: Node2D = main.players[me]
+	if main.near_time_clock(p.global_position):
+		return # E clocks out there (Main.gd's own hint)
 	var held := tool_of(me)
 	var text := ""
 	if held >= 0:

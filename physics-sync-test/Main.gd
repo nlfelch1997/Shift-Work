@@ -1718,7 +1718,7 @@ func _update_store_sign(delta: float) -> void:
 	if cleanup_active and not _day_report_active:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(0.55, 0.9, 1))
-		_prep_label.text = "CLEANUP — store closed. Mop & sweep, then clock out in the break room (auto in %d:%02d).  Spills & knockovers %d/%d  ·  Litter %d/%d" % [int(cleanup_time_left) / 60, int(cleanup_time_left) % 60, cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, cleanup.litter_total - cleanup.litter_left, cleanup.litter_total]
+		_prep_label.text = "CLEANUP — mop & sweep, then clock out in the break room (auto %d:%02d)  ·  Spills %d/%d  ·  Litter %d/%d" % [int(cleanup_time_left) / 60, int(cleanup_time_left) % 60, cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, cleanup.litter_total - cleanup.litter_left, cleanup.litter_total]
 	elif closed and not _day_report_active:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
@@ -2822,7 +2822,7 @@ func _process(delta: float) -> void:
 		# rams_today isn't replicated (diagnostic only), so only the host's
 		# count is meaningful — clients just see that it's live.
 		lines.append("FORKLIFT active in %s" % _section_name_at(forklift.home_position) + (" — rams today: %d" % forklift.rams_today if multiplayer.is_server() else ""))
-	if manager.active:
+	if manager.active and not cleanup_active:
 		lines.append("MANAGER on the floor — %s  |  write-ups today: %d" % [("watching %s (%d%%)" % [player_display_name(manager.watch_peer), int(manager.watch_level * 100.0)]) if manager.watch_peer != 0 else "patrolling", writeups_today])
 	if delivery.active:
 		lines.append("DELIVERY truck %s (%d on it) | boxes out %d | unpacked today %d" % ["at the dock" if delivery.truck_parked() else ("away" if delivery.truck_offset >= delivery.TRUCK_AWAY_OFFSET else "moving"), delivery.truck_load.size(), delivery.boxes_waiting(), delivery.boxes_unpacked_today])
