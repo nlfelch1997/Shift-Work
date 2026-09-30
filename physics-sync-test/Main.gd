@@ -409,9 +409,10 @@ extends Node2D
 ##     STORE_SIGN_POS / STORE_SIGN_RANGE   (1610,1115) / 70 px
 ##
 ##   CLEANUP (WEEK 19) — Main.gd (the rest in Cleanup.gd)
-##     CLEANUP_CEILING_BASE / _PER_MESS   40 s + 4 s per mess item at close
+##     CLEANUP_CEILING_BASE / _PER_MESS   50 s + 4 s per mess item at close (WEEK 20: base was 40)
 ##     CLEANUP_CEILING_MIN / _MAX         60 / 180 s
 ##     TIME_CLOCK_POS / TIME_CLOCK_RANGE   (880,300) break room / 70 px
+##     Cleanup.gd STATION_POS               (700,280) break room, by the time clock (WEEK 20)
 ##     Cleanup.gd LITTER_RATE_PER_CUSTOMER 1/60 per customer-second in the store
 ##     Cleanup.gd CLEAN_BONUS_MAX           0.25 (+25% of gross pay, split
 ##                                          evenly: spills & knockovers / litter)
@@ -984,7 +985,12 @@ const PREP_CEILING_PER_SECTION := 180.0
 ## tidy Day 2 isn't a long wait and a wrecked Day 7 has room to be put right.
 ## At roughly one mess item per 4s of one player's work (walk + scrub), the
 ## ceiling covers about everything for one player; a crew has slack.
-const CLEANUP_CEILING_BASE := 40.0
+## WEEK 20: 40 -> 50. The tool station moved from the hub's corner to the
+## break room (by the time clock), so a trip to it from the sales floor is
+## ~3s longer each way (hub center: ~460px -> ~1070px): +10s pays for one
+## round trip (a tool swap mid-clean). The bot sim's broom swap ran the old
+## ceiling out on the walk to the clock. Flagged placeholder like the rest.
+const CLEANUP_CEILING_BASE := 50.0
 const CLEANUP_CEILING_PER_MESS := 4.0
 const CLEANUP_CEILING_MIN := 60.0
 const CLEANUP_CEILING_MAX := 180.0

@@ -57,6 +57,8 @@ func _ready() -> void:
 	_texture_floors()
 	_build_walls()
 	_dress_shelves()
+	_dress_registers()
+	_dress_displays()
 	main.products_root.child_entered_tree.connect(_dress_product)
 
 ## Lower 96x96 of an A2 block, as a repeatable texture.
@@ -174,6 +176,17 @@ func _add_strip(r: Rect2, tex: Texture2D, along_x: bool) -> void:
 ## (Main.tscn's per-section shelf modulate), untouched, so sections stay
 ## color-coded exactly as before. Same body, same collision, same slots.
 
+## WEEK 20 (playtest: "leftover grey shelves behind the real ones in Dry
+## Goods"). There was no leftover geometry — every drawn node in every
+## section belongs to a live shelf (checked node by node). What read as a
+## ghost is each Dry Goods shelf's own BODY (the bays above, where its
+## collision is): the other three sections tint the whole shelf with their
+## color (Main.tscn's per-section shelf modulate), so body and slots read as
+## one unit, but Dry Goods had no tint — plain grey bays behind yellow-
+## outlined ones. Dry Goods' bays (body and slots) now take a yellow of their
+## own. Bay sprites only, not the shelf root: a root modulate would also tint
+## the slot outlines and the stocked products' facings.
+const BAY_TINT := {"Dry Goods": Color(1.25, 1.1, 0.55)}
 const SHELF_SHEET := "res://assets/supermarket/11.png"
 const EMPTY_SHELF_BAY := Rect2i(0, 390, 96, 92) # one empty metal bay
 const BODY_BAYS := 3 # bays along each shelf body
@@ -246,12 +259,14 @@ func _dress_shelves() -> void:
 				bay.rotation = upright
 				bay.scale = world_cell / Vector2(EMPTY_SHELF_BAY.size)
 				art.add_child(bay)
+			art.modulate = BAY_TINT.get(section, Color.WHITE)
 			polygon.self_modulate.a = 0.0
 			polygon.add_child(art)
 		if section in ART_SECTIONS:
 			for slot in shelf._all_slots:
 				var bay := _region_sprite(SHELF_SHEET, EMPTY_SHELF_BAY)
 				bay.name = "EmptyShelfArt"
+				bay.modulate = BAY_TINT.get(section, Color.WHITE)
 				bay.rotation = upright
 				bay.scale = SLOT_BAY_SIZE / Vector2(EMPTY_SHELF_BAY.size)
 				slot.add_child(bay)
@@ -314,7 +329,8 @@ const FACING_MAX_ACROSS := 5
 var _faced_slots: Array = [] # [shelf, slot index, slot Marker2D, Facings node]
 var _hidden_art := {} # product -> true while it's shown as facings
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_run_conveyors(delta)
 	var now_hidden := {}
 	for entry in _faced_slots:
 		var shelf: Node = entry[0]
@@ -376,3 +392,208 @@ func _sprite_pool(section: String) -> Array:
 	if section == "Produce":
 		pool.append_array(PRODUCE_EXTRA)
 	return pool
+
+## --- CHECKOUT LANES (Week 20 playtest polish) --------------------------------
+## Purely visual, like everything in this file: no logic reads any of it,
+## nothing new is replicated, checkout timing/scoring are Cashier.gd's and
+## untouched. Checked both packs first: the warehouse pack has no retail
+## counters; the supermarket pack (1.png) has two complete checkout lanes —
+## counter, register, card reader, bagging well and a CONVEYOR BELT built
+## into the counter — one red, one blue. Every register now draws as one of
+## those (alternating), in place of the blue placeholder box. The body's
+## Polygon2D stays (hidden) and the collision is untouched; the lane is sized
+## to sit on that 60x40 footprint, nudged west so its belt end meets the
+## Checkout marker (+50,0) where a shopper stands to pay.
+##
+## THE BELT: the lane art's own belt, animated. While a shopper is being
+## rung up, the belt strip scrolls toward the register (a strip cut from the
+## same art, one belt segment tiled) and the item slides along it, from the
+## shopper's end to the register, over the Cashier's CHECKOUT_WAIT_SECONDS; the
+## item's own sprite (still carried by the shopper as far as the game is
+## concerned) is hidden meanwhile. Every peer works this out on its own from
+## state it already has: a customer standing within the Cashier's PURCHASE_RANGE of
+## a register's Checkout marker while carrying something (carrier_id and
+## carry_id reach every peer) is the one being served — the queue's other
+## slots all sit outside that range. Each peer times the slide from when it
+## first sees that, so a client can be a frame or two off the host; the host
+## alone decides when the sale actually happens (the item vanishes then).
+
+const LANE_SHEET := "res://assets/supermarket/1.png"
+const LANE_REGIONS := [Rect2i(386, 207, 142, 81), Rect2i(386, 303, 142, 81)] # red lane, blue lane
+const LANE_STRAY_CUT := Rect2i(66, 0, 28, 34) # lane-local: the card machine above, not the counter
+const LANE_SCALE := 0.55 # 142x81 -> 78x45 on the 60x40 counter
+const LANE_OFFSET := Vector2(-6, 0)
+## The belt inside a lane region (lane-local pixels) and one belt segment
+## (sheet pixels, same rows) to tile for the moving strip.
+const BELT_RECT := Rect2(95, 40, 46, 15)
+const BELT_SEGMENT := Rect2i(491, 247, 9, 15) # +96 rows for the blue lane
+const BELT_SPEED := 18.0 # sheet px per second
+const BELT_ITEM_SIZE := 15.0 # px, longest side of the item riding the belt
+
+var _lanes: Array = [] # [{"body", "cashier", "belt", "rider", "item", "t"}]
+
+func _dress_registers() -> void:
+	var bodies := get_tree().get_nodes_in_group("cashier")
+	bodies.sort_custom(func(a, b): return String(a.name) < String(b.name))
+	for i in bodies.size():
+		var body: Node2D = bodies[i]
+		var region: Rect2i = LANE_REGIONS[i % LANE_REGIONS.size()]
+		(body.get_node("Polygon2D") as Polygon2D).self_modulate.a = 0.0
+		var lane := Sprite2D.new()
+		lane.texture = _lane_texture(region)
+		lane.name = "LaneArt"
+		lane.scale = Vector2.ONE * LANE_SCALE
+		lane.position = LANE_OFFSET
+		body.add_child(lane)
+		# Over the cashier NPC's lower half: they stand behind the counter.
+		body.move_child(lane, body.get_node("CashierNPC").get_index() + 1)
+		# The moving strip, exactly over the lane's own belt.
+		var seg_img: Image = load(LANE_SHEET).get_image().get_region(Rect2i(BELT_SEGMENT.position + Vector2i(0, region.position.y - LANE_REGIONS[0].position.y), BELT_SEGMENT.size))
+		var belt := Sprite2D.new()
+		belt.name = "Belt"
+		belt.texture = ImageTexture.create_from_image(seg_img)
+		belt.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+		belt.region_enabled = true
+		belt.region_rect = Rect2(Vector2.ZERO, BELT_RECT.size)
+		belt.centered = false
+		belt.position = BELT_RECT.position - Vector2(region.size) * 0.5
+		lane.add_child(belt)
+		var rider := Sprite2D.new()
+		rider.name = "BeltItem"
+		rider.visible = false
+		body.add_child(rider)
+		_lanes.append({"body": body, "cashier": body.get_node("Cashier"), "belt": belt, "rider": rider, "item": null, "t": 0.0})
+
+## The lane cut out of the sheet, minus the separate card-machine sprite that
+## sits in the tile above each lane (it overlaps the region's top edge and
+## would float over the cashier).
+func _lane_texture(region: Rect2i) -> Texture2D:
+	var img: Image = load(LANE_SHEET).get_image().get_region(region)
+	img.fill_rect(LANE_STRAY_CUT, Color(0, 0, 0, 0))
+	return ImageTexture.create_from_image(img)
+
+## Lane-local belt ends -> the body's own space.
+func _belt_point(lane_x: float) -> Vector2:
+	var region: Rect2i = LANE_REGIONS[0]
+	var local := Vector2(lane_x, BELT_RECT.get_center().y) - Vector2(region.size) * 0.5
+	return LANE_OFFSET + local * LANE_SCALE + Vector2(0, -2)
+
+func _run_conveyors(delta: float) -> void:
+	if _lanes.is_empty():
+		return
+	var carried := {} # carrier id -> item
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		var c: Node = obj.get_node_or_null("Carryable")
+		if c and c.carrier_id != 0:
+			carried[c.carrier_id] = obj
+	var customers := get_tree().get_nodes_in_group("customer")
+	for lane in _lanes:
+		var body: Node2D = lane["body"]
+		var item: Node2D = null
+		if body.visible:
+			var checkout: Vector2 = body.get_node("Checkout").global_position
+			for cust in customers:
+				var cid = cust.get("carry_id")
+				if cid != null and carried.has(cid) and cust.global_position.distance_to(checkout) <= lane["cashier"].PURCHASE_RANGE:
+					item = carried[cid]
+					break
+		var prev = lane["item"]
+		if item != prev:
+			if prev != null and is_instance_valid(prev):
+				_set_item_art_hidden(prev, false)
+			lane["item"] = item
+			lane["t"] = 0.0
+			if item != null:
+				_load_rider(lane["rider"], item)
+		var rider: Sprite2D = lane["rider"]
+		rider.visible = item != null
+		if item == null:
+			continue
+		_set_item_art_hidden(item, true)
+		lane["t"] = float(lane["t"]) + delta
+		var k := clampf(float(lane["t"]) / lane["cashier"].CHECKOUT_WAIT_SECONDS, 0.0, 1.0)
+		rider.position = _belt_point(BELT_RECT.end.x - 6.0).lerp(_belt_point(BELT_RECT.position.x + 4.0), k)
+		if k < 1.0:
+			var belt: Sprite2D = lane["belt"]
+			belt.region_rect.position.x = fposmod(belt.region_rect.position.x + BELT_SPEED * delta, float(BELT_SEGMENT.size.x))
+
+## The rider copies the item's own art (or, with none, its color).
+func _load_rider(rider: Sprite2D, item: Node2D) -> void:
+	var art: Sprite2D = item.get_node_or_null("ProductArt")
+	if art:
+		rider.texture = art.texture
+		rider.region_enabled = true
+		rider.region_rect = art.region_rect
+		rider.modulate = Color.WHITE
+		rider.scale = Vector2.ONE * (BELT_ITEM_SIZE / maxf(art.region_rect.size.x, art.region_rect.size.y))
+	else:
+		var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		rider.texture = ImageTexture.create_from_image(img)
+		rider.region_enabled = false
+		rider.modulate = (item.get_node("Polygon2D") as Polygon2D).color
+		rider.scale = Vector2.ONE * BELT_ITEM_SIZE * 0.8
+
+## Alpha on the item's own art only — `visible` belongs to the facings above.
+func _set_item_art_hidden(item: Node2D, hidden: bool) -> void:
+	var a := 0.0 if hidden else 1.0
+	var art: CanvasItem = item.get_node_or_null("ProductArt")
+	if art:
+		art.self_modulate.a = a
+	else:
+		(item.get_node("Polygon2D") as Polygon2D).modulate.a = a
+
+## --- PRODUCE FLOOR DISPLAYS (Week 20 playtest polish) -----------------------
+## The two floor displays (Main.tscn's Displays — knock-over-able RigidBody2D
+## props, Display.gd; a mop job at cleanup) were still Week 8 placeholders:
+## a tan square with two red dots. They stay exactly the same props (same
+## body, collision, physics, knock-over and mop behaviour) and only their
+## art changes. Checked both packs: the warehouse pack has nothing produce;
+## the supermarket pack's 1.png has a row of wooden two-tier produce crates
+## with price plaques (potatoes/tomatoes, peppers, eggplant, greens/oranges,
+## lettuce/squash, tomatoes/spinach, broccoli/mushrooms). Each display is a
+## pair of those crates side by side (Display.tscn's 44x44 footprint); the
+## sale bin gets the pack's "1.99" price sign on a post beside it. Knocked
+## over, the pair lies tipped on its side with a few of the section's own
+## produce sprites spilled around it (where the old spill shapes were).
+const DISPLAY_ART := {
+	"MeatDeliSampleTable": Rect2i(0, 309, 96, 76), # potatoes/tomatoes + peppers
+	"MeatDeliSaleBin": Rect2i(240, 305, 96, 80), # lettuce/squash + tomatoes/spinach
+}
+const DISPLAY_SCALE := 0.55
+const SALE_SIGN := Rect2i(585, 145, 31, 47) # "1.99" on a post
+const DISPLAY_SPILLS := [[Vector2(30, -6), 0], [Vector2(-26, 18), 5], [Vector2(28, 18), 9]] # [offset, Produce sprite index]
+
+func _dress_displays() -> void:
+	for d in get_tree().get_nodes_in_group("display"):
+		if not DISPLAY_ART.has(String(d.name)):
+			continue
+		var region: Rect2i = DISPLAY_ART[d.name]
+		var upright: Node2D = d.get_node("Upright")
+		var toppled: Node2D = d.get_node("Toppled")
+		for n in upright.get_children() + toppled.get_children():
+			if n is Polygon2D:
+				n.visible = false
+		var crates := _region_sprite(LANE_SHEET, region)
+		crates.name = "CrateArt"
+		crates.scale = Vector2.ONE * DISPLAY_SCALE
+		upright.add_child(crates)
+		if String(d.name).ends_with("SaleBin"):
+			var sign := _region_sprite(LANE_SHEET, SALE_SIGN)
+			sign.name = "SaleSign"
+			sign.scale = Vector2.ONE * 0.6
+			sign.position = Vector2(-16, -24)
+			upright.add_child(sign)
+		var tipped := _region_sprite(LANE_SHEET, region)
+		tipped.name = "CrateArt"
+		tipped.scale = Vector2.ONE * DISPLAY_SCALE
+		tipped.rotation = -1.35
+		tipped.modulate = Color(0.85, 0.85, 0.85)
+		toppled.add_child(tipped)
+		var pool := _sprite_pool("Produce")
+		for spill in DISPLAY_SPILLS:
+			var pick: Array = pool[int(spill[1]) % pool.size()]
+			var s := _region_sprite(pick[0], pick[1])
+			s.scale = Vector2.ONE * (16.0 / float(maxi(pick[1].size.x, pick[1].size.y)))
+			s.position = spill[0]
+			toppled.add_child(s)

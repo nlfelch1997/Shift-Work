@@ -53,8 +53,8 @@ extends Node2D
 ##
 ## ART: litter pieces are the supermarket pack's loose snack/drink sprites
 ## (assets/supermarket/4.png); the trash bin is the same pack's grey
-## push-flap bin (11.png); the tool station is the warehouse pack's pegboard
-## workbench (tile-B-03.png); the time clock is the supermarket pack's card
+## push-flap bin (11.png); the tool station (break room, by the time clock)
+## is the warehouse pack's pegboard workbench (tile-B-03.png); the time clock is the supermarket pack's card
 ## kiosk (1.png). NEITHER PACK HAS A MOP OR A BROOM — both are placeholder
 ## Polygon2D shapes, flagged for future art sourcing.
 ##
@@ -87,14 +87,21 @@ const BIN_RANGE := 70.0
 ## --- Scoring ---
 const CLEAN_BONUS_MAX := 0.25 # a spotless store: +25% of the day's gross pay
 
-## Layout. Tool station in the checkout hub's north-west corner (central to
-## every section, off the customers' Sidewalk -> registers line); a bin
-## beside it and one inside each section's hub-side doorway (hidden while
-## the section is locked). Visual only — no collision, nothing to snag on.
-const STATION_POS := Vector2(1030.0, 600.0)
-const TOOL_SPOTS := [Vector2(990.0, 640.0), Vector2(1008.0, 640.0), Vector2(1052.0, 640.0), Vector2(1070.0, 640.0)]
+## Layout. WEEK 20 (playtest): the tool station lives in the BREAK ROOM,
+## just west of the time clock, so grabbing the tools and clocking out are
+## the same trip (it was in the checkout hub's north-west corner). Kept
+## far enough from the clock that no spot is in both reaches — the clock
+## wins an E press (Player.gd), and picking up a mop must never clock the
+## whole crew out: nearest tool spot to TIME_CLOCK_POS is 141px, more than
+## TOOL_PICKUP_RANGE + TIME_CLOCK_RANGE (130). Break Room is customer-free
+## (Customer.gd), so no shopper stands on the tools either. The bins did NOT
+## move: one in the hub's north-west corner (where the station used to be)
+## and one inside each section's hub-side doorway (hidden while the section
+## is locked). Visual only — no collision, nothing to snag on.
+const STATION_POS := Vector2(700.0, 280.0)
+const TOOL_SPOTS := [Vector2(660.0, 320.0), Vector2(678.0, 320.0), Vector2(722.0, 320.0), Vector2(740.0, 320.0)]
 const BINS := [
-	{"pos": Vector2(1110.0, 590.0), "section": ""}, # hub, by the station
+	{"pos": Vector2(1110.0, 590.0), "section": ""}, # hub, north-west corner
 	{"pos": Vector2(1300.0, 500.0), "section": "Dry Goods"},
 	{"pos": Vector2(1975.0, 620.0), "section": "Produce"},
 	{"pos": Vector2(905.0, 620.0), "section": "Dairy/Frozen"},
@@ -159,10 +166,20 @@ func _ready() -> void:
 	main = get_parent()
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
+	# WEEK 20 BUG FIX: ON_CHANGE, not ALWAYS. ALWAYS state goes out every tick
+	# as ONE unreliable packet, and Godot drops any node state over the MTU
+	# (1350 bytes) outright ("Node states bigger than MTU will not be sent")
+	# — with ~10+ litter pieces on the floor this node's state is past that,
+	# so clients' litter, tools and tallies froze for the rest of the day (a
+	# client's own mop pickup never showed up in their hands). Found by the
+	# net-polish test's long selling window; net-cleanup's 60s shift never
+	# dropped enough litter to hit it. ON_CHANGE state goes out as reliable
+	# deltas (fragmented, no MTU cap), and only when a value changes — every
+	# one of these is reassigned, never mutated in place (see `litter`).
 	for prop in [".:litter", ".:tools", ".:knocked_names", ".:mop_total", ".:mop_left", ".:litter_total", ".:litter_left", ".:clean_bonus_today", ".:clean_bonus_week"]:
 		var path := NodePath(prop)
 		config.add_property(path)
-		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
 	sync.replication_config = config
 	sync.name = "Sync" # explicit, identical name on every peer — see Player.gd's note
 	sync.set_multiplayer_authority(1)
