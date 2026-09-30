@@ -3082,6 +3082,8 @@ func _run_delivery() -> void:
 	await wait_until(func(): return player()._place_target_slot != null, 1.0)
 	await tap(act + "place")
 	var shelved := await wait_until(func(): return _is_placed(item), 2.0)
+	if not shelved:
+		print("D5  missed — item %s at %s carrier %d | player %s | target slot %s | job %s" % [item.name, str(item.global_position.round()), item.get_node("Carryable").carrier_id, str(player().global_position.round()), str(player()._place_target_slot), str(job)])
 	check(shelved, "D5: carried one by hand from the pad to a %s shelf and it stocked (%s)" % [sec, str(slot5 != null)])
 	# No refill from nothing: sell two, give the old restock cadence time.
 	var before := floor_total()
@@ -4246,10 +4248,21 @@ func _run_cleanup() -> void:
 	var gone := await wait_until(func(): return not amb().spills.any(func(s): return s["id"] == spill_id), 5.0)
 	press(act + "place", 0.0)
 	check(saw_bar and gone, "CL3: held C with the mop on the spill -> mopped up in %.1fs (progress showed: %s)" % [_wall() - t0, str(saw_bar)])
-	await face_target(disp.global_position, mop_stand({"r": 24.0}))
-	press(act + "place")
-	gone = await wait_until(func(): return not disp.get_node("Display").toppled, 4.0)
-	press(act + "place", 0.0)
+	# Up to two approaches, like a person adjusting when the bar doesn't show.
+	for attempt in 2:
+		await face_target(disp.global_position, mop_stand({"r": 24.0}))
+		press(act + "place")
+		gone = await wait_until(func(): return not disp.get_node("Display").toppled, 4.0)
+		press(act + "place", 0.0)
+		if gone:
+			break
+		var q := PhysicsShapeQueryParameters2D.new()
+		var circ := CircleShape2D.new()
+		circ.radius = 24.0
+		q.shape = circ
+		q.transform = Transform2D(0.0, player().global_position + Vector2(20, 0))
+		var hits: Array = player().get_world_2d().direct_space_state.intersect_shape(q, 8).map(func(h): return String(h["collider"].get_path()) + "@" + str(h["collider"].global_position.round()))
+		print("CL3  display approach %d missed (player %s, display %s) touching %s" % [attempt + 1, str(player().global_position.round()), str(disp.global_position.round()), str(hits)])
 	check(gone and disp.global_position.distance_to(disp.get_node("Display").home_position) < 5.0, "CL3: mopped the knocked-over display -> back upright on its spot")
 	if not gone:
 		print("DEBUG display mop failed: disp %s at %s home %s toppled %s | player %s facing %.2f | work %s | messes %s" % [disp.name, str(disp.global_position.round()), str(disp.get_node("Display").home_position), str(disp.get_node("Display").toppled), str(player().global_position.round()), player().facing_angle, str(cl().tools[cl().tool_of(me)]["work"]), str(cl()._mop_messes().map(func(m): return [m["kind"], m["pos"].round()]))])
