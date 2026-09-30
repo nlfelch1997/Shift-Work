@@ -82,7 +82,7 @@ func _initialize() -> void:
 		main.opening_stock_fraction = 1.0
 	# WEEK 19: the tests written before the cleanup phase expect the report
 	# the moment the clock runs out — clock out at once for them.
-	if not mode in ["solo", "coop-sim", "cleanup", "net-cleanup"]:
+	if not mode in ["solo", "coop-sim", "cleanup", "net-cleanup", "polish", "net-polish"]:
 		main.cleanup_ceiling_override = 0.0
 	# WEEK 17: sweep hook for the priority-order window (solo sim tuning).
 	for a in args:
@@ -146,6 +146,13 @@ func _initialize() -> void:
 				_run_net_cleanup_client.call_deferred()
 			else:
 				_run_net_cleanup_host.call_deferred()
+		"polish":
+			_run_polish.call_deferred()
+		"net-polish":
+			if "--client" in args:
+				_run_net_polish_client.call_deferred()
+			else:
+				_run_net_polish_host.call_deferred()
 		"net-orders":
 			if "--client" in args:
 				_run_net_orders_client.call_deferred()
@@ -4176,6 +4183,9 @@ func _run_cleanup() -> void:
 	pin_manager(Vector2(480, 1350), 0.0)
 	amb()._spill_timer = 1.0e9
 	var spill_id: int = amb().spawn_spill(Vector2(1440, 700), 44.0)
+	# A second one, so CL2's ">= 3 mop messes at close" doesn't hang on the
+	# day's own random spills (one seeded spill + 1 random came up short).
+	amb().spawn_spill(Vector2(1700, 760), 40.0)
 	# Some sales, so the day has a gross for the bonus to be a share of.
 	for i in 3:
 		var sold_one: RigidBody2D = await stock_one("Dry Goods")
@@ -4235,6 +4245,7 @@ func _run_cleanup() -> void:
 		await wait(0.6)
 		await stock_one("Dry Goods", prod2)
 		check(not prod2.has_meta("knocked"), "CL setup: re-shelving a knocked item clears its tag")
+	print("TIMING CL3 start: cleanup %.1fs left, active %s, at %s" % [main.cleanup_time_left, main.cleanup_active, str(player().global_position.round())])
 	# --- CL3: the mop, through the real keys.
 	await walk_to(cl().STATION_POS + Vector2(0, 80), 10.0)
 	await shot("cleanup_station_closed_store")
@@ -4276,6 +4287,7 @@ func _run_cleanup() -> void:
 	# Walking with the mop but not holding C does nothing.
 	await wait(0.15)
 	check(float(cl().tools[cl().tool_of(me)]["work"]) < 0.0, "CL3: not scrubbing when C isn't held")
+	print("TIMING CL4 start: cleanup %.1fs left, active %s, at %s" % [main.cleanup_time_left, main.cleanup_active, str(player().global_position.round())])
 	# --- CL4: the broom and the pan.
 	check(await get_tool("broom"), "CL4: swapped the mop for a broom (E to put down, E to pick up)")
 	var dropped: int = cl().tools.filter(func(t): return t["kind"] == "mop" and t["holder"] == 0).size()
@@ -4306,6 +4318,7 @@ func _run_cleanup() -> void:
 	press(act + "place", 0.0)
 	check(cl().litter.filter(func(l): return l["pos"].distance_to(cluster_at) < 30.0).is_empty(), "CL4: swept the rest")
 	await shot("cleanup_broom")
+	print("TIMING CL5 start: cleanup %.1fs left, active %s, at %s" % [main.cleanup_time_left, main.cleanup_active, str(player().global_position.round())])
 	# --- CL5: clock out. Not from across the store, then at the clock.
 	var litter_left: int = cl().litter.size()
 	main._request_clock_out() # host calling the client's handler: no sender, refused
@@ -4623,4 +4636,347 @@ func _run_net_cleanup_client() -> void:
 	_net_write("nc6_%d.json" % me, {"ok": why6 == "", "why": why6})
 	check(why6 == "", "%s: NC6 fresh day%s" % [who, why6])
 	await _net_read("done.json", 60.0)
+	finish()
+
+
+## --- WEEK 20: playtest polish (tool station, checkout lanes, Produce
+## displays, Dry Goods shelf bays) --------------------------------------------
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --test=polish
+##   (add --shots under xvfb-run, no --headless, for frames of each piece)
+## Co-op (every peer checks its own screen; a client walks to the station,
+## takes a tool and clocks the day out):
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=5 --players=2 --test=net-polish &
+##   godot --headless --path . --script res://tools/hazards_test.gd -- --client --test=net-polish
+## PO1 layout (station in the break room by the clock, out of the clock's
+## reach; bins where they were), PO2 shelf census (every section's shelf,
+## slot, collision and art counts — the same line prints on the pre-change
+## build, so they can be diffed), PO3 checkout lanes on every register
+## (collision/markers untouched), PO4 the conveyor during real sales (item
+## slides toward the register, its own sprite hidden, sale still at
+## CHECKOUT_WAIT_SECONDS), PO5 Produce displays (pack crates, still
+## knock-over-able), PO6 the station -> clock trip (pick up a mop at the
+## station during cleanup, put it back, clock out at the clock next to it).
+
+const PO_BINS := [Vector2(1110.0, 590.0), Vector2(1300.0, 500.0), Vector2(1975.0, 620.0), Vector2(905.0, 620.0), Vector2(1975.0, 300.0)]
+
+## Every section's shelves as data, identical on every peer.
+func _shelf_census() -> Dictionary:
+	var out := {}
+	for sec in main.SECTIONS:
+		var bodies: Array = main.shelves.filter(func(sb): return main._grid_cell_of(sb.global_position) == sec["grid_pos"])
+		var slots := 0
+		var active := 0
+		var shapes := []
+		var body_bays := 0
+		var slot_bays := 0
+		for sb in bodies:
+			var sh: Node = sb.get_node("Shelf")
+			slots += sh._all_slots.size()
+			active += sh.slots.size()
+			var cs: CollisionShape2D = sb.get_node("CollisionShape2D")
+			shapes.append("%s%s" % [str((cs.shape as RectangleShape2D).size), "" if not cs.disabled else "off"])
+			var art: Node = sb.get_node_or_null("Polygon2D/ShelfArt")
+			body_bays += art.get_child_count() if art else 0
+			for slot in sh._all_slots:
+				slot_bays += slot.get_children().filter(func(c): return c.name == "EmptyShelfArt").size()
+		# Anything shelf-shaped in the section that ISN'T a live shelf.
+		var stray := 0
+		for n in main.get_node("Sections/%s" % sec["node_name"]).get_children():
+			if not n in main.shelves:
+				stray += 1
+		out[sec["name"]] = {"shelves": bodies.size(), "slots": slots, "active_slots": active, "shapes": shapes, "body_bays": body_bays, "slot_bays": slot_bays, "stray_nodes": stray}
+	return out
+
+func _po_static_checks(who: String) -> Dictionary:
+	var c := cl()
+	# --- PO1: the station.
+	var sp: Vector2 = c.STATION_POS
+	check(main._grid_cell_of(sp) == main.BREAK_ROOM_GRID_POS and c.TOOL_SPOTS.all(func(s): return main._grid_cell_of(s) == main.BREAK_ROOM_GRID_POS), "%sPO1: tool station + all %d tool spots in the Break Room (station %s)" % [who, c.TOOL_SPOTS.size(), str(sp)])
+	var nearest: float = c.TOOL_SPOTS.map(func(s): return s.distance_to(main.TIME_CLOCK_POS)).min()
+	check(sp.distance_to(main.TIME_CLOCK_POS) < 250.0, "%sPO1: station is next to the time clock (%.0fpx)" % [who, sp.distance_to(main.TIME_CLOCK_POS)])
+	check(nearest > c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE, "%sPO1: no spot in reach of both a tool and the clock (nearest spot %.0fpx > %.0f)" % [who, nearest, c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE])
+	var station: Node2D = c.get_node("ToolStation")
+	check(station.global_position == sp and station.visible, "%sPO1: station art drawn at the new spot" % who)
+	var bins_same: bool = c.BINS.size() == PO_BINS.size()
+	for i in mini(c.BINS.size(), PO_BINS.size()):
+		bins_same = bins_same and c.BINS[i]["pos"] == PO_BINS[i]
+	check(bins_same, "%sPO1: all %d trash bins exactly where they were" % [who, PO_BINS.size()])
+	# --- PO2: shelves.
+	var census := _shelf_census()
+	print("CENSUS " + JSON.stringify(census))
+	var want := {"Dry Goods": 6, "Produce": 5, "Dairy/Frozen": 5, "Bakery": 5}
+	for sec in census:
+		var v: Dictionary = census[sec]
+		var ok: bool = v["shelves"] == want[sec] and v["slots"] == v["shelves"] * 6 and v["shapes"].all(func(x): return x == "(180.0, 66.0)") and v["stray_nodes"] == 0
+		check(ok, "%sPO2: %s: %d shelves, %d slots (%d active today), every body's 180x66 collision on, nothing stray" % [who, sec, v["shelves"], v["slots"], v["active_slots"]])
+		check(v["body_bays"] == v["shelves"] * 3 and v["slot_bays"] == v["slots"], "%sPO2: %s art: %d body bays + %d slot bays, one each — no doubled shelf art" % [who, sec, v["body_bays"], v["slot_bays"]])
+	var dg: Node2D = main.get_node("Sections/DryGoods/Shelf1")
+	var tint: Color = dg.get_node("Polygon2D/ShelfArt").modulate
+	check(tint != Color.WHITE and dg.get_node("Slot1/EmptyShelfArt").modulate == tint and dg.modulate == Color.WHITE and dg.get_node("Slot1/Indicator").default_color.is_equal_approx(main.SECTION_COLORS["Dry Goods"]), "%sPO2: Dry Goods bays tinted as one unit (%s); shelf root, outlines untouched" % [who, str(tint)])
+	# --- PO3: registers.
+	var lanes := 0
+	var intact := 0
+	for body in get_nodes_in_group("cashier"):
+		if body.has_node("LaneArt") and body.get_node("LaneArt/Belt") != null and body.get_node("Polygon2D").self_modulate.a == 0.0:
+			lanes += 1
+		var cs: CollisionShape2D = body.get_node("CollisionShape2D")
+		if (cs.shape as RectangleShape2D).size == Vector2(60, 40) and body.get_node("Checkout").position == Vector2(50, 0) and body.get_node("Queue1").position == Vector2(90, 0):
+			intact += 1
+	var n_cash := get_nodes_in_group("cashier").size()
+	check(lanes == n_cash and n_cash == 5, "%sPO3: all %d registers drawn as pack checkout lanes (placeholder box hidden)" % [who, lanes])
+	check(intact == n_cash, "%sPO3: register collision 60x40 + checkout/queue markers unchanged on all %d" % [who, intact])
+	# --- PO5: Produce displays.
+	for d in main.displays:
+		var up: Node2D = d.get_node("Upright")
+		var art_ok: bool = up.has_node("CrateArt") and d.get_node("Toppled").has_node("CrateArt") and up.get_children().filter(func(n): return n is Polygon2D and n.visible).is_empty()
+		var cs: CollisionShape2D = d.get_node("CollisionShape2D")
+		check(art_ok and (cs.shape as RectangleShape2D).size == Vector2(44, 44) and d.is_in_group("display"), "%sPO5: %s wears pack produce crates (placeholder squares hidden), same 44x44 knockable body" % [who, d.name])
+	return census
+
+## Watches every lane for `secs`: the first checkout seen on each lane is
+## tracked until it resolves. Returns what this peer saw.
+func _po_watch_conveyors(secs: float) -> Dictionary:
+	var art: Node = main.get_node("StoreArt")
+	var seen := 0
+	var slid := 0
+	var hidden := 0
+	var resolved := 0
+	var durations := []
+	var sold0 := _po_sold()
+	var t0 := _wall()
+	var track := {} # lane index -> {"item", "x0", "t0", "hid"}
+	while _wall() - t0 < secs:
+		await process_frame
+		for i in art._lanes.size():
+			var lane: Dictionary = art._lanes[i]
+			var item = lane["item"]
+			var tr = track.get(i)
+			if tr == null and item != null:
+				track[i] = {"item": item, "x0": lane["rider"].position.x, "t0": _wall(), "hid": false, "xmin": lane["rider"].position.x}
+				seen += 1
+				if shots and not _po_shot_lane:
+					_po_shot_lane = true
+					_po_shoot_lane(lane) # not awaited: runs alongside this loop
+			elif tr != null:
+				if is_instance_valid(tr["item"]) and item == tr["item"]:
+					tr["xmin"] = minf(tr["xmin"], lane["rider"].position.x)
+					var pa = tr["item"].get_node_or_null("ProductArt")
+					if pa and pa.self_modulate.a == 0.0 and lane["rider"].visible:
+						tr["hid"] = true
+				elif not is_instance_valid(tr["item"]):
+					# Sold (freed on the host, despawned here).
+					resolved += 1
+					durations.append(_wall() - tr["t0"])
+					if tr["x0"] - tr["xmin"] > 10.0:
+						slid += 1
+					if tr["hid"]:
+						hidden += 1
+					if not lane["rider"].visible or lane["item"] != null:
+						pass
+					track.erase(i)
+				else:
+					track.erase(i) # walked off without buying: not a sale
+		if resolved >= 3:
+			break
+	await wait(0.5) # let the last sale's total_sold reach this peer
+	return {"seen": seen, "resolved": resolved, "slid": slid, "hidden": hidden, "durations": durations, "sold": _po_sold() - sold0}
+
+## Every register's replicated sales count, summed.
+func _po_sold() -> int:
+	var n := 0
+	for body in get_nodes_in_group("cashier"):
+		n += int(body.get_node("Cashier").total_sold)
+	return n
+
+func _po_wait() -> float:
+	return main.get_node("CentralCheckout/Cashier1/Cashier").CHECKOUT_WAIT_SECONDS
+
+var _po_shot_lane := false
+
+## Frames of one checkout riding the belt, through a camera of its own.
+func _po_shoot_lane(lane: Dictionary) -> void:
+	var cam := Camera2D.new()
+	main.add_child(cam)
+	cam.global_position = lane["body"].global_position + Vector2(20, -10)
+	cam.zoom = Vector2(5, 5)
+	cam.make_current()
+	await process_frame
+	await process_frame
+	for k in 3:
+		await shot("po4_conveyor_%d" % k)
+		await wait(1.1)
+	player().get_node("Camera").make_current()
+	cam.queue_free()
+
+## The opening stock starts loose on the floor (WEEK 16), and with nobody
+## shelving it shoppers leave empty-handed — so, like a crew would, shelve a
+## few per section (host only, through the shelves' real settle check).
+func _po_stock_shelves() -> int:
+	var n := 0
+	for sec in ["Dry Goods", "Produce", "Dairy/Frozen", "Bakery"]:
+		for k in 4:
+			if await stock_one(sec) != null:
+				n += 1
+	print("PO  stocked %d items for shoppers" % n)
+	return n
+
+func _po_check_conveyor(who: String, r: Dictionary) -> void:
+	check(r["resolved"] >= 1 and r["resolved"] == r["sold"], "%sPO4: every sale in the window rode the belt: %d sales, %d seen through on a belt (%d started)" % [who, r["sold"], r["resolved"], r["seen"]])
+	check(r["slid"] == r["resolved"] and r["resolved"] > 0, "%sPO4: the item slid along the belt toward the register on %d/%d" % [who, r["slid"], r["resolved"]])
+	check(r["hidden"] == r["resolved"] and r["resolved"] > 0, "%sPO4: the shopper's own copy was hidden while it rode the belt on %d/%d" % [who, r["hidden"], r["resolved"]])
+	var ds: Array = r["durations"]
+	var ok := not ds.is_empty() and ds.all(func(d): return absf(d - _po_wait()) < 0.6)
+	check(ok, "%sPO4: each sale still landed ~%.1fs after the item hit the belt (checkout timing untouched): %s" % [who, _po_wait(), str(ds.map(func(d): return snappedf(d, 0.01)))])
+
+## PO6 on this process's own player: from the hub to the station, a mop in
+## hand WITHOUT clocking out, put it back, then clock out at the clock.
+## tap() releases on the next physics_frame signal, which fires just BEFORE
+## the players' _physics_process — so, depending on what the caller awaited
+## last, Player.gd can miss the press entirely (seen on a client right after
+## walk_to()). Held across a full physics step instead, so a press that goes
+## unanswered is the game's fault, not the harness's.
+func _po_press(action: String) -> void:
+	Input.action_press(action)
+	await physics_frame
+	await physics_frame
+	Input.action_release(action)
+
+func _po_station_trip(who: String, clock_out := true) -> void:
+	player().teleport_to(Vector2(1440, 700))
+	await wait(0.5)
+	var ok := await walk_to(cl().TOOL_SPOTS[0], 4.0, 30.0)
+	check(ok, "%sPO6: walked hub -> Break Room tool station%s" % [who, "" if ok else " (stuck at %s)" % str(player().global_position.round())])
+	await shot("po6_at_station")
+	await _po_press(act + "interact")
+	await wait_until(func(): return cl().tool_of(me) >= 0, 2.0)
+	check(cl().tool_of(me) >= 0 and main.cleanup_active, "%sPO6: E at the station picked up the %s — and did NOT clock the crew out%s" % [who, cl().tools[maxi(cl().tool_of(me), 0)]["kind"], "" if cl().tool_of(me) >= 0 and main.cleanup_active else " (holders %s, cleanup %s, at %s)" % [str(cl().tools.map(func(t): return t["holder"])), main.cleanup_active, str(player().global_position.round())]])
+	await shot("po6_holding_tool")
+	await _po_press(act + "interact")
+	await wait_until(func(): return cl().tool_of(me) < 0, 2.0)
+	check(cl().tool_of(me) < 0 and main.cleanup_active, "%sPO6: put it back down at the station" % who)
+	if clock_out:
+		var t0 := _wall()
+		await go_clock_out()
+		check(not main.cleanup_active and main.clocked_out_by == me, "%sPO6: a few steps to the clock and clocked out (%.1fs from the station)" % [who, _wall() - t0])
+
+func _run_polish() -> void:
+	if shots:
+		main.debug_label.visible = false
+	main.shift_duration = 420.0
+	main.prep_ceiling_override = 0.0
+	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
+	await wait(1.0)
+	_po_static_checks("")
+	pin_manager(Vector2(480, 1350), 0.0)
+	fk()._pause_timer = 1.0e9
+	# Stand clear of every queue lane (--shots frames a lane on its own).
+	player().teleport_to(Vector2(1440, 600))
+	await _po_stock_shelves()
+	var r := await _po_watch_conveyors(380.0)
+	_po_check_conveyor("", r)
+	# Displays, knocked over and stood back up, still work as props.
+	var d: RigidBody2D = main.displays[0]
+	d.get_node("Display").toppled = true
+	await wait(0.3)
+	check(d.get_node("Toppled").visible and not d.get_node("Upright").visible, "PO5: knocked over -> tipped crate art shows")
+	if shots:
+		var cam := Camera2D.new()
+		main.add_child(cam)
+		cam.global_position = Vector2(2470, 760)
+		cam.zoom = Vector2(3, 3)
+		cam.make_current()
+		await process_frame
+		await shot("po5_produce_displays_one_knocked")
+		cam.global_position = Vector2(1440, 250)
+		cam.zoom = Vector2(1.6, 1.6)
+		await process_frame
+		await shot("po2_dry_goods_shelves")
+		cam.global_position = Vector2(1360, 960)
+		cam.zoom = Vector2(2.2, 2.2)
+		await process_frame
+		await shot("po3_checkout_lanes")
+		player().get_node("Camera").make_current()
+		cam.queue_free()
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.cleanup_active, 5.0)
+	await wait(1.0)
+	await _po_station_trip("")
+	finish()
+
+func _run_net_polish_host() -> void:
+	var want := 2
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	if DirAccess.dir_exists_absolute(NET_DIR):
+		for f in DirAccess.get_files_at(NET_DIR):
+			DirAccess.remove_absolute(NET_DIR + f)
+	main.shift_duration = 420.0
+	main.prep_ceiling_override = 0.0
+	await wait_until(func(): return main.shift_active and main.players.size() >= want and main.store_open, 40.0)
+	var ids: Array = main.players.keys()
+	ids.sort()
+	check(main.players.size() == want, "net: %d players connected" % main.players.size())
+	pin_manager(Vector2(480, 1350), 0.0)
+	fk()._pause_timer = 1.0e9
+	await wait(1.0)
+	var census := _po_static_checks("Host: ")
+	await _po_stock_shelves()
+	_net_write("np1_go.json", {"census": census})
+	var r := await _po_watch_conveyors(380.0)
+	_po_check_conveyor("Host: ", r)
+	for id in ids:
+		if id == 1:
+			continue
+		var c := await _net_read("np1_%d.json" % id, 120.0)
+		check(c.get("census_same", false), "NP1: %s's shelf census matches the host's exactly" % main.player_display_name(id))
+		check(c.get("fails", 1) == 0, "NP1: %s: every station/shelf/lane/display check passed on their screen (%d failed)" % [main.player_display_name(id), c.get("fails", -1)])
+		check(c.get("conv_ok", false), "NP1: %s saw the conveyor run on their screen: %s" % [main.player_display_name(id), str(c.get("conv", {}))])
+	# Cleanup: each client in turn walks to the station, takes a tool, puts
+	# it back; the last one clocks the crew out. The host checks it all from
+	# its own side. Close with a real floor of litter first: >~10 pieces is
+	# past the MTU for Cleanup's state (the Week 20 sync fix).
+	await wait_until(func(): return cl().litter.size() >= 20, 240.0)
+	main.shift_time_left = 0.05
+	await wait_until(func(): return main.cleanup_active, 5.0)
+	await wait(1.0)
+	await _po_station_trip("Host: ", false)
+	for k in ids.size():
+		var id: int = ids[k]
+		if id == 1:
+			continue
+		var last: bool = k == ids.size() - 1
+		_net_write("np2_go_%d.json" % id, {"clock_out": last, "litter": cl().litter.size(), "mop_total": cl().mop_total, "litter_total": cl().litter_total})
+		var saw_hold := await wait_until(func(): return cl().tool_of(id) >= 0, 60.0)
+		check(saw_hold, "NP2: host sees %s holding a tool picked up at the Break Room station" % main.player_display_name(id))
+		check(main.cleanup_active, "NP2: ...and that pickup didn't clock anyone out")
+		var r2 := await _net_read("np2_%d.json" % id, 90.0)
+		check(r2.get("fails", 1) == 0, "NP2: %s's station trip passed on their side" % main.player_display_name(id))
+	check(main.is_day_report_active() and main.clocked_out_by == ids[ids.size() - 1], "NP2: clocked out by %s at the clock next to the station" % main.player_display_name(main.clocked_out_by))
+	_net_write("done.json", {})
+	await wait(1.0)
+	finish()
+
+func _run_net_polish_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var who: String = main.player_display_name(me) + ": "
+	var g := await _net_read("np1_go.json", 120.0)
+	var census := _po_static_checks(who)
+	var same := _jnorm(JSON.parse_string(JSON.stringify(census))) == _jnorm(g.get("census"))
+	var r := await _po_watch_conveyors(380.0)
+	_po_check_conveyor(who, r)
+	var conv_ok: bool = r["resolved"] >= 1 and r["resolved"] == r["sold"] and r["slid"] == r["resolved"] and r["hidden"] == r["resolved"]
+	_net_write("np1_%d.json" % me, {"census_same": same, "fails": fails, "conv_ok": conv_ok, "conv": {"sales": r["sold"], "on_belt": r["resolved"], "slid": r["slid"], "hidden": r["hidden"]}})
+	var go := await _net_read("np2_go_%d.json" % me, 240.0)
+	var before := fails
+	# The cleanup state (litter, tools, tallies) is past the MTU by now on a
+	# long day — it must still be reaching this peer (the Week 20 sync fix).
+	var mine := [cl().litter.size(), cl().mop_total, cl().litter_total]
+	var host := [int(go.get("litter", -1)), int(go.get("mop_total", -1)), int(go.get("litter_total", -1))]
+	check(mine == host and host[0] >= 20, "%sNP2: same cleanup state as the host with a floor of litter (litter, mop total, litter total: mine %s, host %s)" % [who, str(mine), str(host)])
+	await _po_station_trip(who, go.get("clock_out", false))
+	_net_write("np2_%d.json" % me, {"fails": fails - before})
+	await _net_read("done.json", 120.0)
 	finish()
