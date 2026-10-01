@@ -583,10 +583,9 @@ const FINALE_SELLING_CUT := 15.0
 ## next is due.
 const FINALE_PRIORITY_ORDER_INTERVAL := 32.0
 ## The "FINAL SHIFT" banner (finale_banner_left): on screen this long, the
-## last second fading. Optional sound at FINALE_STING_PATH if it exists —
-## there are no audio assets in the project yet, so it's silent for now.
+## last second fading. WEEK 22: with a fanfare (Sfx "final_shift",
+## res://audio/final_shift.ogg).
 const FINALE_BANNER_SECONDS := 4.5
-const FINALE_STING_PATH := "res://audio/final_shift.ogg"
 ## FLAGGED PLACEHOLDER ECONOMY — the first money numbers in the project,
 ## picked so one write-up clearly hurts (2.5 sales' worth) without one bad
 ## moment erasing a whole shift. Tune freely.
@@ -658,6 +657,7 @@ const DeliveryForkliftScript := preload("res://DeliveryForklift.gd")
 const CleanupScript := preload("res://Cleanup.gd")
 const EndlessScript := preload("res://Endless.gd")
 const HubUIScript := preload("res://HubUI.gd")
+const SoundDirectorScript := preload("res://SoundDirector.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
@@ -839,7 +839,6 @@ var _finale_banner: VBoxContainer
 ## left. State, not a one-shot RPC, so a player whose connection lands a
 ## moment after the shift starts still sees it (found by the co-op pass).
 var finale_banner_left := 0.0
-var _finale_sting: AudioStreamPlayer
 var _order_result_text := ""
 var _order_result_timer := 0.0
 var _order_result_filled := false
@@ -1177,6 +1176,7 @@ var cleanup: Node2D
 ## and its two screens (HubUI.gd), both built in _ready().
 var endless: Node
 var hub_ui: CanvasLayer
+var sound_director: Node
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -1282,6 +1282,10 @@ func _ready() -> void:
 	endless = EndlessScript.new()
 	endless.name = "Endless"
 	add_child(endless)
+	# WEEK 22 — every sound driven by game state (see SoundDirector.gd/Sfx.gd).
+	sound_director = SoundDirectorScript.new()
+	sound_director.name = "SoundDirector"
+	add_child(sound_director)
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
@@ -1776,6 +1780,7 @@ func _request_open_store() -> void:
 func _announce_store_open(by_peer: int) -> void:
 	_open_banner_text = "STORE OPEN — %s" % ("customers are coming!" if by_peer == 0 else "%s flipped the sign" % ("you" if Net.is_active() and by_peer == multiplayer.get_unique_id() else player_display_name(by_peer)))
 	_open_banner_t = 3.5
+	Sfx.play("store_open")
 
 ## The sign itself: the supermarket pack's price-sign-on-a-post (1.png), with
 ## its board painted over by a CLOSED/OPEN panel. Every peer, built in _ready()
@@ -2222,6 +2227,7 @@ func _announce_writeup(peer_id: int, reason: String) -> void:
 	else:
 		_toast_label.text = "%s written up for %s  -$%d" % [player_display_name(peer_id), reason, WRITEUP_PENALTY]
 	_toast_timer = 3.0
+	Sfx.play("writeup") # everyone hears it: it docks the whole crew's pay
 
 ## "Host" / "Player 2" / ... instead of a raw ENet peer id (those are large
 ## random numbers for clients). Numbered by join order — `players` is filled
@@ -2415,16 +2421,11 @@ func _set_banner_text() -> void:
 	detail.text = "open: %s\n%s" % [EndlessScript.sections_text(c), ("on: " + ", ".join(on)) if not on.is_empty() else "no hazards on this shift"]
 
 ## WEEK 12 — every peer, the moment its FINAL SHIFT banner comes up (from
-## _update_alert_layer()): the sting, if a sound file exists yet. Cosmetic
-## only — nothing waits on it.
+## _update_alert_layer()): the fanfare (WEEK 22). Cosmetic only — nothing
+## waits on it.
 func _play_finale_sting() -> void:
 	print("[Main] FINAL SHIFT")
-	if ResourceLoader.exists(FINALE_STING_PATH):
-		if _finale_sting == null:
-			_finale_sting = AudioStreamPlayer.new()
-			_finale_sting.stream = load(FINALE_STING_PATH)
-			add_child(_finale_sting)
-		_finale_sting.play()
+	Sfx.play("final_shift")
 
 ## Every peer: the few seconds of "filled"/"missed" feedback on the banner,
 ## same moment-of-impact role as _announce_writeup()'s toast.
@@ -2436,6 +2437,7 @@ func _announce_order_result(filled: bool, section: String, qty: int) -> void:
 	else:
 		_order_result_text = "Priority order missed (%s) — no bonus" % section
 	_order_result_timer = PRIORITY_ORDER_RESULT_SECONDS
+	Sfx.play("order_filled" if filled else "order_missed")
 
 func _build_alert_layer() -> void:
 	var layer := CanvasLayer.new()
