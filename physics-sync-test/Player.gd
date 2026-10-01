@@ -101,6 +101,7 @@ var _slip_timer := 0.0 # see _apply_move_input()
 ## tool in hand. Owner-written, replicated; the host does the mopping/
 ## sweeping against it (Cleanup.gd's tick_cleanup()).
 var using_tool := false
+var _badge: Label
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
@@ -149,6 +150,20 @@ func _ready() -> void:
 	camera.limit_right = int(WORLD_WIDTH)
 	camera.limit_bottom = int(WORLD_HEIGHT)
 	add_child(camera)
+
+	# WEEK 21 — the Break Room's cosmetic: a gold star over every crew member.
+	_badge = Label.new()
+	_badge.name = "Badge"
+	_badge.text = "★"
+	_badge.position = Vector2(-12, -46)
+	_badge.size = Vector2(24, 24)
+	_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_badge.add_theme_font_size_override("font_size", 20)
+	_badge.add_theme_color_override("font_color", Color(1, 0.82, 0.25))
+	_badge.add_theme_color_override("font_outline_color", Color(0.25, 0.15, 0))
+	_badge.add_theme_constant_override("outline_size", 4)
+	_badge.visible = false
+	add_child(_badge)
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
@@ -254,16 +269,22 @@ func _physics_process(delta: float) -> void:
 ## (movement is client-authoritative), against the replicated spill list.
 func _apply_move_input(dir: Vector2, delta: float) -> void:
 	var ambience: Node = get_tree().current_scene.ambience
+	var endless: Node = get_tree().current_scene.endless
 	var on_spill: bool = ambience.slippery_at(global_position)
 	if on_spill:
 		_slip_timer = ambience.SPILL_SLIDE_OUT
 	if _slip_timer > 0.0:
 		if not on_spill:
 			_slip_timer -= delta
-		var top: float = SPEED * (ambience.SPILL_SPEED_FACTOR if on_spill else 1.0)
-		velocity = velocity.move_toward(dir * top, ambience.SPILL_TRACTION * delta)
+		var top: float = speed() * (endless.spill_speed_factor(ambience.SPILL_SPEED_FACTOR) if on_spill else 1.0)
+		velocity = velocity.move_toward(dir * top, ambience.SPILL_TRACTION * endless.spill_traction_mult() * delta)
 	else:
-		velocity = dir * SPEED
+		velocity = dir * speed()
+
+## WEEK 21: SPEED x the Break Room's Comfy Sneakers (Endless.gd, replicated to
+## every peer; movement runs on the owner, which reads its own copy).
+func speed() -> float:
+	return SPEED * get_tree().current_scene.endless.speed_mult()
 
 ## True while this player's movement is on low traction (on a spill or just
 ## off one) — read by the test harness.
@@ -273,6 +294,8 @@ func is_slipping() -> bool:
 ## Runs in _process (tied to actual render rate) rather than
 ## _physics_process (fixed 60Hz) — see the matching comment in Carryable.gd.
 func _process(delta: float) -> void:
+	# WEEK 21 — the Employee of the Month star (cosmetic, Endless.gd), every peer.
+	_badge.visible = get_tree().current_scene.endless.has_badge()
 	if not Net.is_active() or is_multiplayer_authority():
 		return
 	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
@@ -568,6 +591,20 @@ func _try_interact() -> void:
 		return
 	var carried := _find_carried_object(my_id)
 	if carried:
+		# WEEK 21 — Back Brace (carry capacity > 1): E fills your arms — with
+		# room and a product in reach it grabs another — and E on FULL arms
+		# sets the whole armful down, side by side. (Put-down-the-top-one on
+		# a partial armful would loop: next to loose stock, E would grab,
+		# drop, grab... and never empty your hands.) With nothing in reach,
+		# E puts the top one down as always; C places the top one on a shelf.
+		var more := _stackable_in_reach(carried, my_id)
+		if more:
+			_interact_with(more, my_id)
+			return
+		var count := carried_count(my_id)
+		if count > 1 and count >= get_tree().current_scene.endless.carry_capacity():
+			_set_down_armful(my_id)
+			return
 		_interact_with(carried, my_id)
 		return
 	var main = get_tree().current_scene
@@ -729,19 +766,64 @@ func forklift_hit(from_position: Vector2) -> void:
 		dir = Vector2.RIGHT.rotated(randf_range(0.0, TAU))
 	dir = dir.normalized()
 	_knockback_velocity = dir * FORKLIFT_KNOCKBACK_SPEED
-	_stun_timer = FORKLIFT_STUN_DURATION
+	_stun_timer = FORKLIFT_STUN_DURATION * get_tree().current_scene.endless.forklift_stun_mult() # WEEK 21: Steel-Toe Boots
 	var my_id := multiplayer.get_unique_id()
-	var carried := _find_carried_object(my_id)
-	if carried:
-		carried.get_node("Carryable").try_throw(my_id, dir)
+	# WEEK 21: the whole stack goes flying, not just the top of it.
+	var fumbled := 0
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.get_node("Carryable").carrier_id == my_id:
+			obj.get_node("Carryable").try_throw(my_id, dir if fumbled == 0 else dir.rotated(randf_range(-0.35, 0.35)))
+			fumbled += 1
 	print("[Player %d] hit by forklift" % my_id)
 
+## WEEK 21: the TOP of the stack (newest pickup) when the Back Brace lets a
+## player hold more than one — what E drops, C places and F throws.
 func _find_carried_object(my_id: int) -> Node2D:
+	var best: Node2D = null
+	var best_seq := -1
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		var c: Node = obj.get_node("Carryable")
-		if c.carrier_id == my_id:
-			return obj
-	return null
+		if c.carrier_id == my_id and c.carry_seq > best_seq:
+			best = obj
+			best_seq = c.carry_seq
+	return best
+
+## WEEK 21 — everything in my arms onto the floor, top of the stack first,
+## spread sideways (Carryable.gd's try_drop() side) so nothing lands in a pile.
+func _set_down_armful(my_id: int) -> void:
+	var held := []
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.get_node("Carryable").carrier_id == my_id:
+			held.append(obj)
+	held.sort_custom(func(a, b): return a.get_node("Carryable").carry_seq > b.get_node("Carryable").carry_seq)
+	for i in held.size():
+		held[i].get_node("Carryable").try_drop(my_id, i)
+
+func carried_count(my_id: int) -> int:
+	var n := 0
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.get_node("Carryable").carrier_id == my_id:
+			n += 1
+	return n
+
+## WEEK 21 — a free PRODUCT in reach to stack on top, or null: needs the Back
+## Brace's room, and never a delivery box (either side). The host re-checks
+## (Carryable.gd's _player_has_room()).
+func _stackable_in_reach(carried: Node2D, my_id: int) -> Node2D:
+	if carried.is_in_group("delivery_box"):
+		return null
+	if carried_count(my_id) >= get_tree().current_scene.endless.carry_capacity():
+		return null
+	var best: Node2D = null
+	var best_dist := BOT_PICKUP_RANGE * 1.2
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.is_in_group("delivery_box") or obj.get_node("Carryable").carrier_id != 0:
+			continue
+		var d := global_position.distance_to(obj.global_position)
+		if d < best_dist:
+			best_dist = d
+			best = obj
+	return best
 
 func _find_nearest_free_carryable() -> Node2D:
 	var best: Node2D = null

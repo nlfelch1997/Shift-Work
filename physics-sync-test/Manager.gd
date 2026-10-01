@@ -171,8 +171,9 @@ func _ready() -> void:
 var finale := false
 
 ## Seconds of suspicion-in-sight to a write-up today.
+## WEEK 21: + the Break Room's Plausible Deniability upgrade (Endless.gd).
 func catch_time() -> float:
-	return FINALE_CATCH_TIME if finale else CATCH_TIME
+	return (FINALE_CATCH_TIME if finale else CATCH_TIME) + get_tree().current_scene.endless.manager_fuse_bonus()
 
 func configure(is_active: bool, is_finale := false) -> void:
 	finale = is_finale

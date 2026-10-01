@@ -330,7 +330,7 @@ func tick_cleanup(delta: float) -> void:
 					t["pan"] = int(t["pan"]) + int(r[1])
 					changed = true
 		if t["kind"] == "broom":
-			full = int(t["pan"]) >= PAN_CAPACITY
+			full = int(t["pan"]) >= pan_capacity()
 		if not is_equal_approx(float(t["work"]), work) or t["full"] != full:
 			t["work"] = work
 			t["full"] = full
@@ -396,7 +396,7 @@ func _mop_at(head: Vector2, delta: float) -> float:
 	if best == null:
 		return -1.0
 	var k: String = best["key"]
-	var prog: float = _progress.get(k, 0.0) + delta / float(best["time"])
+	var prog: float = _progress.get(k, 0.0) + delta / (float(best["time"]) * main.endless.cleanup_time_mult())
 	if prog < 1.0:
 		_progress[k] = prog
 		return prog
@@ -415,7 +415,7 @@ func _mop_at(head: Vector2, delta: float) -> float:
 ## Sweeps every piece in the broom's reach. Returns [progress of the
 ## furthest-along piece or -1, pieces that went in the pan].
 func _sweep_at(head: Vector2, delta: float, pan: int) -> Array:
-	var room := PAN_CAPACITY - pan
+	var room := pan_capacity() - pan
 	var best := -1.0
 	var swept := []
 	for piece in litter:
@@ -425,7 +425,7 @@ func _sweep_at(head: Vector2, delta: float, pan: int) -> Array:
 		if room <= 0:
 			best = maxf(best, _progress.get(k, 0.0))
 			continue
-		var prog: float = _progress.get(k, 0.0) + delta / SWEEP_TIME
+		var prog: float = _progress.get(k, 0.0) + delta / (SWEEP_TIME * main.endless.cleanup_time_mult())
 		if prog >= 1.0 and swept.size() < room:
 			swept.append(piece["id"])
 			_progress.erase(k)
@@ -452,6 +452,11 @@ func finish_cleanup(gross: int) -> void:
 	print("[Cleanup] Day %d scored — spills & knockovers %d/%d cleaned (%d%%), litter %d/%d (%d%%) -> +$%d" % [main.current_day, mop_total - mop_left, mop_total, roundi(mop_fraction() * 100.0), litter_total - litter_left, litter_total, roundi(litter_fraction() * 100.0), bonus])
 
 ## Every peer (replicated counters): share of the category cleaned.
+## WEEK 21: + the Break Room's Janitor's Kit (Endless.gd). Every peer (the
+## pan's fill art reads it too).
+func pan_capacity() -> int:
+	return PAN_CAPACITY + main.endless.pan_bonus()
+
 func mop_fraction() -> float:
 	return 1.0 if mop_total <= 0 else clampf(1.0 - float(mop_left) / float(mop_total), 0.0, 1.0)
 
@@ -537,7 +542,7 @@ func _bin_open(i: int) -> bool:
 		return true
 	for s in main.SECTIONS:
 		if s["name"] == sec:
-			return main.current_day >= s["required_day"]
+			return main.is_section_open(s) # WEEK 21: story day or endless posting
 	return false
 
 ## Host-only: a player who leaves drops their tool where they were.
@@ -679,7 +684,7 @@ func _process(_delta: float) -> void:
 		if work >= 0.0:
 			node.get_node("Bar").scale.x = clampf(work, 0.05, 1.0)
 		if t["kind"] == "broom":
-			var k := clampf(float(t["pan"]) / PAN_CAPACITY, 0.0, 1.0)
+			var k := clampf(float(t["pan"]) / pan_capacity(), 0.0, 1.0)
 			var fill: Polygon2D = node.get_node("Art/Fill")
 			fill.visible = k > 0.0
 			fill.scale = Vector2(1.0, k)
