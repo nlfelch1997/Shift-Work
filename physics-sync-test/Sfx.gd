@@ -54,8 +54,8 @@ const LIBRARY := {
 	"throw": {"files": ["sfx/throw_whoosh"], "bus": BUS_SFX, "db": -6.0, "pitch": 0.1, "cooldown": 0.08, "voices": 3},
 	# Physical chaos — shared world, positional.
 	"place_shelf": {"files": ["sfx/place_shelf"], "bus": BUS_SFX, "db": -10.0, "pitch": 0.08, "cooldown": 0.05, "voices": 4, "pos": true},
-	"impact_light": {"files": ["sfx/impact_light"], "bus": BUS_SFX, "db": -10.0, "pitch": 0.12, "cooldown": 0.07, "voices": 4, "pos": true},
-	"impact_heavy": {"files": ["sfx/impact_heavy"], "bus": BUS_SFX, "db": -6.0, "pitch": 0.1, "cooldown": 0.1, "voices": 3, "pos": true},
+	"impact_light": {"files": ["sfx/impact_light"], "bus": BUS_SFX, "db": -12.0, "pitch": 0.12, "cooldown": 0.07, "voices": 4, "pos": true},
+	"impact_heavy": {"files": ["sfx/impact_heavy"], "bus": BUS_SFX, "db": -8.0, "pitch": 0.1, "cooldown": 0.1, "voices": 3, "pos": true},
 	"box_thud": {"files": ["sfx/box_thud"], "bus": BUS_SFX, "db": -5.0, "pitch": 0.1, "cooldown": 0.08, "voices": 3, "pos": true},
 	"stack_collapse": {"files": ["sfx/stack_collapse"], "bus": BUS_SFX, "db": -3.0, "pitch": 0.06, "cooldown": 0.4, "voices": 2, "pos": true},
 	"glass_break": {"files": ["sfx/glass_break"], "bus": BUS_SFX, "db": -5.0, "pitch": 0.06, "cooldown": 0.5, "voices": 2, "pos": true},
@@ -121,6 +121,9 @@ var music_pitch := 1.0
 var music_starts := 0
 ## Off in tests that want silence-free logs; on by default.
 var log_plays := true
+## --sfx-log-all: log the quiet ones too (footsteps, impacts...) — playtest
+## diagnostics.
+var _log_all := "--sfx-log-all" in OS.get_cmdline_user_args()
 const QUIET_LOG := ["footstep", "register_ding", "place_shelf", "impact_light", "impact_heavy", "box_thud", "mop", "broom", "clean_chime", "pickup", "drop", "throw", "ui_click", "forklift_beep", "forklift_alert"]
 
 func _ready() -> void:
@@ -242,7 +245,7 @@ func _play(sound: String, pos: Variant, db_offset: float, pitch: float) -> Node:
 	history.append([now, sound])
 	if history.size() > HISTORY_CAP:
 		history = history.slice(history.size() - HISTORY_CAP / 2)
-	if log_plays and not QUIET_LOG.has(sound):
+	if log_plays and (not QUIET_LOG.has(sound) or _log_all):
 		print("[Sfx] %s%s (peer %d)" % [sound, "" if pos == null else " at (%.0f, %.0f)" % [pos.x, pos.y], multiplayer.get_unique_id() if Net.is_active() else 0])
 	return p
 

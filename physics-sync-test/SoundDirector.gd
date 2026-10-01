@@ -33,11 +33,11 @@ const BROOM_EVERY := 0.26
 ## Host impact detection: a loose body moving faster than IMPACT_MIN_SPEED
 ## whose velocity changes by more than IMPACT_MIN_DV in one physics tick hit
 ## something. Past IMPACT_HEAVY_DV it's the heavy thud.
-const IMPACT_MIN_SPEED := 170.0
+const IMPACT_MIN_SPEED := 220.0
 const IMPACT_MIN_DV := 150.0
 const IMPACT_HEAVY_DV := 430.0
-const IMPACT_BODY_COOLDOWN := 0.15 # per body
-const IMPACT_MAX_PER_SECOND := 12 # across the whole store
+const IMPACT_BODY_COOLDOWN := 0.35 # per body: one item rattling along a shelf is one thud, not five
+const IMPACT_MAX_PER_SECOND := 8 # across the whole store (a forklift plowing a full aisle is still only so loud)
 ## A shelf losing this many items within COLLAPSE_WINDOW is a stack collapse.
 const COLLAPSE_ITEMS := 3
 const COLLAPSE_WINDOW := 0.35
