@@ -6,7 +6,7 @@ extends SceneTree
 ## Solo — every look loads, nobody shows the old polygon, customer variety,
 ## facing/walk animation follows movement, and the fixed identities (each
 ## register's cashier, the manager, the player) hold across Days 4-7:
-##   godot --headless --path . --script res://tools/character_test.gd -- --server --day=4 --shift-seconds=600 --prep-seconds=900 --save-file=user://char_test/save.json --test=characters
+##   godot --headless --path . --script res://tools/character_test.gd -- --server --day=4 --shift-seconds=600 --prep-seconds=900 --no-save --test=characters
 ## Add --shots (run under xvfb-run, no --headless) for close-up frames in
 ## user://char_shots/.
 ##
@@ -14,8 +14,8 @@ extends SceneTree
 ## for every player, customer, cashier and the manager, plus the facing row
 ## and walk cycle it sees on every player while each one walks its own
 ## direction; the host checks every peer saw exactly the same:
-##   godot --headless --path . --script res://tools/character_test.gd -- --server --port=8941 --day=5 --players=3 --shift-seconds=600 --prep-seconds=900 --save-file=user://char_test/host.json --test=net-characters &
-##   (x2) godot --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --save-file=user://char_test/client.json --test=net-characters
+##   godot --headless --path . --script res://tools/character_test.gd -- --server --port=8941 --day=5 --players=3 --shift-seconds=600 --prep-seconds=900 --no-save --test=net-characters &
+##   (x2) godot --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --no-save --test=net-characters
 ## tools/run_character_tests.sh runs all of it (solo twice, to compare the
 ## identities across two separate sessions).
 

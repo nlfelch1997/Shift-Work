@@ -13,7 +13,7 @@ pick() { grep -E "^(PASS|FAIL|RESULT|IDENTITY)|SCRIPT ERROR|ERROR:.*(load|textur
 status=0
 for s in 1 2; do
   echo "=== solo session $s"
-  "$GODOT" --headless --path . --script res://tools/character_test.gd -- --server --day=4 --shift-seconds=600 --prep-seconds=900 --save-file=user://char_test/save$s.json --test=characters > "$LOG/solo$s.log" 2>&1 || status=1
+  "$GODOT" --headless --path . --script res://tools/character_test.gd -- --server --day=4 --shift-seconds=600 --prep-seconds=900 --no-save --test=characters > "$LOG/solo$s.log" 2>&1 || status=1
   pick "$LOG/solo$s.log"
 done
 if diff <(grep ^IDENTITY "$LOG/solo1.log") <(grep ^IDENTITY "$LOG/solo2.log") > /dev/null && [ "$(grep -c ^IDENTITY "$LOG/solo1.log")" -ge 4 ]; then
@@ -22,13 +22,13 @@ else
   echo "FAIL  identities differ between sessions"; status=1
 fi
 echo "=== net-characters (host + 2 clients)"
-"$GODOT" --headless --path . --script res://tools/character_test.gd -- --server --port=8941 --day=5 --players=3 --shift-seconds=600 --prep-seconds=900 --save-file=user://char_test/host.json --test=net-characters > "$LOG/host.log" 2>&1 &
+"$GODOT" --headless --path . --script res://tools/character_test.gd -- --server --port=8941 --day=5 --players=3 --shift-seconds=600 --prep-seconds=900 --no-save --test=net-characters > "$LOG/host.log" 2>&1 &
 hp=$!
 sleep 2
-"$GODOT" --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --save-file=user://char_test/c1.json --test=net-characters > "$LOG/c1.log" 2>&1 &
+"$GODOT" --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --no-save --test=net-characters > "$LOG/c1.log" 2>&1 &
 c1=$!
 sleep 1
-"$GODOT" --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --save-file=user://char_test/c2.json --test=net-characters > "$LOG/c2.log" 2>&1
+"$GODOT" --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --no-save --test=net-characters > "$LOG/c2.log" 2>&1
 c2s=$?
 wait $c1; c1s=$?
 wait $hp; hs=$?
