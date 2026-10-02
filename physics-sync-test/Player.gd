@@ -62,10 +62,16 @@ const BOT_CARRY_DURATION := 2.5
 ## fails to resolve at parse time without it. preload() doesn't have that
 ## dependency.
 const CarryableScript := preload("res://Carryable.gd")
+const CharacterSpriteScript := preload("res://CharacterSprite.gd")
 
 @export var bot_mode := false
 @export var bot_angle := 0.0 # direction (radians) this bot approaches its target object from
-@export var bot_target_name := "" # which carryable object (by node name) this bot contests ("contest" role only)
+@export var bot_target_name := ""
+## WEEK 25 — which staff look this player wears (assets/characters/
+## player_<n>.png): same store uniform as the cashiers, a different face per
+## player slot. Picked by the host in Main.gd's _spawn_player() and carried
+## in the spawn data, so every peer dresses this player identically.
+@export var look_index := 1 # which carryable object (by node name) this bot contests ("contest" role only)
 ## Which scripted behavior this bot runs. "contest" is the original Week
 ## 1-3 tug-of-war test (unchanged). Week 4 adds "stocker" (fetches free
 ## product and stocks it onto the nearest open shelf slot) and "interferer"
@@ -102,6 +108,7 @@ var _slip_timer := 0.0 # see _apply_move_input()
 ## sweeping against it (Cleanup.gd's tick_cleanup()).
 var using_tool := false
 var _badge: Label
+var body_sprite: Sprite2D # WEEK 25 — CharacterSprite.gd
 var _coffee_cup: Label
 
 func _ready() -> void:
@@ -132,6 +139,11 @@ func _ready() -> void:
 	set_physics_process(true)
 	target_position = position
 	$Polygon2D.color = Color(0.25, 0.55, 1.0) if get_multiplayer_authority() == 1 else Color(1.0, 0.55, 0.15)
+	# WEEK 25 — real character art. The arrow polygon stays (hidden) since
+	# the code below still steers its rotation; its host/client color moves
+	# to a ring under the feet.
+	$Polygon2D.visible = false
+	body_sprite = CharacterSpriteScript.attach(self, "player_%d" % look_index, "facing_angle", $Polygon2D.color)
 
 	# Week 6 Part 1: only the LOCAL peer's own player should drive this
 	# process's view — every peer's Player.tscn instances include one for

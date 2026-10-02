@@ -670,6 +670,7 @@ const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
+const CustomerScript := preload("res://Customer.gd")
 ## Break room center — grid (0,0) (see the GRID MAP comment above), so this
 ## is BREAK_ROOM_GRID_POS * (ROOM_WIDTH, ROOM_HEIGHT) + (half a cell) =
 ## (0,0)+(480,270) = (480,270) — unchanged from the old line layout's value
@@ -1664,7 +1665,8 @@ func _spawn_player(id: int) -> void:
 	# Empty (no --bot-roles=) means every bot keeps the original Week 1-3
 	# "contest" behavior — this is purely additive, not a breaking change.
 	var role := bot_roles[index % bot_roles.size()] if not bot_roles.is_empty() else "contest"
-	player_spawner.spawn({"id": id, "pos": spawn_pos, "angle": angle, "target": target_name, "role": role})
+	# WEEK 25 — staff look by player slot (player_1..4), same on every peer.
+	player_spawner.spawn({"id": id, "pos": spawn_pos, "angle": angle, "target": target_name, "role": role, "look": index % 4 + 1})
 
 ## Runs on every peer (called locally on the authority by .spawn(), and
 ## remotely on everyone else once MultiplayerSpawner delivers the spawn
@@ -1679,6 +1681,7 @@ func _spawn_player_node(data: Dictionary) -> Node:
 	p.bot_angle = data["angle"]
 	p.bot_target_name = data["target"]
 	p.bot_role = data["role"]
+	p.look_index = data.get("look", 1)
 	players[id] = p
 	return p
 
@@ -3154,6 +3157,7 @@ func _spawn_customer(role: String) -> void:
 		"role": role,
 		"carry_id": carry_id,
 		"items_target": _items_target_for_current_tier(),
+		"look": _deal_customer_look(),
 	})
 	_customer_spawn_index += 1
 
@@ -3164,7 +3168,25 @@ func _spawn_customer_node(data: Dictionary) -> Node:
 	c.role = data["role"]
 	c.carry_id = data["carry_id"]
 	c.items_target = data["items_target"]
+	c.look_index = data.get("look", 1)
 	return c
+
+## WEEK 25 — host-only. Deals customer looks from a shuffled deck of all
+## Customer.LOOK_COUNT, refilled when empty, so any handful of customers on
+## screen shows the whole range of faces instead of whatever a plain
+## randi() happens to repeat. Never deals the same look twice in a row
+## across a refill either.
+var _customer_look_deck: Array = []
+var _last_customer_look := 0
+func _deal_customer_look() -> int:
+	if _customer_look_deck.is_empty():
+		for i in range(1, CustomerScript.LOOK_COUNT + 1):
+			_customer_look_deck.append(i)
+		_customer_look_deck.shuffle()
+		if _customer_look_deck.back() == _last_customer_look:
+			_customer_look_deck.reverse()
+	_last_customer_look = _customer_look_deck.pop_back()
+	return _last_customer_look
 
 func _process(delta: float) -> void:
 	# WEEK 7 — runs on every peer, purely reactive to current_day (which is

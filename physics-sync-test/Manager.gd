@@ -148,8 +148,19 @@ var _yield_timer := 0.0
 ## {anchor, still_time, last_work, last_chaos, meter, cooldown, reason}
 var _state := {}
 
+const CharacterSpriteScript := preload("res://CharacterSprite.gd")
+
 func _ready() -> void:
 	add_to_group("manager")
+	# WEEK 25 — real art: one fixed look (assets/characters/manager.png, a
+	# charcoal suit and red tie — never randomized), turned by the same
+	# replicated `facing` the cone uses, so he visibly looks where the cone
+	# points. The old polygon body under Facing is hidden; the cone stays.
+	for n in ["Body", "Shirt", "Tie", "Head"]:
+		get_node("Facing/" + n).visible = false
+	CharacterSpriteScript.attach(self, "manager", "facing")
+	move_child($NameLabel, -1)
+	move_child($AlertLabel, -1)
 	home_position = position
 	target_position = position
 	reset_physics_interpolation()
