@@ -57,11 +57,12 @@ extends Node
 ## blob). Every Dictionary/Array is reassigned, never mutated, so a change is
 ## plainly a new value to the synchronizer.
 ##
-## PERSISTENCE: wallet, upgrades and run stats live in this node, for the
-## lifetime of the running game (the HOST's process — clients mirror it). Quit
-## and relaunch and they're gone: surviving that needs the real save/load
-## system, explicitly deferred to its own session. Everything a save would
-## need is the replicated state listed in _ready() plus Main's current_day.
+## PERSISTENCE (WEEK 24): wallet, upgrades, shift_number, run_stats and
+## week_summary live in this node on the HOST (clients mirror it) and are
+## saved to disk by Main.save_progress() / SaveGame.gd — after every payout,
+## every purchase (buy() below) and every return to the hub — and put back by
+## Main._load_progress() as hosting begins. The board (offers) and contract
+## are not saved: a fresh board is rolled on load.
 
 const SCREEN_NONE := 0
 const SCREEN_WEEK_COMPLETE := 1
@@ -410,6 +411,7 @@ func buy(key: String) -> bool:
 	upgrades = next
 	purchases_applied += 1
 	print("[Endless] Bought %s level %d for %d Bucks (wallet %d)" % [key, next[key], cost, wallet])
+	main.save_progress("bought %s level %d" % [key, next[key]])
 	return true
 
 ## --- Scoring -------------------------------------------------------------------
