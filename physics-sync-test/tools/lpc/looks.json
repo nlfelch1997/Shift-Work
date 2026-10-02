@@ -1,0 +1,18 @@
+{
+ "customer_1": "sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Messy1_chestnut&clothes=TShirt_sky&legs=Pants_navy&shoes=Basic_Shoes_brown",
+ "customer_2": "sex=female&body=Body_Color_brown&head=Human_Female_brown&expression=Neutral_brown&hair=Ponytail_black&clothes=Longsleeve_2_VNeck_rose&legs=Long_Pants_charcoal&shoes=Basic_Shoes_black",
+ "customer_3": "sex=male&body=Body_Color_bronze&head=Human_Male_bronze&expression=Neutral_bronze&hair=Afro_black&beard=Trimmed_Beard_black&clothes=TShirt_yellow&legs=Shorts_tan&shoes=Sandals_brown",
+ "customer_4": "sex=female&body=Body_Color_olive&head=Human_Female_olive&expression=Neutral_olive&hair=Bob_blonde&clothes=Cardigan_lavender&legs=Leggings_gray&shoes=Basic_Shoes_walnut",
+ "customer_5": "sex=male&body=Body_Color_amber&head=Human_Male_amber&expression=Neutral_amber&hair=Balding_gray&mustache=Mustache_gray&clothes=Longsleeve_2_Buttoned_orange&legs=Cuffed_Pants_tan&shoes=Basic_Shoes_brown",
+ "customer_6": "sex=female&body=Body_Color_taupe&head=Human_Female_taupe&expression=Neutral_taupe&hair=Long_straight_redhead&clothes=TShirt_Scoop_purple&legs=Pants_blue&shoes=Basic_Boots_brown",
+ "cashier_1": "sex=female&body=Body_Color_light&head=Human_Female_light&expression=Neutral_light&hair=High_ponytail_dark_brown&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "cashier_2": "sex=male&body=Body_Color_brown&head=Human_Male_brown&expression=Neutral_brown&hair=Buzzcut_black&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "cashier_3": "sex=female&body=Body_Color_amber&head=Human_Female_amber&expression=Neutral_amber&hair=Pixie_black&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "cashier_4": "sex=male&body=Body_Color_olive&head=Human_Male_olive&expression=Neutral_olive&hair=Curly_short_dark_brown&beard=5_O'clock_Shadow_dark_brown&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "cashier_5": "sex=female&body=Body_Color_bronze&head=Human_Female_bronze&expression=Neutral_bronze&hair=Bangs_bun_black&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "player_1": "sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Parted_chestnut&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "player_2": "sex=female&body=Body_Color_taupe&head=Human_Female_taupe&expression=Neutral_taupe&hair=Shoulderl_blonde&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "player_3": "sex=male&body=Body_Color_bronze&head=Human_Male_bronze&expression=Neutral_bronze&hair=Flat_top_fade_black&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "player_4": "sex=female&body=Body_Color_olive&head=Human_Female_olive&expression=Neutral_olive&hair=Curly_long_ginger&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
+ "manager": "sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Parted_gray&clothes=Collared/Formal_Longsleeve_white&legs=Formal_Pants_black&shoes=Basic_Shoes_black&jacket=Collared_coat_charcoal&neck=Necktie_red"
+}

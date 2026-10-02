@@ -80,9 +80,24 @@ var total_sold: int = 0
 ## just go stale and sit here harmlessly, negligible at this session's scale.
 var _waiting: Dictionary = {}
 
+const CharacterSpriteScript := preload("res://CharacterSprite.gd")
+
+## WEEK 25 — which fixed staff look stands at this register: Cashier1 always
+## wears cashier_1, Cashier2 cashier_2... (from the station's node name in
+## Main.tscn, identical on every peer, every day, every session). Uniform
+## shared with the players (see CharacterSprite.gd).
+func look_name() -> String:
+	var digits := String(body.name).trim_prefix("Cashier")
+	return "cashier_%d" % (int(digits) if digits.is_valid_int() else 1)
+
 func _ready() -> void:
 	body = get_parent()
 	body.add_to_group("cashier")
+	var npc: Node2D = body.get_node("CashierNPC")
+	npc.get_node("Body").visible = false
+	npc.get_node("Head").visible = false
+	var sprite: Sprite2D = CharacterSpriteScript.attach(npc, look_name(), "")
+	sprite.fixed_row = CharacterSpriteScript.ROW_DOWN
 	checkout = body.get_node("Checkout")
 	for child in body.get_children():
 		if child is Marker2D and child.name.begins_with("Queue"):

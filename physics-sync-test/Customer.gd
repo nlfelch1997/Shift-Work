@@ -167,6 +167,14 @@ const MAX_DETOUR_EPISODES_PER_SIDE := 3
 ## successful purchases this shopper aims to complete before leaving
 ## voluntarily, tracked by _items_bought below and record_purchase().
 @export var items_target := 1
+## WEEK 25 — which everyday-clothes look this customer wears (assets/
+## characters/customer_<n>.png, 1..LOOK_COUNT). Dealt by the host in
+## Main.gd's _spawn_customer() and carried in the spawn data, so every peer
+## sees the same face on the same customer.
+@export var look_index := 1
+const LOOK_COUNT := 6
+const CharacterSpriteScript := preload("res://CharacterSprite.gd")
+var body_sprite: Sprite2D
 
 var target_position: Vector2
 var facing_angle := 0.0
@@ -234,6 +242,10 @@ func _ready() -> void:
 	# pressure") — visually distinct at a glance, same reasoning as
 	# Player.gd coloring host vs. client differently.
 	$Polygon2D.color = Color(0.4, 0.75, 0.8, 1) if role == "shopper" else Color(0.85, 0.25, 0.25, 1)
+	# WEEK 25 — real character art; the role color lives on as the ring
+	# under the feet (the polygon stays hidden, its rotation code untouched).
+	$Polygon2D.visible = false
+	body_sprite = CharacterSpriteScript.attach(self, "customer_%d" % look_index, "facing_angle", $Polygon2D.color)
 	set_multiplayer_authority(1)
 
 	var sync := MultiplayerSynchronizer.new()
