@@ -22,6 +22,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 Net="*res://Net.gd"
 GameLog="*res://GameLog.gd"
+Sfx="*res://Sfx.gd"
 
 [display]
 

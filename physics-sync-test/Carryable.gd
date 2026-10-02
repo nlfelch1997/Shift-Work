@@ -391,6 +391,7 @@ func _rpc_set_carrier(id: int) -> void:
 	print("[%s] carrier -> %d (seen by peer %d)" % [body.name, id, multiplayer.get_unique_id()])
 	var old_carrier_id := carrier_id
 	carrier_id = id
+	_own_carry_sound("pickup" if id != 0 else "drop", id if id != 0 else old_carrier_id)
 	if id != 0:
 		_seq_counter += 1
 		carry_seq = _seq_counter
@@ -449,6 +450,7 @@ func _rpc_throw(direction: Vector2) -> void:
 	print("[%s] thrown dir=%s (seen by peer %d)" % [body.name, direction, multiplayer.get_unique_id()])
 	var old_carrier_id := carrier_id
 	carrier_id = 0
+	_own_carry_sound("throw", old_carrier_id)
 	# Same one-tick-stale-position fix as _rpc_set_carrier(0) — see its
 	# comment. Matters less here (a thrown object is about to move anyway),
 	# but launching from a stale position is still a real, if smaller, aim
@@ -465,3 +467,11 @@ func _rpc_throw(direction: Vector2) -> void:
 	if is_multiplayer_authority():
 		body.freeze = false
 		body.linear_velocity = direction * THROW_SPEED
+
+## WEEK 22 — your own pickup / drop / throw sound, on your own machine only
+## (Sfx.gd). Hooked here, in the reliable call_local RPCs, rather than on the
+## key press: this is where the host has actually accepted it, so a pickup
+## someone else won first never plays a sound for the one who lost.
+func _own_carry_sound(sound: String, peer_id: int) -> void:
+	if peer_id > 0 and Net.is_active() and peer_id == multiplayer.get_unique_id():
+		Sfx.play(sound)

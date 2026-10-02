@@ -759,6 +759,8 @@ func forklift_hit(from_position: Vector2) -> void:
 	var sender := multiplayer.get_remote_sender_id()
 	if sender != 1 and sender != 0:
 		return
+	# WEEK 22: every peer gets this broadcast — everyone near hears the bonk.
+	Sfx.play_at("forklift_bonk", global_position)
 	if not is_multiplayer_authority():
 		return
 	var dir := global_position - from_position
