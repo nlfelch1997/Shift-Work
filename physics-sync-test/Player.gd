@@ -102,6 +102,7 @@ var _slip_timer := 0.0 # see _apply_move_input()
 ## sweeping against it (Cleanup.gd's tick_cleanup()).
 var using_tool := false
 var _badge: Label
+var _coffee_cup: Label
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
@@ -164,6 +165,20 @@ func _ready() -> void:
 	_badge.add_theme_constant_override("outline_size", 4)
 	_badge.visible = false
 	add_child(_badge)
+	# WEEK 23 — a little steaming cup over anyone who had a coffee this shift
+	# (every peer: it's the replicated coffee_peers), so the crew can see
+	# whose speed — and whose tab — it is.
+	_coffee_cup = Label.new()
+	_coffee_cup.name = "CoffeeCup"
+	_coffee_cup.text = "☕"
+	_coffee_cup.position = Vector2(8, -40)
+	_coffee_cup.size = Vector2(22, 22)
+	_coffee_cup.add_theme_font_size_override("font_size", 15)
+	_coffee_cup.add_theme_color_override("font_color", Color(1, 0.85, 0.6))
+	_coffee_cup.add_theme_color_override("font_outline_color", Color(0.2, 0.1, 0.0))
+	_coffee_cup.add_theme_constant_override("outline_size", 4)
+	_coffee_cup.visible = false
+	add_child(_coffee_cup)
 
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
@@ -283,8 +298,11 @@ func _apply_move_input(dir: Vector2, delta: float) -> void:
 
 ## WEEK 21: SPEED x the Break Room's Comfy Sneakers (Endless.gd, replicated to
 ## every peer; movement runs on the owner, which reads its own copy).
+## WEEK 23: + the coffee machine's cup (BreakRoom.gd), ADDED to the sneakers'
+## multiplier — 1 + 0.08 x level + 0.20 with a cup — not multiplied with it.
 func speed() -> float:
-	return SPEED * get_tree().current_scene.endless.speed_mult()
+	var main = get_tree().current_scene
+	return SPEED * (main.endless.speed_mult() + main.break_room.speed_bonus(get_multiplayer_authority()))
 
 ## True while this player's movement is on low traction (on a spill or just
 ## off one) — read by the test harness.
@@ -296,6 +314,7 @@ func is_slipping() -> bool:
 func _process(delta: float) -> void:
 	# WEEK 21 — the Employee of the Month star (cosmetic, Endless.gd), every peer.
 	_badge.visible = get_tree().current_scene.endless.has_badge()
+	_coffee_cup.visible = get_tree().current_scene.break_room.has_coffee(get_multiplayer_authority())
 	if not Net.is_active() or is_multiplayer_authority():
 		return
 	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
@@ -625,6 +644,16 @@ func _try_interact() -> void:
 	# anything up, so a product lying by the sign can't swallow the press.
 	if not main.store_open and main.shift_active and main.near_store_sign(global_position):
 		main.try_flip_sign()
+		return
+	# WEEK 23: empty-handed at the coffee machine -> a cup (the host decides:
+	# once per shift, not during cleanup). At the vending machine -> a joke
+	# line, local only. Before picking anything up, like the sign.
+	if main.shift_active and main.break_room.near_coffee(global_position):
+		if not main.break_room.has_coffee(my_id) and main.break_room.coffee_open():
+			main.break_room.try_buy_coffee()
+		return
+	if main.break_room.near_vending(global_position):
+		main.break_room.poke_vending()
 		return
 	var nearest := _find_nearest_free_carryable()
 	if nearest:

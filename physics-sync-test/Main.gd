@@ -442,6 +442,12 @@ extends Node2D
 ##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied at a trash bin
 ##     Cleanup.gd MOP_TIME_* / SWEEP_TIME   spill ~2.1-2.6 s, display 1.6, stock 0.8 / 0.45 s
 ##
+##   BREAK ROOM COFFEE (WEEK 23) — BreakRoom.gd (FLAGGED placeholders)
+##     COFFEE_POS / COFFEE_RANGE            (180,66) top-wall counter / 70 px
+##     COFFEE_SPEED_BONUS                   +0.20, added to the sneakers' multiplier
+##     COFFEE_COST_DOLLARS                  $40 per cup off a story day's Pay Today
+##     COFFEE_COST_BUCKS                    5 per cup off an endless shift's Bucks, per head
+##
 ##   DAY GATING — Main.gd
 ##     SECTIONS required_day              Meat/Deli 3 (+ forklift), Dairy/Frozen 5, Bakery 7
 ##     MANAGER_START_DAY                   4
@@ -658,6 +664,7 @@ const CleanupScript := preload("res://Cleanup.gd")
 const EndlessScript := preload("res://Endless.gd")
 const HubUIScript := preload("res://HubUI.gd")
 const SoundDirectorScript := preload("res://SoundDirector.gd")
+const BreakRoomScript := preload("res://BreakRoom.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
@@ -1177,6 +1184,8 @@ var cleanup: Node2D
 var endless: Node
 var hub_ui: CanvasLayer
 var sound_director: Node
+## WEEK 23 — the dressed break room and its coffee machine (BreakRoom.gd).
+var break_room: Node2D
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -1282,6 +1291,12 @@ func _ready() -> void:
 	endless = EndlessScript.new()
 	endless.name = "Endless"
 	add_child(endless)
+	# WEEK 23 — break room furniture + the coffee machine. Explicit name (its
+	# CoffeeSync's path must match on every peer); under Players in draw order.
+	break_room = BreakRoomScript.new()
+	break_room.name = "BreakRoomProps"
+	add_child(break_room)
+	move_child(break_room, $Players.get_index())
 	# WEEK 22 — every sound driven by game state (see SoundDirector.gd/Sfx.gd).
 	sound_director = SoundDirectorScript.new()
 	sound_director.name = "SoundDirector"
@@ -1686,6 +1701,7 @@ func _start_shift() -> void:
 	clocked_out_by = -1
 	writeups_today = 0
 	writeups_by_peer = {}
+	break_room.reset_for_new_shift() # WEEK 23: a fresh pot, nobody's had a cup
 	_clear_priority_order()
 	orders_called_today = 0
 	orders_filled_today = 0
@@ -2014,10 +2030,10 @@ func _end_shift() -> void:
 		# WEEK 21: the shift's Pay is its score; Endless.gd turns sales,
 		# orders filled and cleanliness into Bucks (and the medal).
 		var clean: float = 0.5 * cleanup.mop_fraction() + 0.5 * cleanup.litter_fraction()
-		endless.score_shift(_total_sold() - _sold_at_day_start, orders_filled_today, clean, writeups_today, _pay_today())
+		endless.score_shift(_total_sold() - _sold_at_day_start, orders_filled_today, clean, writeups_today, _pay_today(), break_room.coffee_cups_today)
 		print("[Main] Shift #%d complete!  Sold: %d  |  Write-ups: %d  |  Pay (score): %s" % [endless.shift_number, _total_sold() - _sold_at_day_start, writeups_today, _format_money(_pay_today())])
 	else:
-		print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d  |  Write-ups today: %d  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, _format_money(_pay_today())])
+		print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d  |  Write-ups today: %d  |  Coffee: %d cup(s) -%s  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, break_room.coffee_cups_today, _format_money(break_room.dollars_today()), _format_money(_pay_today())])
 
 ## Any peer's Continue click routes here. Only the host actually drives the
 ## day advance (current_day/gates/shift are all host-authoritative), so a
@@ -2115,6 +2131,7 @@ func _finish_story() -> void:
 	writeups_week = 0
 	priority_sales_week = 0
 	cleanup.clean_bonus_week = 0
+	break_room.reset_week()
 	endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
 	print("[Main] WEEK COMPLETE — story over. Week: %s. +%d Bucks." % [str(endless.week_summary), EndlessScript.WEEK_COMPLETE_BUCKS])
 
@@ -2199,7 +2216,8 @@ func _fill_endless_report(today_sold: int) -> void:
 		report_week_label.text = ("%s MEDAL" % EndlessScript.MEDAL_NAMES[medal] if medal > 0 else "No medal") + "  —  pay %s" % _format_money(int(p["score"]))
 		report_week_label.add_theme_color_override("font_color", MEDAL_COLORS[medal])
 		var per_head: String = "" if int(p.get("crew", 1)) <= 1 else "\n(sales, orders and write-ups count per head: crew of %d)" % int(p["crew"])
-		report_bucks_label.text = "Medal targets: bronze $%d · silver $%d · gold $%d\n+%d Break Room Bucks   ·   wallet now %d\n= (sales %d + orders %d + clean %d − write-ups %d + medal %d) × %.2f for %d★%s" % [t[0], t[1], t[2], p["total"], endless.wallet, p["sales"], p["orders"], p["clean"], -int(p["writeups"]), p["medal_bucks"], p["mult"], int(c.get("stars", 1)), per_head]
+		var coffee: String = "" if int(p.get("coffee_cups", 0)) == 0 else "  − coffee %d (%d cup(s): %s)" % [-int(p["coffee"]), int(p["coffee_cups"]), break_room.drinkers_text()]
+		report_bucks_label.text = "Medal targets: bronze $%d · silver $%d · gold $%d\n+%d Break Room Bucks   ·   wallet now %d\n= (sales %d + orders %d + clean %d − write-ups %d + medal %d) × %.2f for %d★%s%s" % [t[0], t[1], t[2], p["total"], endless.wallet, p["sales"], p["orders"], p["clean"], -int(p["writeups"]), p["medal_bucks"], p["mult"], int(c.get("stars", 1)), coffee, per_head]
 	var rs: Dictionary = endless.run_stats
 	var m: Array = rs.get("medals", [0, 0, 0, 0])
 	report_run_label.text = "Endless run so far: %d shift(s) · %d sold · %d gold / %d silver / %d bronze · %d Bucks earned" % [int(rs.get("shifts", 0)), int(rs.get("sold", 0)), m[3], m[2], m[1], int(rs.get("bucks", 0))]
@@ -2223,11 +2241,18 @@ func record_writeup(peer_id: int, reason: String) -> void:
 @rpc("authority", "call_local", "reliable")
 func _announce_writeup(peer_id: int, reason: String) -> void:
 	if Net.is_active() and peer_id == multiplayer.get_unique_id():
-		_toast_label.text = "WRITTEN UP for %s!  -$%d" % [reason, WRITEUP_PENALTY]
+		show_toast("WRITTEN UP for %s!  -$%d" % [reason, WRITEUP_PENALTY])
 	else:
-		_toast_label.text = "%s written up for %s  -$%d" % [player_display_name(peer_id), reason, WRITEUP_PENALTY]
-	_toast_timer = 3.0
+		show_toast("%s written up for %s  -$%d" % [player_display_name(peer_id), reason, WRITEUP_PENALTY])
 	Sfx.play("writeup") # everyone hears it: it docks the whole crew's pay
+
+## Every peer, local: the bottom-row toast (write-ups red; WEEK 23's coffee
+## toasts pass their own colour).
+const TOAST_RED := Color(1, 0.35, 0.25)
+func show_toast(text: String, color := TOAST_RED, seconds := 3.0) -> void:
+	_toast_label.text = text
+	_toast_label.add_theme_color_override("font_color", color)
+	_toast_timer = seconds
 
 ## "Host" / "Player 2" / ... instead of a raw ENet peer id (those are large
 ## random numbers for clients). Numbered by join order — `players` is filled
@@ -2241,11 +2266,13 @@ func player_display_name(peer_id: int) -> String:
 ## WEEK 11: a priority-order sale is already in the sold count at
 ## PAY_PER_SALE, so it only adds the multiplier's extra on top.
 ## WEEK 19: plus the cleanup bonus (0 until clock-out), a share of the gross.
+## WEEK 23: minus the coffee tab (BreakRoom.gd) — story days only; on an
+## endless shift coffee comes out of the Bucks and Pay stays the medal score.
 func _pay_today() -> int:
-	return _gross_pay_today() + cleanup.clean_bonus_today - writeups_today * WRITEUP_PENALTY
+	return _gross_pay_today() + cleanup.clean_bonus_today - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
 
 func _pay_week() -> int:
-	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week - writeups_week * WRITEUP_PENALTY
+	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
 
 ## Sales plus the priority-order extra — the day's pay before write-ups and
 ## before the cleanup bonus (which is a share of this).
@@ -3027,6 +3054,8 @@ func _process(delta: float) -> void:
 			who.append("%s x%d" % [player_display_name(peer_id), writeups_by_peer[peer_id]])
 		report_writeup_label.text = "Write-ups: %d  (%s docked)%s" % [writeups_today, _format_money(writeups_today * WRITEUP_PENALTY), ("  —  " + ", ".join(who)) if not who.is_empty() else ""]
 		report_pay_label.text = "Pay Today: %s   |   Week: %s" % [_format_money(_pay_today()), _format_money(_pay_week())]
+		if break_room.coffee_cups_today > 0:
+			report_pay_label.text += "\n(coffee: %d cup(s), %s off — %s)" % [break_room.coffee_cups_today, _format_money(break_room.dollars_today()), break_room.drinkers_text()]
 		report_order_label.visible = lv["orders"] > 0
 		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
