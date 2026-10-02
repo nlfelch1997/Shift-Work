@@ -502,7 +502,7 @@ theme_override_constants/separation = 20
 
 [node name="SaveButton" type="Button" parent="ReportLayer/Panel/ButtonRow"]
 layout_mode = 2
-text = "Save (coming soon)"
+text = "Save"
 
 [node name="ContinueButton" type="Button" parent="ReportLayer/Panel/ButtonRow"]
 layout_mode = 2

@@ -405,8 +405,8 @@ extends Node2D
 ##   (Days 1-7 are a week). At WEEK COMPLETE the week's totals are captured for
 ##   that screen and the running week counters are zeroed; an endless report
 ##   shows the SHIFT and the RUN (Endless.run_stats) and no line claims to be a
-##   week. Save/load is still the placeholder button; the run (wallet,
-##   upgrades) lives only as long as the host's process.
+##   week. (WEEK 24: the run — wallet, upgrades, totals — is saved now; see
+##   the SAVE / LOAD note below.)
 ## - Upgrades read through Endless.gd from Player.gd (speed, spill traction,
 ##   forklift stun, the Back Brace's carry capacity), Carryable.gd (the host's
 ##   capacity check, the carried stack), Manager.gd (fuse) and Cleanup.gd.
@@ -665,6 +665,7 @@ const EndlessScript := preload("res://Endless.gd")
 const HubUIScript := preload("res://HubUI.gd")
 const SoundDirectorScript := preload("res://SoundDirector.gd")
 const BreakRoomScript := preload("res://BreakRoom.gd")
+const SaveGameScript := preload("res://SaveGame.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const ProductScene := preload("res://Product.tscn")
@@ -760,6 +761,38 @@ var debug_day := 1
 ## progress, the same self-healing property Shelf.gd's `filled` array
 ## already relies on for late joiners.
 var current_day := 1
+## WEEK 24 — SAVE / LOAD (SaveGame.gd has the file format and why). Host-only
+## state, never replicated: the save is the HOST's — clients see its effects
+## through the state it loads (current_day, Endless's wallet/upgrades, ...),
+## the same way they see everything else the host runs.
+## - completed_story_day: the last story day whose report came up (0-7).
+##   story_complete: Day 7's report was continued past (WEEK COMPLETE).
+## - Loaded once, as hosting begins (_on_host_pressed -> _load_progress()):
+##   a story save resumes at the day after the last completed one; a Day 7
+##   save that never reached WEEK COMPLETE reopens that screen; a finished
+##   story opens straight into the hub. No file, or a damaged one: Day 1.
+## - Written at every checkpoint (save_progress()): each story day's report,
+##   WEEK COMPLETE, entering the hub, each endless shift's payout, back to the
+##   hub, every Break Room purchase — and the report's Save button.
+## - Debug starts never touch the real save: --day=N (and --bot) start where
+##   asked and don't write it. --save-file=PATH uses PATH instead (and does
+##   load/save even with --day=, which then still picks the start day);
+##   --no-save turns it all off; --new-game ignores the save until the first
+##   checkpoint overwrites it.
+var completed_story_day := 0
+var story_complete := false
+var save_path := SaveGameScript.DEFAULT_PATH
+var save_enabled := true
+var _skip_load := false
+## The story week's sales from before this launch (the cashiers' replicated
+## total_sold counters start at 0 every launch) — part of _total_sold(), so
+## Week Total and the WEEK COMPLETE screen still count the earlier days.
+## Replicated (DaySync), since every peer's report shows Week Total.
+var sold_carryover := 0
+## Diagnostics (tests and the report's Save button): what the last load found
+## (SaveGame.LOAD_*; -1 = no load attempted) and saves actually written.
+var load_status := -1
+var saves_written := 0
 ## (WEEK 21: the old _last_configured_day sentinel is now _last_config_key,
 ## declared by _config_key() — "" never matches a real key, so the first
 ## _process() tick on every peer still configures the world once.)
@@ -1323,7 +1356,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1345,6 +1378,7 @@ func _ready() -> void:
 	join_button.pressed.connect(_on_join_pressed)
 	continue_button.pressed.connect(_on_continue_pressed)
 	save_button.pressed.connect(_on_save_pressed)
+	save_button.text = "Save"
 	menu_layer.layer = UI_LAYER_MENU
 	$DebugLayer.layer = UI_LAYER_DEBUG
 	report_layer.layer = UI_LAYER_REPORT
@@ -1381,6 +1415,24 @@ func _parse_cli_args() -> void:
 			bot_roles.assign(arg.substr("--bot-roles=".length()).split(","))
 		elif arg.begins_with("--day="):
 			debug_day = int(arg.substr("--day=".length()))
+	# WEEK 24: debug starts leave the player's real save alone (see the
+	# SAVE / LOAD note on completed_story_day).
+	var custom_save := false
+	var day_given := false
+	for arg in args:
+		if arg.begins_with("--save-file="):
+			save_path = arg.substr("--save-file=".length())
+			custom_save = true
+		elif arg.begins_with("--day="):
+			day_given = true
+	if not custom_save and (bot_mode or day_given):
+		save_enabled = false
+	if day_given:
+		_skip_load = true
+	if "--no-save" in args:
+		save_enabled = false
+	if "--new-game" in args:
+		_skip_load = true
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
@@ -1531,10 +1583,15 @@ func _on_host_pressed() -> void:
 	# top of _process() handles that uniformly for every peer, whether
 	# it's the very first tick or a later day-advance.
 	current_day = debug_day
+	# WEEK 24: the host's save decides where this crew picks up.
+	var resume := _load_progress()
 	_spawn_player(multiplayer.get_unique_id())
 	if bot_mode:
 		_start_bot_timer()
-	get_tree().create_timer(PRODUCT_SPAWN_DELAY).timeout.connect(_start_shift)
+	if resume == "story":
+		get_tree().create_timer(PRODUCT_SPAWN_DELAY).timeout.connect(_start_shift)
+	else:
+		_resume_past_story(resume)
 
 func _on_join_pressed() -> void:
 	menu_layer.hide()
@@ -2032,8 +2089,11 @@ func _end_shift() -> void:
 		var clean: float = 0.5 * cleanup.mop_fraction() + 0.5 * cleanup.litter_fraction()
 		endless.score_shift(_total_sold() - _sold_at_day_start, orders_filled_today, clean, writeups_today, _pay_today(), break_room.coffee_cups_today)
 		print("[Main] Shift #%d complete!  Sold: %d  |  Write-ups: %d  |  Pay (score): %s" % [endless.shift_number, _total_sold() - _sold_at_day_start, writeups_today, _format_money(_pay_today())])
+		save_progress("shift #%d paid out" % endless.shift_number)
 	else:
 		print("[Main] Day %d complete!  Sold today: %d  |  Week total: %d  |  Write-ups today: %d  |  Coffee: %d cup(s) -%s  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, break_room.coffee_cups_today, _format_money(break_room.dollars_today()), _format_money(_pay_today())])
+		completed_story_day = maxi(completed_story_day, current_day)
+		save_progress("Day %d complete" % current_day)
 
 ## Any peer's Continue click routes here. Only the host actually drives the
 ## day advance (current_day/gates/shift are all host-authoritative), so a
@@ -2052,12 +2112,104 @@ func _request_advance_day() -> void:
 		return
 	_advance_to_next_day()
 
-## VISIBLE PLACEHOLDER ONLY, per this session's request — real save/load is
-## a separate, bigger system for a future session. Exists so the button is
-## there to design around (layout, a future confirmation toast, etc.)
-## without pretending it persists anything yet.
+## WEEK 24: the report's Save button — an explicit save on top of the
+## autosaves (every checkpoint already saved; this is the reassurance). The
+## save is the host's, so a client's click asks the host, and the host tells
+## that client how it went.
 func _on_save_pressed() -> void:
-	print("[Main] Save pressed — placeholder only, no save/load system yet.")
+	if multiplayer.is_server():
+		_show_save_result(save_progress("Save button"), true)
+	else:
+		_rpc_request_save.rpc_id(1)
+
+@rpc("any_peer", "reliable")
+func _rpc_request_save() -> void:
+	if not multiplayer.is_server():
+		return
+	var ok := save_progress("Save button (%s)" % player_display_name(multiplayer.get_remote_sender_id()))
+	_rpc_save_result.rpc_id(multiplayer.get_remote_sender_id(), ok)
+
+@rpc("authority", "reliable")
+func _rpc_save_result(ok: bool) -> void:
+	_show_save_result(ok, false)
+
+var save_result_text := "" # what the button last said, for tests
+
+func _show_save_result(ok: bool, on_host: bool) -> void:
+	if ok:
+		save_result_text = "Saved ✓" if on_host else "Saved on the host ✓"
+	elif not save_enabled or not on_host:
+		save_result_text = "Saving is off" if on_host else "Host didn't save"
+	else:
+		save_result_text = "Save FAILED"
+	save_button.text = save_result_text
+	get_tree().create_timer(2.5).timeout.connect(func(): save_button.text = "Save")
+
+## Host-only: writes the save. Every checkpoint calls this; returns whether a
+## file was actually written.
+func save_progress(reason: String) -> bool:
+	if not multiplayer.is_server() or not save_enabled:
+		return false
+	var ok := SaveGameScript.write(save_path, SaveGameScript.snapshot(self))
+	if ok:
+		saves_written += 1
+	print("[Save] %s: %s — story day %d%s, wallet %d, upgrades %s" % ["saved" if ok else "SAVE FAILED", reason, completed_story_day, " (complete)" if story_complete else "", endless.wallet, str(endless.upgrades)])
+	return ok
+
+## Host-only, once, as hosting begins: reads the save and puts its progress
+## back. Returns where to pick up: "story" (start current_day's shift as
+## usual), "week_complete" or "hub".
+func _load_progress() -> String:
+	if not save_enabled or _skip_load:
+		return "story"
+	var r: Array = SaveGameScript.read(save_path)
+	load_status = r[0]
+	if load_status == SaveGameScript.LOAD_NONE:
+		print("[Save] No save at %s — a fresh start, Day 1" % save_path)
+		return "story"
+	if load_status == SaveGameScript.LOAD_CORRUPT:
+		print("[Save] The save at %s couldn't be read — a fresh start, Day 1" % save_path)
+		show_toast("Save file was damaged — starting a new week", TOAST_RED, 6.0)
+		return "story"
+	var d: Dictionary = r[1]
+	completed_story_day = d["story"]["completed_day"]
+	story_complete = d["story"]["complete"]
+	var e: Dictionary = d["endless"]
+	endless.wallet = e["wallet"]
+	endless.upgrades = e["upgrades"]
+	endless.shift_number = e["shift_number"]
+	endless.run_stats = e["run_stats"]
+	endless.week_summary = e["week_summary"]
+	var resume := "story"
+	if story_complete:
+		resume = "hub"
+	else:
+		var w: Dictionary = d["week"]
+		sold_carryover = w["sold"]
+		writeups_week = w["writeups"]
+		priority_sales_week = w["priority_sales"]
+		cleanup.clean_bonus_week = w["clean_bonus"]
+		break_room.coffee_cups_week = w["coffee_cups"]
+		if completed_story_day >= FINALE_START_DAY:
+			resume = "week_complete"
+			current_day = FINALE_START_DAY
+		else:
+			current_day = completed_story_day + 1
+	print("[Save] Loaded %s — completed day %d%s, resuming: %s, wallet %d, upgrades %s, run %s" % [save_path, completed_story_day, " (story complete)" if story_complete else "", ("Day %d" % current_day) if resume == "story" else resume, endless.wallet, str(endless.upgrades), str(endless.run_stats)])
+	show_toast(("Welcome back — Endless Mode, %d Bucks" % endless.wallet) if story_complete else ("Welcome back — Day %d" % current_day), Color(0.55, 1, 0.6), 4.0)
+	return resume
+
+## Host-only, from _on_host_pressed(): a save past Day 7's report opens on
+## the WEEK COMPLETE screen (not yet continued past — it pays its Bucks now,
+## exactly once, as it would have) or the hub, over the same frozen, empty
+## store those screens always sit over. Same functions the live game uses.
+func _resume_past_story(resume: String) -> void:
+	_day_report_active = true
+	if resume == "week_complete":
+		_finish_story()
+	else:
+		endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
+		enter_hub()
 
 ## Host-only: ends the end-of-day report and starts the next day. Guarded on
 ## _day_report_active (not just multiplayer.is_server()) so a duplicate
@@ -2082,6 +2234,7 @@ func _advance_to_next_day() -> void:
 		endless.roll_offers()
 		endless.screen = EndlessScript.SCREEN_HUB
 		print("[Main] Back to the break room after shift #%d" % endless.shift_number)
+		save_progress("back to the break room")
 		return
 	if current_day == FINALE_START_DAY:
 		_finish_story()
@@ -2133,7 +2286,10 @@ func _finish_story() -> void:
 	cleanup.clean_bonus_week = 0
 	break_room.reset_week()
 	endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
+	completed_story_day = FINALE_START_DAY
+	story_complete = true
 	print("[Main] WEEK COMPLETE — story over. Week: %s. +%d Bucks." % [str(endless.week_summary), EndlessScript.WEEK_COMPLETE_BUCKS])
+	save_progress("WEEK COMPLETE")
 
 ## Host-only (any peer asks via Endless.request_enter_hub()): WEEK COMPLETE ->
 ## the hub. current_day parks at ENDLESS_DAY from here on.
@@ -2146,6 +2302,7 @@ func enter_hub() -> void:
 	endless.roll_offers()
 	endless.screen = EndlessScript.SCREEN_HUB
 	print("[Main] Entered the break room hub — endless mode")
+	save_progress("entered the hub")
 
 ## Host-only (any peer asks via Endless.request_take_offer()): take posting
 ## `index` off the board and start it. The medal targets are fixed now, for
@@ -2602,7 +2759,7 @@ func _update_alert_layer(delta: float) -> void:
 ## (_total_sold() - _sold_at_day_start) in _process()'s debug HUD and
 ## _end_shift()'s report.
 func _total_sold() -> int:
-	var total := 0
+	var total := sold_carryover # WEEK 24: the week's sales from before a relaunch
 	for cashier_body in cashiers:
 		total += cashier_body.get_node("Cashier").total_sold
 	return total
