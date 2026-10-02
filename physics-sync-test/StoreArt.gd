@@ -34,8 +34,8 @@ const MARKET_WALLS_PATH := "res://assets/supermarket/Auto-tile-A4-walls-3.png"
 const WAREHOUSE_WALLS_PATH := "res://assets/warehouse/Auto-tile-A4-walls-2.png"
 
 ## RoomBackgrounds node -> A2 block (col, row). Only the zones in scope:
-## the four sales sections, the checkout hub, and Storage. The break room,
-## sidewalk and the reserved cell keep their placeholder floors.
+## the four sales sections, the checkout hub, and Storage — and (WEEK 23) the
+## break room. The sidewalk and the reserved cell keep their placeholder floors.
 const FLOORS := {
 	"DryGoodsBg": Vector2i(3, 0), # large white tile
 	"MeatDeliBg": Vector2i(0, 2), # small white cold-room tile
@@ -43,12 +43,19 @@ const FLOORS := {
 	"BakeryBg": Vector2i(2, 0), # brown checker
 	"EntranceBg": Vector2i(3, 1), # cream tile (the checkout hub)
 	"StorageBg": Vector2i(0, 1), # grey concrete panels
+	"BreakRoomBg": Vector2i(5, 2), # WEEK 23: beige vinyl with grey insets — staff-room floor
 }
 ## Grid cells whose walls get pack art, and which A4 sheet + face block.
 const MARKET_CELLS := [Vector2i(1, 0), Vector2i(2, 1), Vector2i(0, 1), Vector2i(2, 0), Vector2i(1, 1)]
 const STORAGE_CELL := Vector2i(2, 2)
 const MARKET_WALL_FACE := Vector2i(3, 1) # blue tile
 const WAREHOUSE_WALL_FACE := Vector2i(6, 1) # corrugated metal
+## WEEK 23: the break room's own walls (top and left — its seal with
+## Dairy/Frozen keeps the market tile, that's Dairy's side): cream paint over a
+## wood baseboard, the same market sheet.
+const BREAK_ROOM_CELL := Vector2i(0, 0)
+const BREAK_ROOM_WALL_FACE := Vector2i(7, 1)
+var _break_room_face: Texture2D
 
 var main: Node
 
@@ -94,6 +101,7 @@ func _texture_floors() -> void:
 func _build_walls() -> void:
 	var market := _a4_face(MARKET_WALLS_PATH, MARKET_WALL_FACE)
 	var warehouse := _a4_face(WAREHOUSE_WALLS_PATH, WAREHOUSE_WALL_FACE)
+	_break_room_face = _a4_face(MARKET_WALLS_PATH, BREAK_ROOM_WALL_FACE)
 	for body in main.get_node("Walls").get_children():
 		var shape: CollisionShape2D = body.get_node("CollisionShape2D")
 		var size: Vector2 = (shape.shape as RectangleShape2D).size
@@ -127,6 +135,8 @@ func _wall_texture_for(piece: Rect2, market: Texture2D, warehouse: Texture2D) ->
 	for cell in cells:
 		if cell in MARKET_CELLS:
 			return market
+	if BREAK_ROOM_CELL in cells:
+		return _break_room_face
 	return null
 
 ## One strip: the face texture repeated along it, squashed so one face tile

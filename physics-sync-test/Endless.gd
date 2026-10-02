@@ -69,6 +69,7 @@ const SCREEN_HUB := 2
 
 ## Where current_day parks once the story is over (see the header).
 const ENDLESS_DAY := 8
+const BreakRoomScript := preload("res://BreakRoom.gd")
 
 const HAZARDS := ["forklift", "manager", "orders", "spills", "lights"]
 const HAZARD_NAMES := {
@@ -420,7 +421,10 @@ func buy(key: String) -> bool:
 ## store early (Week 16's unused-prep-becomes-selling rule) sold 107 in one
 ## shift and would have paid 226 Bucks — a solo shift paid 25-78, and the whole
 ## shop costs 560. Per head, that shift pays ~110: still the best of the run.
-static func compute_payout(c: Dictionary, sold: int, orders_filled: int, clean_frac: float, writeups: int, score: int) -> Dictionary:
+## WEEK 23: coffee_cups (BreakRoom.gd's coffee machine) come off AFTER the
+## star multiplier, per head (cups x cost / crew), never below 0 — a shift
+## can pay nothing, but never cost the wallet.
+static func compute_payout(c: Dictionary, sold: int, orders_filled: int, clean_frac: float, writeups: int, score: int, coffee_cups := 0) -> Dictionary:
 	var targets: Array = c.get("targets", [0, 0, 0])
 	var crew := maxi(1, int(c.get("crew", 1)))
 	var medal := 0
@@ -434,24 +438,26 @@ static func compute_payout(c: Dictionary, sold: int, orders_filled: int, clean_f
 	var medal_b: int = MEDAL_BUCKS[medal]
 	var subtotal := maxi(0, sales_b + orders_b + clean_b + writeup_b + medal_b)
 	var mult := float(c.get("bucks_mult", 1.0))
+	var earned := int(round(subtotal * mult))
+	var coffee_b := -mini(earned, BreakRoomScript.bucks_cost(coffee_cups, crew))
 	return {
 		"medal": medal, "score": score, "targets": targets, "crew": crew,
 		"sales": sales_b, "orders": orders_b, "clean": clean_b, "writeups": writeup_b, "medal_bucks": medal_b,
-		"subtotal": subtotal, "mult": mult, "total": int(round(subtotal * mult)),
+		"subtotal": subtotal, "mult": mult, "earned": earned, "coffee_cups": coffee_cups, "coffee": coffee_b, "total": earned + coffee_b,
 	}
 
 ## Host-only, from Main.gd's _end_shift() on an endless shift: pays it out.
-func score_shift(sold: int, orders_filled: int, clean_frac: float, writeups: int, score: int) -> void:
+func score_shift(sold: int, orders_filled: int, clean_frac: float, writeups: int, score: int, coffee_cups := 0) -> void:
 	if not multiplayer.is_server():
 		return
-	var p := compute_payout(contract, sold, orders_filled, clean_frac, writeups, score)
+	var p := compute_payout(contract, sold, orders_filled, clean_frac, writeups, score, coffee_cups)
 	p["shift"] = shift_number # the report shows it only once this matches
 	wallet += int(p["total"])
 	last_payout = p
 	var medals: Array = run_stats.get("medals", [0, 0, 0, 0]).duplicate()
 	medals[p["medal"]] += 1
 	run_stats = {"shifts": int(run_stats.get("shifts", 0)) + 1, "sold": int(run_stats.get("sold", 0)) + sold, "bucks": int(run_stats.get("bucks", 0)) + int(p["total"]), "medals": medals}
-	print("[Endless] Shift #%d scored — score $%d vs %s -> %s, +%d Bucks (x%.2f; sales %d, orders %d, clean %d, write-ups %d, medal %d) wallet %d" % [shift_number, score, str(p["targets"]), MEDAL_NAMES[p["medal"]], p["total"], p["mult"], p["sales"], p["orders"], p["clean"], p["writeups"], p["medal_bucks"], wallet])
+	print("[Endless] Shift #%d scored — score $%d vs %s -> %s, +%d Bucks (x%.2f; sales %d, orders %d, clean %d, write-ups %d, medal %d; coffee %d cup(s) %d) wallet %d" % [shift_number, score, str(p["targets"]), MEDAL_NAMES[p["medal"]], p["total"], p["mult"], p["sales"], p["orders"], p["clean"], p["writeups"], p["medal_bucks"], p["coffee_cups"], p["coffee"], wallet])
 
 ## --- Preview text (every peer; HubUI.gd and Main's banners read these) ------
 
