@@ -4370,7 +4370,8 @@ func _run_cleanup() -> void:
 	# (Not mop_left_before: walking to the clock can bump stock off a shelf —
 	# that's new mess, and it counts.)
 	check(cl().mop_left == cl()._mop_messes().size() and cl().mop_left >= mop_left_before and cl().litter_left == litter_left, "CL5: tally matches the floor at clock-out: spills & knockovers left %d (was %d before the walk to the clock), litter left %d" % [cl().mop_left, mop_left_before, cl().litter_left])
-	check(main._pay_today() == gross + cl().clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY, "CL5: Pay Today includes the bonus: %s" % main.report_pay_label.text)
+	# Oct 2026: + $1 a piece of litter picked up (Cleanup.gd's LITTER_PAY_PER_PIECE), its own line.
+	check(main._pay_today() == gross + cl().clean_bonus_today + cl().litter_pay_today() - main.writeups_today * main.WRITEUP_PENALTY, "CL5: Pay Today includes the bonus (and the trash pay, %s): %s" % [main._format_money(cl().litter_pay_today()), main.report_pay_label.text])
 	await wait(0.2)
 	check(main.report_cleanup_label.visible and "Cleanup" in main.report_cleanup_label.text, "CL5: report line: %s" % main.report_cleanup_label.text.replace("\n", " / "))
 	check(cl().tools.all(func(t): return t["holder"] == 0), "CL5: tools out of everyone's hands for the report")
