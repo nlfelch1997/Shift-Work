@@ -362,6 +362,7 @@ func _announce_coffee(peer_id: int) -> void:
 		Sfx.play("ui_buy")
 	else:
 		main.show_toast("%s grabbed a coffee — %s off %s" % [main.player_display_name(peer_id), cost, whose], COFFEE_TOAST)
+	main.juice.coffee(peer_id) # WEEK 27
 
 ## Host-only, from Main._start_shift(): a fresh pot every shift.
 func reset_for_new_shift() -> void:

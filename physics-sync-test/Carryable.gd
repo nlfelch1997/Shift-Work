@@ -392,6 +392,8 @@ func _rpc_set_carrier(id: int) -> void:
 	var old_carrier_id := carrier_id
 	carrier_id = id
 	_own_carry_sound("pickup" if id != 0 else "drop", id if id != 0 else old_carrier_id)
+	if id != 0 or old_carrier_id != 0:
+		_juice("pickup" if id != 0 else "drop")
 	if id != 0:
 		_seq_counter += 1
 		carry_seq = _seq_counter
@@ -451,6 +453,8 @@ func _rpc_throw(direction: Vector2) -> void:
 	var old_carrier_id := carrier_id
 	carrier_id = 0
 	_own_carry_sound("throw", old_carrier_id)
+	if old_carrier_id != 0:
+		_juice("throw")
 	# Same one-tick-stale-position fix as _rpc_set_carrier(0) — see its
 	# comment. Matters less here (a thrown object is about to move anyway),
 	# but launching from a stale position is still a real, if smaller, aim
@@ -472,6 +476,15 @@ func _rpc_throw(direction: Vector2) -> void:
 ## (Sfx.gd). Hooked here, in the reliable call_local RPCs, rather than on the
 ## key press: this is where the host has actually accepted it, so a pickup
 ## someone else won first never plays a sound for the one who lost.
+## WEEK 27 — the item pops / squashes / stretches (Juice.gd), every peer:
+## same reliable call_local moment as the sound above, so it never fires for
+## a pickup the host refused.
+func _juice(kind: String) -> void:
+	var scene := get_tree().current_scene
+	var juice = scene.get("juice") if scene else null
+	if juice:
+		juice.carry(body, kind)
+
 func _own_carry_sound(sound: String, peer_id: int) -> void:
 	if peer_id > 0 and Net.is_active() and peer_id == multiplayer.get_unique_id():
 		Sfx.play(sound)

@@ -802,6 +802,9 @@ func forklift_hit(from_position: Vector2) -> void:
 		return
 	# WEEK 22: every peer gets this broadcast — everyone near hears the bonk.
 	Sfx.play_at("forklift_bonk", global_position)
+	var juice = get_tree().current_scene.get("juice") # WEEK 27: the visual BONK, every peer
+	if juice:
+		juice.forklift_hit(self)
 	if not is_multiplayer_authority():
 		return
 	var dir := global_position - from_position
