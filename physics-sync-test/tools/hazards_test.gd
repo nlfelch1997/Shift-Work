@@ -2106,7 +2106,7 @@ func _run_ambience() -> void:
 	for sb in main.shelves:
 		tells.append(sb.get_node("Shelf").slots[0].get_node("Prompt"))
 	check(tells.all(func(n): return n.z_index > z_dark), "A7: every hazard tell (beacon, BEEP, manager ?/!, cone, name, C prompts) draws above the darkness")
-	check(main._watch_label.get_parent() is CanvasLayer and main._order_label.get_parent() is CanvasLayer and main.debug_label.get_parent() is CanvasLayer, "A7: HUD / LOOK BUSY / order banner are screen-space (never darkened)")
+	check(main._watch_label.get_parent() is CanvasLayer and main._order_label.get_parent() is CanvasLayer and main.debug_label.get_parent() is CanvasLayer and main.status_label.get_parent() is CanvasLayer, "A7: HUD / LOOK BUSY / order banner are screen-space (never darkened)")
 	check(fk().active == fk_on and mgr().active, "A7: forklift and manager unaffected")
 
 	# --- A8: the day ends mid-event with spills down; next day starts clean.
@@ -4196,6 +4196,7 @@ func _cleanup_view() -> Dictionary:
 func _run_cleanup() -> void:
 	if shots:
 		main.debug_label.visible = false
+		main.status_hud = false
 	main.shift_duration = 45.0
 	main.prep_ceiling_override = 0.0
 	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
@@ -4895,6 +4896,7 @@ func _po_station_trip(who: String, clock_out := true) -> void:
 func _run_polish() -> void:
 	if shots:
 		main.debug_label.visible = false
+		main.status_hud = false
 	main.shift_duration = 420.0
 	main.prep_ceiling_override = 0.0
 	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
@@ -5376,7 +5378,7 @@ func _run_endless() -> void:
 		print("ENDLESS  %s: %s" % [tag, str(r)])
 		check(main.report_title_label.text == "Shift #%d Complete" % (n + 1) and not main.report_week_label.text.contains("Week"), "%s: report '%s' / '%s' — no 'Week' anywhere" % [tag, main.report_title_label.text, main.report_week_label.text])
 		check(main.report_bucks_label.visible and main.report_bucks_label.text.contains("+%d Break Room Bucks" % r["bucks"]) and main.report_run_label.text.contains("%d shift(s)" % (n + 1)), "%s: report shows the Bucks and the run: '%s' / '%s'" % [tag, main.report_bucks_label.text.replace("\n", " | "), main.report_run_label.text])
-		check(not main.report_pay_label.text.contains("Week") and not main.debug_label.text.contains("Week"), "%s: no 'Week' on the pay line or HUD ('%s')" % [tag, main.report_pay_label.text])
+		check(not main.report_pay_label.text.contains("Week") and not main.debug_label.text.contains("Week") and not main.status_label.text.contains("Week"), "%s: no 'Week' on the pay line or HUD ('%s' / '%s')" % [tag, main.report_pay_label.text, main.status_label.text])
 		check(main.continue_button.text == "Back to the Break Room", "%s: button reads '%s'" % [tag, main.continue_button.text])
 		var old_ids: Array = en().offers.map(func(o): return o["id"])
 		main.continue_button.pressed.emit()

@@ -1189,7 +1189,15 @@ const UI_LAYER_REPORT := 4
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
 @onready var join_button: Button = $MenuLayer/Menu/JoinButton
+## The full per-frame dump (peer id, every carryable's position, shelf
+## fill, hazard state) — dev-only, hidden by default, F3 toggles it on this
+## peer only (see _unhandled_input). status_label is the small
+## player-facing line that's always up instead (see _status_text()).
 @onready var debug_label: Label = $DebugLayer/DebugLabel
+@onready var status_label: Label = $DebugLayer/StatusLabel
+## Screenshot/test tools set this false for HUD-free frames (status_label's
+## visibility is re-derived every frame, so hiding it once wouldn't stick).
+var status_hud := true
 @onready var player_spawner: MultiplayerSpawner = $PlayerSpawner
 @onready var players_root: Node2D = $Players
 @onready var product_spawner: MultiplayerSpawner = $ProductSpawner
@@ -1280,6 +1288,24 @@ var _customer_spawn_index := 0
 ## always positive. See Carryable.gd's _find_carrier() for why customers
 ## need this instead of reusing multiplayer authority.
 var _next_customer_carry_id := -1
+
+## F3: the dev dump. Local only — nothing networked, every peer has its own.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F3:
+		debug_label.visible = not debug_label.visible
+		get_viewport().set_input_as_handled()
+
+## The always-up corner line: which day/shift it is, and the crew size.
+## players is populated on every peer (see _spawn_player_node), so a client's
+## count matches the host's.
+func _status_text() -> String:
+	var crew := "%d player%s" % [players.size(), "" if players.size() == 1 else "s"]
+	if is_endless():
+		# In the hub between shifts shift_number is the LAST shift (#0 before
+		# the first), so name the place instead.
+		var where := "Break Room" if endless.screen == EndlessScript.SCREEN_HUB else "Shift #%d" % endless.shift_number
+		return "Endless  ·  %s  ·  %d Bucks  ·  %s" % [where, endless.wallet, crew]
+	return "Day %d  ·  %s" % [current_day, crew]
 
 func _ready() -> void:
 	# Children's _ready() runs before their parent's in Godot, so every
@@ -3373,6 +3399,11 @@ func _process(delta: float) -> void:
 		else:
 			lines.append("Stocked now: %d/%d  |  Today: %d  |  Week total: %d  |  Pay today: %s  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, _format_money(_pay_today()), shift_time_left])
 	debug_label.text = "\n".join(lines)
+	# Only once you're actually in a game (not over the main menu) and
+	# your own player exists — before that "0 players" would be all it said.
+	status_label.visible = status_hud and connected and not players.is_empty()
+	if status_label.visible:
+		status_label.text = _status_text()
 	# Last, after this frame's shift/order ticks above: found by the net-orders
 	# bot pass — run earlier in _process(), the host's banner showed a new
 	# priority order one frame late (clients were fine, they get it by sync).

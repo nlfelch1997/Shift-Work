@@ -18,6 +18,7 @@ func _run() -> void:
 	main.add_child(cam)
 	cam.make_current()
 	main.debug_label.visible = false
+	main.status_hud = false
 	var alerts := main.get_node_or_null("AlertLayer")
 	if alerts and "--no-banner" in OS.get_cmdline_user_args():
 		alerts.visible = false

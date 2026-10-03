@@ -17,6 +17,7 @@ func _run() -> void:
 	main.add_child(cam)
 	cam.make_current()
 	main.debug_label.visible = false
+	main.status_hud = false
 	for i in 8:
 		await process_frame
 	root.get_texture().get_image().save_png("user://overview.png")

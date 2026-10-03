@@ -524,6 +524,7 @@ func _run_perf() -> void:
 	root.size = Vector2i(960, 540)
 	await wait(1.6)
 	main.debug_label.visible = false
+	main.status_hud = false
 	main.prep_time_left = 0.5 # opens by itself: every Day 7 hazard live
 	await wait_until(func(): return main.store_open, 5.0)
 	player().teleport_to(Vector2(1440, 810))
