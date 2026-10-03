@@ -440,6 +440,9 @@ extends Node2D
 ##     Cleanup.gd CLEAN_BONUS_MAX           0.25 (+25% of gross pay, split
 ##                                          evenly: spills & knockovers / litter)
 ##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied at a trash bin
+##     Cleanup.gd LITTER_PAY_PER_PIECE      $1 a piece picked up (E by hand any time, or swept),
+##                                          its own Pay line, outside the bonus (Oct 2026)
+##     Carryable.gd PICKUP_RANGE            70 px (+12 host net slack), the store's shared E radius (Oct 2026: was 60)
 ##     Cleanup.gd MOP_TIME_* / SWEEP_TIME   spill ~2.1-2.6 s, display 1.6, stock 0.8 / 0.45 s
 ##
 ##   BREAK ROOM COFFEE (WEEK 23) — BreakRoom.gd (FLAGGED placeholders)
@@ -461,7 +464,8 @@ extends Node2D
 ##     PRODUCT_DENSITY_BY_TIER            [1.0, 1.0, 1.5, 1.5]  x per-section product cap
 ##     PRODUCT_PER_EXTRA_PLAYER            3
 ##     CUSTOMER_PER_EXTRA_PLAYER           2
-##     CUSTOMER_DISRUPTIVE_RATIO           0.35
+##     CUSTOMER_DISRUPTIVE_RATIO           0.35  of the LIVE crowd (Oct 2026 fix: was per spawn — see _restock_customers())
+##     Customer.gd MAX_LIFETIME_DISRUPTIVE 45 s x 0.6-1.0 (DISRUPTIVE_LIFETIME_JITTER, Oct 2026)
 ##     RESTOCK_CHECK_INTERVAL              3.0 s  customer top-up + stray-stock rescue cadence
 ##
 ##   PAY — Main.gd
@@ -661,6 +665,7 @@ const AmbienceScript := preload("res://Ambience.gd")
 const DeliveryScript := preload("res://Delivery.gd")
 const DeliveryForkliftScript := preload("res://DeliveryForklift.gd")
 const CleanupScript := preload("res://Cleanup.gd")
+const TutorialScript := preload("res://Tutorial.gd")
 const EndlessScript := preload("res://Endless.gd")
 const HubUIScript := preload("res://HubUI.gd")
 const SoundDirectorScript := preload("res://SoundDirector.gd")
@@ -1140,6 +1145,10 @@ func hazard_levels() -> Dictionary:
 			d["forklift"] = 0
 		return d
 	var hot := 2 if is_finale() else 1
+	if tutorial.active:
+		# The practice shift (Tutorial.gd) is Day 1 plus the manager, so the
+		# crew meets his vision cone before it can cost them anything.
+		return {"forklift": 0, "manager": 1, "orders": 0, "spills": 0, "lights": 0, "tight_clock": false}
 	return {
 		"forklift": hot if produce_open else 0,
 		"manager": hot if current_day >= MANAGER_START_DAY else 0,
@@ -1228,6 +1237,12 @@ var endless: Node
 var hub_ui: CanvasLayer
 var sound_director: Node
 var juice: Node2D
+## Oct 2026 playtest fix — the guided practice shift before Day 1 (Tutorial.gd).
+var tutorial: Node2D
+## Host: Host Game was clicked in the menu (not a --server test launch) — the
+## only way a brand-new crew is offered practice on its own (Tutorial.gd).
+var _host_from_menu := false
+var _practice_requested := false
 ## WEEK 23 — the dressed break room and its coffee machine (BreakRoom.gd).
 var break_room: Node2D
 
@@ -1305,6 +1320,8 @@ func _status_text() -> String:
 		# the first), so name the place instead.
 		var where := "Break Room" if endless.screen == EndlessScript.SCREEN_HUB else "Shift #%d" % endless.shift_number
 		return "Endless  ·  %s  ·  %d Bucks  ·  %s" % [where, endless.wallet, crew]
+	if tutorial.active:
+		return "Practice shift  ·  %s" % crew
 	return "Day %d  ·  %s" % [current_day, crew]
 
 func _ready() -> void:
@@ -1368,6 +1385,9 @@ func _ready() -> void:
 	juice = JuiceScript.new()
 	juice.name = "Juice"
 	add_child(juice)
+	tutorial = TutorialScript.new()
+	tutorial.name = "Tutorial" # explicit: its Sync's path must match on every peer
+	add_child(tutorial)
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
@@ -1408,8 +1428,21 @@ func _ready() -> void:
 		get_tree().quit()
 	)
 
-	host_button.pressed.connect(_on_host_pressed)
+	host_button.pressed.connect(func():
+		_host_from_menu = true
+		_on_host_pressed())
 	join_button.pressed.connect(_on_join_pressed)
+	# Practice Shift (Tutorial.gd): host, run practice, then carry on with
+	# whatever the save says. Built here, not in Main.tscn (header note).
+	var practice_button := Button.new()
+	practice_button.name = "PracticeButton"
+	practice_button.text = "Practice Shift"
+	practice_button.tooltip_text = "A guided, no-pressure shift that walks you through the job. Then your real shift starts."
+	practice_button.pressed.connect(func():
+		_practice_requested = true
+		_on_host_pressed())
+	host_button.get_parent().add_child(practice_button)
+	host_button.get_parent().move_child(practice_button, host_button.get_index() + 1)
 	continue_button.pressed.connect(_on_continue_pressed)
 	save_button.pressed.connect(_on_save_pressed)
 	save_button.text = "Save"
@@ -1467,6 +1500,7 @@ func _parse_cli_args() -> void:
 		save_enabled = false
 	if "--new-game" in args:
 		_skip_load = true
+	_practice_requested = _practice_requested or "--practice" in args
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
@@ -1622,7 +1656,13 @@ func _on_host_pressed() -> void:
 	_spawn_player(multiplayer.get_unique_id())
 	if bot_mode:
 		_start_bot_timer()
-	if resume == "story":
+	# Oct 2026 playtest fix: a brand-new crew (Host Game from the menu, no
+	# save file at all) gets the practice shift first; the menu's Practice
+	# Shift button (or --practice) asks for it on any save.
+	var fresh_crew: bool = _host_from_menu and save_enabled and not _skip_load and load_status == SaveGameScript.LOAD_NONE and resume == "story" and current_day == 1
+	if _practice_requested or fresh_crew:
+		tutorial.begin(resume)
+	elif resume == "story":
 		get_tree().create_timer(PRODUCT_SPAWN_DELAY).timeout.connect(_start_shift)
 	else:
 		_resume_past_story(resume)
@@ -1952,6 +1992,10 @@ func _update_store_sign(delta: float) -> void:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(0.55, 0.9, 1))
 		_prep_label.text = "CLEANUP — mop & sweep, then clock out in the break room (auto %d:%02d)  ·  Spills %d/%d  ·  Litter %d/%d" % [int(cleanup_time_left) / 60, int(cleanup_time_left) % 60, cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, cleanup.litter_total - cleanup.litter_left, cleanup.litter_total]
+	elif closed and not _day_report_active and tutorial.active:
+		_prep_label.visible = true
+		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
+		_prep_label.text = "PRACTICE SHIFT — no clock, no customers, no pay. Flip the sign at the entrance to start Day 1."
 	elif closed and not _day_report_active:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
@@ -1969,6 +2013,10 @@ func _update_store_sign(delta: float) -> void:
 ## the selling window.
 func open_store(by_peer: int) -> void:
 	if not multiplayer.is_server() or store_open or not shift_active or _day_report_active:
+		return
+	# Flipping the sign ends the practice shift and starts the real one.
+	if tutorial.active:
+		tutorial.finish("sign flipped by %s" % player_display_name(by_peer))
 		return
 	store_open = true
 	store_opened_by = by_peer
@@ -2225,6 +2273,7 @@ func _load_progress() -> String:
 		writeups_week = w["writeups"]
 		priority_sales_week = w["priority_sales"]
 		cleanup.clean_bonus_week = w["clean_bonus"]
+		cleanup.litter_pay_week = w["litter_pay"]
 		break_room.coffee_cups_week = w["coffee_cups"]
 		if completed_story_day >= FINALE_START_DAY:
 			resume = "week_complete"
@@ -2300,7 +2349,7 @@ func _reconfigure_world() -> void:
 var _last_config_key := ""
 
 func _config_key() -> String:
-	return "%d:%d" % [current_day, int(endless.contract.get("id", 0))]
+	return "%d:%d:%s" % [current_day, int(endless.contract.get("id", 0)), tutorial.active]
 
 ## --- WEEK 21: the end of the story, and endless mode's hub --------------------
 
@@ -2320,6 +2369,7 @@ func _finish_story() -> void:
 	writeups_week = 0
 	priority_sales_week = 0
 	cleanup.clean_bonus_week = 0
+	cleanup.litter_pay_week = 0
 	break_room.reset_week()
 	endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
 	completed_story_day = FINALE_START_DAY
@@ -2422,6 +2472,9 @@ func _fill_endless_report(today_sold: int) -> void:
 func record_writeup(peer_id: int, reason: String) -> void:
 	if not multiplayer.is_server():
 		return
+	if tutorial.active:
+		_announce_practice_writeup.rpc(peer_id, reason)
+		return
 	writeups_today += 1
 	writeups_week += 1
 	var by_peer := writeups_by_peer.duplicate()
@@ -2439,6 +2492,13 @@ func _announce_writeup(peer_id: int, reason: String) -> void:
 		show_toast("%s written up for %s  -$%d" % [player_display_name(peer_id), reason, WRITEUP_PENALTY])
 	Sfx.play("writeup") # everyone hears it: it docks the whole crew's pay
 	juice.writeup(peer_id, WRITEUP_PENALTY)
+
+## Practice shift: what a write-up looks like, without the penalty.
+@rpc("authority", "call_local", "reliable")
+func _announce_practice_writeup(peer_id: int, reason: String) -> void:
+	var who := "You'd be" if Net.is_active() and peer_id == multiplayer.get_unique_id() else "%s would be" % player_display_name(peer_id)
+	show_toast("%s WRITTEN UP for %s (-$%d) — practice, so it's free" % [who, reason, WRITEUP_PENALTY])
+	Sfx.play("writeup")
 
 ## Every peer, local: the bottom-row toast (write-ups red; WEEK 23's coffee
 ## toasts pass their own colour).
@@ -2462,11 +2522,14 @@ func player_display_name(peer_id: int) -> String:
 ## WEEK 19: plus the cleanup bonus (0 until clock-out), a share of the gross.
 ## WEEK 23: minus the coffee tab (BreakRoom.gd) — story days only; on an
 ## endless shift coffee comes out of the Bucks and Pay stays the medal score.
+## PLAYTEST FIX (Oct 2026): + litter picked up, $1 a piece (Cleanup.gd's
+## LITTER_PAY_PER_PIECE) — outside the gross, so the cleanliness bonus (a
+## share of the gross) is exactly what it was.
 func _pay_today() -> int:
-	return _gross_pay_today() + cleanup.clean_bonus_today - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
+	return _gross_pay_today() + cleanup.clean_bonus_today + cleanup.litter_pay_today() - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
 
 func _pay_week() -> int:
-	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
+	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week + cleanup.litter_pay_week - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
 
 ## Sales plus the priority-order extra — the day's pay before write-ups and
 ## before the cleanup bonus (which is a share of this).
@@ -2891,15 +2954,43 @@ func _is_out_of_bounds(world_pos: Vector2) -> bool:
 ## whenever a customer has despawned (finished shopping, gave up and left,
 ## or timed out), keeping demand and chaos both roughly constant across
 ## the whole shift instead of a batch that eventually all finish and go
-## idle. Each new spawn's role is picked independently by
-## CUSTOMER_DISRUPTIVE_RATIO, not assigned as a fixed up-front split.
+## idle.
+##
+## PLAYTEST ROOT-CAUSE FIX (Oct 2026 outside playtest: "red customers show up
+## early, then never again"). Each spawn used to roll its role independently
+## at CUSTOMER_DISRUPTIVE_RATIO — correct per SPAWN, but spawns only happen
+## into slots someone else just left, and the two roles leave at very
+## different rates: a disruptive customer always leaves at
+## MAX_LIFETIME_DISRUPTIVE (45s), while a shopper's dynamic lifetime budget
+## grows every time it commits to an item or a register (Customer.gd's
+## _extend_lifetime_budget()) — 90-150s on a stocked floor, longer than the
+## whole ~78-111s selling window. So: the opening fills the cap in one tick,
+## all of that wave's red customers time out together 45s later, and each
+## freed slot comes back red only 35% of the time — the other 65% go to a
+## shopper who then holds that slot for the rest of the window. The red
+## count only ever ratchets down. Measured on the old code (Day 7 solo,
+## stocked floor): 6 red at opening -> 1 red from 45s to close; tools/
+## playtest_fixes_test.gd --test=disruptive reproduces it. Now the ratio
+## applies to the CROWD ON THE FLOOR: each refill keeps round(cap * ratio)
+## of the live customers disruptive, so whenever a red one leaves, a red one
+## comes back in (and Customer.gd jitters each one's lifetime, so they stop
+## leaving in lockstep waves).
 func _restock_customers() -> void:
 	var cap: int = _customer_baseline() + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
-	var current := get_tree().get_nodes_in_group("customer").size()
+	var live := get_tree().get_nodes_in_group("customer").filter(func(c): return not c.is_queued_for_deletion())
+	var current := live.size()
+	var live_disruptive := live.filter(func(c): return c.role == "disruptive").size()
+	var want_disruptive := roundi(cap * CUSTOMER_DISRUPTIVE_RATIO)
+	var roles := []
 	while current < cap:
-		var role := "disruptive" if randf() < CUSTOMER_DISRUPTIVE_RATIO else "shopper"
-		_spawn_customer(role)
+		var role := "disruptive" if live_disruptive < want_disruptive else "shopper"
+		if role == "disruptive":
+			live_disruptive += 1
+		roles.append(role)
 		current += 1
+	roles.shuffle() # an opening wave walks in mixed, not reds first
+	for role in roles:
+		_spawn_customer(role)
 
 ## --- Week 6 Part 1: section helpers --------------------------------------
 
@@ -3271,7 +3362,7 @@ func _process(delta: float) -> void:
 		if break_room.coffee_cups_today > 0:
 			report_pay_label.text += "\n(coffee: %d cup(s), %s off — %s)" % [break_room.coffee_cups_today, _format_money(break_room.dollars_today()), break_room.drinkers_text()]
 		report_order_label.visible = lv["orders"] > 0
-		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
+		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  ·  +%s trash picked up (%d)  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), _format_money(cleanup.litter_pay_today()), cleanup.litter_collected_today, ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
 		report_bucks_label.visible = is_endless()
 		report_run_label.visible = is_endless()
@@ -3314,6 +3405,7 @@ func _process(delta: float) -> void:
 	# the spawners themselves being authority-driven), but the timer is
 	# harmless to tick on every peer, so it's not worth an extra guard here.
 	if shift_active and multiplayer.is_server():
+		tutorial.tick_host() # practice shift: the clock stays pinned
 		# WEEK 16: the prep ceiling — the store opens on its own when it runs
 		# out, whether or not anyone flipped the sign.
 		if not store_open:

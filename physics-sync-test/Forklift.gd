@@ -177,6 +177,10 @@ var _driver_t := 0.0
 func _ready() -> void:
 	add_to_group("forklift")
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING # top-down: no floor/wall distinction
+	# PLAYTEST FIX: shelved stock is on its own layer that players and loose
+	# stock pass through (Carryable.gd's LAYER_SHELF_STOCK) — a forklift is a
+	# real hazard, so it still hits it (and a ram still wrecks the shelf).
+	collision_mask |= preload("res://Carryable.gd").LAYER_SHELF_STOCK
 	home_position = position
 	rotation = home_rotation
 	target_position = position

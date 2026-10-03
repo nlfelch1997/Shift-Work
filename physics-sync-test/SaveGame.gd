@@ -56,6 +56,7 @@ static func snapshot(main: Node) -> Dictionary:
 			"writeups": main.writeups_week,
 			"priority_sales": main.priority_sales_week,
 			"clean_bonus": main.cleanup.clean_bonus_week,
+			"litter_pay": main.cleanup.litter_pay_week, # Oct 2026; older saves read 0
 			"coffee_cups": main.break_room.coffee_cups_week,
 		},
 		"endless": {
@@ -133,6 +134,7 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 			"writeups": _count(week.get("writeups")),
 			"priority_sales": _count(week.get("priority_sales")),
 			"clean_bonus": _count(week.get("clean_bonus")),
+			"litter_pay": _count(week.get("litter_pay")),
 			"coffee_cups": _count(week.get("coffee_cups")),
 		},
 		"endless": {

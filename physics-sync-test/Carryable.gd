@@ -37,7 +37,20 @@ class_name Carryable
 ##   everyone, including itself via call_local, so nobody ever has to
 ##   guess or can end up disagreeing about what happened)
 
-const PICKUP_RANGE := 60.0
+## PLAYTEST FIX (Oct 2026 outside playtest: "grabbing product off a crate
+## means chasing it around"): 60 -> 70, the radius every other E
+## interaction in the store already uses (Main.gd's STORE_SIGN_RANGE /
+## TIME_CLOCK_RANGE, BreakRoom.gd's COFFEE_RANGE / VENDING_RANGE, Cleanup.gd's
+## BIN_RANGE), and now the ONE number both sides use: Player.gd picks the
+## nearest item within it, and the host accepts within it plus
+## PICKUP_NET_SLACK. Before, the player picked within 66 but the host
+## refused past 60, so a press from 60-66px away (or a client a few px out
+## of step with the host's copy) silently did nothing — you had to keep
+## shuffling into the item, which nudged it away.
+const PICKUP_RANGE := 70.0
+## Host-side allowance on top of PICKUP_RANGE for a client's view of an
+## item trailing the host's by a few px of smoothing.
+const PICKUP_NET_SLACK := 12.0
 const CARRY_OFFSET := Vector2(30.0, 0.0)
 ## Fixed speed regardless of what's thrown (confirmed decision, not a
 ## placeholder) — a feather and a crate fly identically. Simpler and more
@@ -93,6 +106,27 @@ const STACK_STEP := 9.0
 ## Side-to-side spacing of an armful set down at once (a product is 28px).
 const ARMFUL_SPREAD := 34.0
 var _drop_side := 0 # host, for the one drop being processed (see try_drop())
+
+## PLAYTEST FIX (Oct 2026 outside playtest: "bumping a shelf knocks my stock
+## off, stocking turns into cleanup") — SHELVED STOCK. While Shelf.gd counts
+## this item as placed in a slot, it moves to its own physics layer that
+## players, customers and loose stock don't collide with, so walking past a
+## stocked shelf, brushing it with a box, or a thrown can landing on it no
+## longer dislodges anything. Pickup is untouched (it's a range check, not a
+## collision). The REAL hazards still get through on purpose: the forklifts
+## and disruptive customers add LAYER_SHELF_STOCK to their collision masks
+## (Forklift.gd / Customer.gd), and a forklift ram's wreck() pushes every
+## slot's item directly — any shove that actually moves a shelved item
+## un-shelves it at once (_physics_process below), so it flies and lands as
+## ordinary stock again. Host decides (Shelf.gd is host-authoritative); the
+## layer switch goes to every peer through a reliable call_local RPC, since
+## a client's own player collides against that client's copy of the item.
+const LAYER_FREE := 1
+const LAYER_SHELF_STOCK := 4 # physics layer 3
+## Anything moving faster than this while shelved was knocked by a hazard
+## (Shelf.gd's own KNOCK_SPEED-scale threshold; a resting item reads ~0).
+const SHELVED_KNOCK_SPEED := 60.0
+var shelved := false
 
 func _ready() -> void:
 	body = get_parent()
@@ -177,6 +211,8 @@ func _physics_process(_delta: float) -> void:
 			body.angular_velocity = 0.0
 		elif body.linear_velocity.length() > MAX_SPEED:
 			body.linear_velocity = body.linear_velocity.normalized() * MAX_SPEED
+		if shelved and carrier_id == 0 and body.linear_velocity.length() > SHELVED_KNOCK_SPEED:
+			set_shelved(false) # a hazard knocked it: back to ordinary loose stock this tick
 		target_position = body.position
 		target_rotation = body.rotation
 	GameLog.log_object_state(body.name, multiplayer.get_unique_id(), body.position, body.linear_velocity)
@@ -248,9 +284,35 @@ func request_push(impulse: Vector2) -> void:
 	# never attributed. The host's own player is attributed in Player.gd's
 	# _push_rigid_bodies() instead, since it doesn't come through here.
 	var sender := multiplayer.get_remote_sender_id()
+	# Shelved stock ignores player bumps (see LAYER_SHELF_STOCK). A client
+	# that hasn't heard it's shelved yet (a late joiner) can still collide
+	# with its own copy and ask — the host says no.
+	if shelved and sender > 0:
+		return
 	if sender > 0:
 		_notify_manager("note_push", sender, body)
+	if shelved:
+		set_shelved(false)
 	body.apply_central_impulse(impulse)
+
+## Host-only (Shelf.gd): this item started / stopped counting as placed.
+func set_shelved(v: bool) -> void:
+	if not is_multiplayer_authority() or shelved == v:
+		return
+	rpc("_rpc_set_shelved", v)
+
+@rpc("authority", "call_local", "reliable")
+func _rpc_set_shelved(v: bool) -> void:
+	shelved = v
+	if carrier_id == 0:
+		_apply_free_layers()
+
+## The layers of an item nobody is holding: shelved stock on its own layer,
+## colliding with nothing itself (only the hazards that mask it in can touch
+## it); everything else on the shared layer 1, as always.
+func _apply_free_layers() -> void:
+	body.collision_layer = LAYER_SHELF_STOCK if shelved else LAYER_FREE
+	body.collision_mask = 0 if shelved else LAYER_FREE
 
 ## --- Pickup / drop / throw ---------------------------------------------
 
@@ -326,7 +388,7 @@ func _validate_pickup(requester_id: int, requester_pos: Vector2) -> void:
 		return
 	if carrier_id != 0:
 		return # already held — first request wins, rest are silently ignored
-	if requester_pos.distance_to(body.position) > PICKUP_RANGE:
+	if requester_pos.distance_to(body.position) > PICKUP_RANGE + PICKUP_NET_SLACK:
 		return
 	_notify_manager("note_work", requester_id)
 	rpc("_rpc_set_carrier", requester_id)
@@ -422,8 +484,8 @@ func _rpc_set_carrier(id: int) -> void:
 				if _drop_side > 0:
 					body.position += Vector2.DOWN.rotated(facing) * ARMFUL_SPREAD * ceili(_drop_side / 2.0) * (1.0 if _drop_side % 2 == 1 else -1.0)
 		_drop_side = 0
-		body.collision_layer = 1
-		body.collision_mask = 1
+		shelved = false # a carried item left its slot; dropping never lands it shelved
+		_apply_free_layers()
 		if is_multiplayer_authority():
 			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
 			# position moved each tick (that's what lets a frozen "platform"
@@ -466,8 +528,8 @@ func _rpc_throw(direction: Vector2) -> void:
 			if facing == null:
 				facing = 0.0
 			body.position = carrier.global_position + carry_offset(facing)
-	body.collision_layer = 1
-	body.collision_mask = 1
+	shelved = false
+	_apply_free_layers()
 	if is_multiplayer_authority():
 		body.freeze = false
 		body.linear_velocity = direction * THROW_SPEED

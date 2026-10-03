@@ -305,7 +305,8 @@ static func bucks_cost(cups: int, crew: int) -> int:
 ## closing up, the report isn't up.) The host decides; peers use it for the
 ## prompt only.
 func coffee_open() -> bool:
-	return main.shift_active and not main.cleanup_active and not main.is_day_report_active()
+	# Not during the practice shift (Tutorial.gd): the cup comes off real pay.
+	return main.shift_active and not main.cleanup_active and not main.is_day_report_active() and not main.tutorial.active
 
 ## Who had a cup this shift, by display name, for the report.
 func drinkers_text() -> String:
