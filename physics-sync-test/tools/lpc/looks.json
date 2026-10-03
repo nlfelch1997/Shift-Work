@@ -14,5 +14,7 @@
  "player_2": "sex=female&body=Body_Color_taupe&head=Human_Female_taupe&expression=Neutral_taupe&hair=Shoulderl_blonde&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
  "player_3": "sex=male&body=Body_Color_bronze&head=Human_Male_bronze&expression=Neutral_bronze&hair=Flat_top_fade_black&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
  "player_4": "sex=female&body=Body_Color_olive&head=Human_Female_olive&expression=Neutral_olive&hair=Curly_long_ginger&clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black",
- "manager": "sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Parted_gray&clothes=Collared/Formal_Longsleeve_white&legs=Formal_Pants_black&shoes=Basic_Shoes_black&jacket=Collared_coat_charcoal&neck=Necktie_red"
+ "manager": "sex=male&body=Body_Color_light&head=Human_Male_light&expression=Neutral_light&hair=Parted_gray&clothes=Collared/Formal_Longsleeve_white&legs=Formal_Pants_black&shoes=Basic_Shoes_black&jacket=Collared_coat_charcoal&neck=Necktie_red",
+ "driver_produce": "sex=male&body=Body_Color_amber&head=Human_Male_amber&expression=Shock_amber&hair=Messy1_black&clothes=Longsleeve_2_charcoal&overalls=Overalls_yellow&legs=Pants_charcoal&shoes=Basic_Boots_brown&hat=Kettle_helm_gold&hat_secondary=Kettle_Inner_yellow",
+ "driver_delivery": "sex=female&body=Body_Color_light&head=Human_Female_light&expression=Rolling_Eyes_light&hair=Ponytail_red&clothes=Longsleeve_2_charcoal&overalls=Overalls_yellow&legs=Pants_charcoal&shoes=Basic_Boots_brown&hat=Kettle_helm_gold&hat_secondary=Kettle_Inner_yellow"
 }

@@ -121,6 +121,27 @@ const ART_SIDE := Rect2i(99, 102, 91, 89)
 const ART_FRONT := Rect2i(204, 99, 71, 92)
 const ART_SCALE := 0.95
 
+## WEEK 26 — a driver in the seat. Each forklift has one fixed driver
+## (driver_look(): never random, never synced — every peer derives the same
+## look from which forklift it is). The sheet is the LPC generator's seated-
+## on-a-chair frame in the 4 facings (tools/lpc/post.py), so the driver is a
+## plain Sprite2D on top of the truck art, not a CharacterSprite: it never
+## walks, and its facing is exactly the truck art's own (side view left/
+## right, front view = facing the camera), decided in _update_art() from the
+## already-replicated rotation — so it can't disagree with the truck.
+## Offsets are in truck-art pixels from the art's center, for the side view
+## with the forks pointing left (mirrored when the art is flipped).
+const CharacterSpriteScript := preload("res://CharacterSprite.gd")
+const DRIVER_SCALE := 0.68
+const DRIVER_SIDE_AT := Vector2(15, 4)
+const DRIVER_FRONT_AT := Vector2(0, 2)
+## Rows of the seated frame that are drawn: down to just below the knees, so
+## the lower legs/boots stay "inside" the cab (behind the body panel).
+const DRIVER_CROP_H := 52
+## A little bounce in the seat while the truck is actually moving.
+const DRIVER_BOB_PX := 1.0
+const DRIVER_BOB_HZ := 7.0
+
 @export var home_rotation := PI # parked facing west (toward the hub) at the lane's east end
 
 ## Replicated (see _ready()). target_* are the host's real pose, smoothed
@@ -147,6 +168,11 @@ var _blink_t := 0.0
 var rams_today := 0
 var _art: Sprite2D
 var _facing_east := true
+var _driver: Sprite2D
+var _driver_row := -1
+var _driver_last_pos := Vector2.INF
+var _driver_speed := 0.0
+var _driver_t := 0.0
 
 func _ready() -> void:
 	add_to_group("forklift")
@@ -177,7 +203,23 @@ func _ready() -> void:
 	_art.scale = Vector2.ONE * ART_SCALE
 	add_child(_art)
 	move_child(_art, 0)
+	_driver = Sprite2D.new()
+	_driver.name = "Driver"
+	_driver.texture = load(CharacterSpriteScript.texture_path(driver_look()))
+	_driver.region_enabled = true
+	_driver.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	# The truck art's scale is applied on top (child of _art).
+	_driver.scale = Vector2.ONE * (DRIVER_SCALE / ART_SCALE)
+	_art.add_child(_driver)
 	configure(false)
+
+## Which assets/characters/ sheet sits in the seat. Fixed per forklift.
+func driver_look() -> String:
+	return "driver_produce"
+
+## Driver row (CharacterSpriteScript.ROW_*) currently shown — read by the tests.
+func driver_row() -> int:
+	return _driver_row
 
 ## Called by Main.gd on EVERY peer whenever current_day changes (see
 ## _configure_hazards()). Pure local state — visibility and collision —
@@ -495,3 +537,37 @@ func _update_art() -> void:
 	_art.position = Vector2(0, -28).rotated(-rotation)
 	# The beacon on the cab roof, BEEP above it.
 	$Beacon.position = Vector2(16, 0) + Vector2(0, -62).rotated(-rotation)
+	_update_driver(front)
+
+## Every peer, every frame: the driver faces where the truck art faces —
+## toward the camera in the front view, else toward the forks (the side
+## view's facing, which is also what it keeps while heading north).
+func _update_driver(front: bool) -> void:
+	if _driver == null:
+		return
+	if front:
+		_driver_row = CharacterSpriteScript.ROW_DOWN
+	else:
+		_driver_row = CharacterSpriteScript.ROW_RIGHT if _facing_east else CharacterSpriteScript.ROW_LEFT
+	var fr := CharacterSpriteScript.FRAME
+	_driver.region_rect = Rect2(0, _driver_row * fr, fr, DRIVER_CROP_H)
+	var at := DRIVER_FRONT_AT if front else DRIVER_SIDE_AT
+	if _facing_east and not front:
+		at.x = -at.x
+	# Bounce only while the truck visibly moves on THIS peer (its replicated,
+	# smoothed position) — same rule as CharacterSprite's walk cycle.
+	var delta := get_process_delta_time()
+	var p := global_position
+	if _driver_last_pos != Vector2.INF and delta > 0.0:
+		var inst := p.distance_to(_driver_last_pos) / delta
+		if inst > 2000.0: # a day-reset teleport is not driving
+			inst = 0.0
+		_driver_speed = lerpf(_driver_speed, inst, clampf(delta * 12.0, 0.0, 1.0))
+	_driver_last_pos = p
+	var bob := 0.0
+	if _driver_speed > 20.0:
+		_driver_t += delta
+		bob = -DRIVER_BOB_PX if fmod(_driver_t * DRIVER_BOB_HZ, 1.0) < 0.5 else 0.0
+	# region_rect is centered on the sprite's position; anchor its bottom
+	# (the knees) at `at`.
+	_driver.position = at + Vector2(0, -DRIVER_CROP_H * 0.5 * _driver.scale.y + bob)
