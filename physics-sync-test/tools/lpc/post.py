@@ -1,6 +1,10 @@
 # Post-process the generator's walk.png exports for Shift Work:
 # - keep only the 9 used columns (stand + 8 walk frames), 4 rows (up, left, down, right)
 # - staff (cashier_*, player_*): stamp a 3x2 white name tag on the polo's chest
+# - forklift drivers (driver_*, Week 26): never stand or walk, so keep only the
+#   seated-on-a-chair column of sit.png (column 3 of 3) -> 64x256, 1 column x
+#   the same 4 facing rows
+# Usage: python3 post.py OUTDIR [look ...]   (no looks = every look)
 import sys, json, zipfile, io, os
 from PIL import Image
 outdir = sys.argv[1]
@@ -9,7 +13,11 @@ os.makedirs(outdir, exist_ok=True)
 def is_polo(px):
     r, g, b, a = px
     return a > 200 and g > r + 25 and g > b + 25
-for name in looks:
+for name in (sys.argv[2:] or looks):
+    if name.startswith('driver'):
+        sit = Image.open(io.BytesIO(zipfile.ZipFile(f'out/{name}.zip').read('standard/sit.png'))).convert('RGBA')
+        sit.crop((128, 0, 192, 256)).save(f'{outdir}/{name}.png')
+        continue
     walk = Image.open(io.BytesIO(zipfile.ZipFile(f'out/{name}.zip').read('standard/walk.png'))).convert('RGBA')
     sheet = walk.crop((0, 0, 9 * 64, 256))
     if name.startswith(('cashier', 'player')):

@@ -18,6 +18,14 @@ extends SceneTree
 ##   (x2) godot --headless --path . --script res://tools/character_test.gd -- --client --connect-port=8941 --no-save --test=net-characters
 ## tools/run_character_tests.sh runs all of it (solo twice, to compare the
 ## identities across two separate sessions).
+##
+## WEEK 26 — the forklift drivers ride along in both modes: each forklift's
+## fixed driver look (in identity(), so the per-day/per-session/per-peer
+## identity checks cover them), the sheet loaded, and — sampled every frame
+## while both forklifts really drive — the driver facing the same way as its
+## own truck art and the truck's heading, and never sticking out of the
+## truck. Co-op: every peer samples on the same wall-clock ticks and the host
+## compares each peer's driver rows against its own.
 
 const CS := preload("res://CharacterSprite.gd")
 const NET_DIR := "user://net_chars/"
@@ -97,6 +105,107 @@ func sprite_of(n: Node) -> Sprite2D:
 func cashier_sprite(body: Node) -> Sprite2D:
 	return body.get_node("CashierNPC/CharacterSprite") as Sprite2D
 
+## WEEK 26: forklift name -> the one driver look it always has.
+const DRIVER_LOOKS := {"Forklift": "driver_produce", "DeliveryForklift": "driver_delivery"}
+
+func forklifts() -> Array:
+	return [main.forklift, main.delivery_forklift]
+
+func driver_of(f: Node) -> Sprite2D:
+	return f.get_node_or_null("Art/Driver") as Sprite2D
+
+func driver_look(f: Node) -> String:
+	var s := driver_of(f)
+	if s == null or s.texture == null:
+		return "<none>"
+	return s.texture.resource_path.get_file().get_basename()
+
+## The seated sheet: 1 column x the 4 facing rows, 64 px.
+func driver_sheet_ok(s: Sprite2D) -> bool:
+	return s != null and s.texture != null and s.texture.get_size() == Vector2(CS.FRAME, CS.ROWS * CS.FRAME) and s.region_enabled
+
+## The row the truck's own art implies: front view -> facing the camera,
+## else the side the forks point to.
+func art_row(f: Node) -> int:
+	var art: Sprite2D = f.get_node("Art")
+	if Rect2i(art.region_rect) == f.ART_FRONT:
+		return CS.ROW_DOWN
+	return CS.ROW_RIGHT if art.flip_h else CS.ROW_LEFT
+
+## The row the truck's heading implies, or -1 where the pack has no view
+## for it (heading north/diagonal: the art keeps its last side view).
+func heading_row(f: Node) -> int:
+	var dir := Vector2.RIGHT.rotated(f.rotation)
+	if dir.y > 0.7:
+		return CS.ROW_DOWN
+	if dir.y < -0.3:
+		return -1
+	if dir.x > 0.3:
+		return CS.ROW_RIGHT
+	if dir.x < -0.3:
+		return CS.ROW_LEFT
+	return -1
+
+## Driver drawn fully over the truck art (same screen-space box test).
+func driver_inside(f: Node) -> bool:
+	var d := driver_of(f)
+	var art: Sprite2D = f.get_node("Art")
+	var dr := d.get_global_transform() * d.get_rect()
+	var ar := art.get_global_transform() * art.get_rect()
+	return ar.grow(0.5).encloses(dr)
+
+## Samples both forklifts' drivers every frame for `seconds` on THIS peer.
+## With `tick` > 0 also records the driver row at every multiple of `tick`
+## since `t0_unix` (wall clock), for comparing peers sample-for-sample.
+func sample_drivers(seconds: float, t0_unix := 0.0, tick := 0.0) -> Dictionary:
+	var out := {}
+	for f in forklifts():
+		out[String(f.name)] = {"look": driver_look(f), "loaded": driver_sheet_ok(driver_of(f)), "n": 0, "art_bad": 0, "heading_n": 0, "heading_bad": 0, "inside_bad": 0, "visible_bad": 0, "turning": 0, "rows": {}, "moved": 0.0, "timeline": [], "_last": f.global_position, "_rot": f.rotation}
+	var t := 0.0
+	var next_k := 0
+	while t < seconds:
+		await process_frame
+		t += root.get_process_delta_time()
+		var stamp := -1
+		if tick > 0.0:
+			var k := int((Time.get_unix_time_from_system() - t0_unix) / tick)
+			if k >= next_k:
+				stamp = k
+				next_k = k + 1
+		for f in forklifts():
+			var e: Dictionary = out[String(f.name)]
+			var d := driver_of(f)
+			if d == null:
+				continue
+			var r: int = f.driver_row()
+			if stamp >= 0:
+				e["timeline"].append([stamp, r])
+			if not f.visible:
+				continue
+			e["n"] += 1
+			e["moved"] += f.global_position.distance_to(e["_last"])
+			e["_last"] = f.global_position
+			e["rows"][r] = e["rows"].get(r, 0) + 1
+			e["art_bad"] += 0 if r == art_row(f) else 1
+			e["visible_bad"] += 0 if d.is_visible_in_tree() else 1
+			e["inside_bad"] += 0 if driver_inside(f) else 1
+			# The art (and so the driver) is set in _process, before this
+			# frame's physics step turns the truck — mid-turn it trails the
+			# heading by a frame, truck and driver alike. Heading is checked
+			# on frames the truck isn't rotating; art_bad covers every frame.
+			var turning := absf(angle_difference(f.rotation, e["_rot"])) > 0.0005
+			e["_rot"] = f.rotation
+			if turning:
+				e["turning"] += 1
+			var h := heading_row(f)
+			if h >= 0 and not turning:
+				e["heading_n"] += 1
+				e["heading_bad"] += 0 if h == r else 1
+	for k in out:
+		out[k].erase("_last")
+		out[k].erase("_rot")
+	return out
+
 func customers() -> Array:
 	return get_nodes_in_group("customer")
 
@@ -120,6 +229,9 @@ func identity() -> Dictionary:
 		out["cashiers"][String(body.name)] = s.look if s else "<none>"
 	var ms := sprite_of(main.manager)
 	out["manager"] = ms.look if ms else "<none>"
+	out["drivers"] = {}
+	for f in forklifts():
+		out["drivers"][String(f.name)] = driver_look(f)
 	return out
 
 ## The fixed-identity table: Cashier<N> wears cashier_<N>, the manager
@@ -131,6 +243,8 @@ func fixed_identity_ok(idn: Dictionary) -> String:
 			return "%s wears %s, want %s" % [body_name, idn["cashiers"][body_name], want]
 	if idn["manager"] != "manager":
 		return "manager wears %s" % idn["manager"]
+	if idn.get("drivers", {}) != DRIVER_LOOKS:
+		return "forklift drivers %s, want %s" % [str(idn.get("drivers", {})), str(DRIVER_LOOKS)]
 	return ""
 
 func identity_line(idn: Dictionary) -> String:
@@ -139,7 +253,8 @@ func identity_line(idn: Dictionary) -> String:
 	var parts := []
 	for k in keys:
 		parts.append("%s=%s" % [k, idn["cashiers"][k]])
-	return "%s manager=%s" % [" ".join(parts), idn["manager"]]
+	var drivers: Dictionary = idn.get("drivers", {})
+	return "%s manager=%s forklift=%s delivery_forklift=%s" % [" ".join(parts), idn["manager"], drivers.get("Forklift", "?"), drivers.get("DeliveryForklift", "?")]
 
 ## Walks this process's own player one way through its real keyboard
 ## actions; samples (on THIS peer) every given node's sprite row/walk state
@@ -315,6 +430,34 @@ func _run_solo() -> void:
 	check(f["motion_n"] > 100 and mm > 0.75, "C5 walking customers face the way they actually move %.1f%% of %d moving frames" % [100.0 * mm, f["motion_n"]])
 	if main.manager.active:
 		check(f["mgr_samples"] > 100 and f["mgr_bad"] == 0, "C5 manager row matches his facing (%d samples, %d off)" % [f["mgr_samples"], f["mgr_bad"]])
+	# --- C8 (WEEK 26): forklift drivers, while both forklifts really drive
+	# (the store is open: the Produce forklift patrols/rams; the delivery
+	# one has been unloading since the shift started)
+	for fk in forklifts():
+		var d := driver_of(fk)
+		check(driver_sheet_ok(d) and driver_look(fk) == DRIVER_LOOKS[String(fk.name)], "C8 %s: driver sheet loaded (%s, 4 seated facings of 64px)" % [fk.name, driver_look(fk)])
+	var staff_looks := ["manager"]
+	for k in 5:
+		staff_looks.append("cashier_%d" % (k + 1))
+	for k in 4:
+		staff_looks.append("player_%d" % (k + 1))
+	check(not DRIVER_LOOKS.values().any(func(l): return l in staff_looks) and DRIVER_LOOKS["Forklift"] != DRIVER_LOOKS["DeliveryForklift"], "C8 each forklift has its own driver, neither wearing a store-staff or manager look")
+	var rams0: int = main.forklift.rams_today
+	var drops0: int = main.delivery_forklift.drops_today
+	var dv: Dictionary = await sample_drivers(30.0)
+	for fk in forklifts():
+		var e: Dictionary = dv[String(fk.name)]
+		print("DRIVER %s %s" % [fk.name, str(e)])
+		check(e["n"] > 600 and e["moved"] > 300.0, "C8 %s drove %.0f px over %d frames" % [fk.name, e["moved"], e["n"]])
+		check(e["art_bad"] == 0 and e["visible_bad"] == 0, "C8 %s: driver faces the same way as the truck art on every frame (%d off), always visible" % [fk.name, e["art_bad"]])
+		check(e["heading_n"] > 300 and e["heading_bad"] == 0, "C8 %s: driver row matches the truck's heading on %d/%d steady (not mid-turn) frames with a side/front view; %d turning frames" % [fk.name, e["heading_n"] - e["heading_bad"], e["heading_n"], e["turning"]])
+		check(e["inside_bad"] == 0, "C8 %s: driver never drawn outside the truck art (%d frames off)" % [fk.name, e["inside_bad"]])
+	check(dv["Forklift"]["rows"].has(CS.ROW_LEFT) and dv["Forklift"]["rows"].has(CS.ROW_RIGHT), "C8 Produce driver seen facing both left and right on patrol %s" % str(dv["Forklift"]["rows"]))
+	check(dv["DeliveryForklift"]["rows"].size() >= 2, "C8 delivery driver seen in %d facings while unloading %s" % [dv["DeliveryForklift"]["rows"].size(), str(dv["DeliveryForklift"]["rows"])])
+	print("C8 info: Produce forklift rams %d -> %d, delivery drops %d -> %d during the sample" % [rams0, main.forklift.rams_today, drops0, main.delivery_forklift.drops_today])
+	if shots:
+		for fk in forklifts():
+			await shot("driver_%s" % fk.name, fk.global_position + Vector2(0, -20), 3.0)
 	# --- C6: staff vs manager vs customers lineup (shots only)
 	if shots:
 		var spot := Vector2(1440, 1000)
@@ -399,13 +542,20 @@ func _peer_round(ids: Array) -> Dictionary:
 		stopped[str(id)] = {"row": s.row(), "walking": s.is_walking()}
 	var f: Dictionary = await sample_npc_facing(5.0)
 	f["fps"] = Engine.get_frames_per_second()
+	# WEEK 26: both forklift drivers, every peer on the same wall-clock ticks.
+	var drv_t0 := start_at + 9.0
+	while Time.get_unix_time_from_system() < drv_t0:
+		await process_frame
+	var drivers: Dictionary = await sample_drivers(15.0, drv_t0, 0.1)
 	var idn := identity()
 	var all_loaded := true
 	for n in main.players.values() + customers() + [main.manager]:
 		all_loaded = all_loaded and sheet_ok(sprite_of(n))
 	for body in main.cashiers:
 		all_loaded = all_loaded and sheet_ok(cashier_sprite(body))
-	return {"id": me, "identity": idn, "walk": walk, "stopped": stopped, "npc": f, "loaded": all_loaded}
+	for fk in forklifts():
+		all_loaded = all_loaded and driver_sheet_ok(driver_of(fk))
+	return {"id": me, "identity": idn, "walk": walk, "stopped": stopped, "npc": f, "loaded": all_loaded, "drivers": drivers}
 
 func _run_net_host() -> void:
 	var want := 3
@@ -478,6 +628,27 @@ func _run_net_host() -> void:
 		check(int(f["motion_n"]) > 50 and mm > 0.8, "N3 peer %s: walking customers face the way they move on that screen %.1f%% of %d frames (%s)" % [pid, 100.0 * mm, int(f["motion_n"]), str(f)])
 		if int(f["mgr_samples"]) > 0:
 			check(int(f["mgr_bad"]) == 0, "N3 peer %s: manager row matches his facing (%d samples)" % [pid, int(f["mgr_samples"])])
+	# N4 (WEEK 26): forklift drivers — same look, facing their own truck on
+	# every peer, and the same row as the host's at the same moment
+	var host_drv: Dictionary = mine["drivers"]
+	for pid in reports:
+		var dr: Dictionary = reports[pid]["drivers"]
+		for fname in DRIVER_LOOKS:
+			var e: Dictionary = dr[fname]
+			check(e["look"] == DRIVER_LOOKS[fname] and e["loaded"], "N4 peer %s: %s driver is %s, sheet loaded" % [pid, fname, e["look"]])
+			check(int(e["n"]) > 300 and int(e["art_bad"]) == 0 and int(e["visible_bad"]) == 0 and int(e["inside_bad"]) == 0, "N4 peer %s: %s driver faces its truck art on all %d frames, visible, inside the truck (moved %.0f px; rows %s)" % [pid, fname, int(e["n"]), float(e["moved"]), str(e["rows"])])
+			check(int(e["heading_bad"]) == 0, "N4 peer %s: %s driver row matches the truck's heading on that screen (%d frames)" % [pid, fname, int(e["heading_n"])])
+			var hrows := {}
+			for pair in host_drv[fname]["timeline"]:
+				hrows[int(pair[0])] = int(pair[1])
+			var common := 0
+			var same := 0
+			for pair in e["timeline"]:
+				if hrows.has(int(pair[0])):
+					common += 1
+					same += 1 if hrows[int(pair[0])] == int(pair[1]) else 0
+			var share := float(same) / maxf(1.0, float(common))
+			check(common > 100 and share > 0.9, "N4 peer %s: %s driver shows the host's row on %.1f%% of %d shared 0.1 s ticks" % [pid, fname, 100.0 * share, common])
 	_net_write("done.json", {"fails": fails})
 	await wait(1.0)
 	finish()

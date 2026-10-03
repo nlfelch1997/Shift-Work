@@ -3,6 +3,9 @@ import json
 def M(skin): return f"sex=male&body=Body_Color_{skin}&head=Human_Male_{skin}&expression=Neutral_{skin}"
 def F(skin): return f"sex=female&body=Body_Color_{skin}&head=Human_Female_{skin}&expression=Neutral_{skin}"
 STAFF = "clothes=Shortsleeve_Polo_green&legs=Pants_charcoal&shoes=Basic_Shoes_black"
+# Week 26 warehouse crew (forklift drivers): yellow hard hat (the kettle helm in
+# gold with a yellow crown), safety-yellow overalls, charcoal long sleeves, boots.
+WAREHOUSE = "clothes=Longsleeve_2_charcoal&overalls=Overalls_yellow&legs=Pants_charcoal&shoes=Basic_Boots_brown&hat=Kettle_helm_gold&hat_secondary=Kettle_Inner_yellow"
 looks = {
  # customers: everyday clothes, no green tops (green = staff)
  "customer_1": M("light") + "&hair=Messy1_chestnut&clothes=TShirt_sky&legs=Pants_navy&shoes=Basic_Shoes_brown",
@@ -24,5 +27,11 @@ looks = {
  "player_4": F("olive") + "&hair=Curly_long_ginger&" + STAFF,
  # the manager: suit
  "manager": M("light") + "&hair=Parted_gray&clothes=Collared/Formal_Longsleeve_white&legs=Formal_Pants_black&shoes=Basic_Shoes_black&jacket=Collared_coat_charcoal&neck=Necktie_red",
+ # Week 26 forklift drivers: one fixed identity per forklift, same crew
+ # uniform, own face. Expressions do the comedy: the Produce (hazard) driver
+ # is permanently alarmed at what he keeps hitting; the delivery driver has
+ # unloaded this truck one time too many.
+ "driver_produce": M("amber").replace("Neutral_amber", "Shock_amber") + "&hair=Messy1_black&" + WAREHOUSE,
+ "driver_delivery": F("light").replace("Neutral_light", "Rolling_Eyes_light") + "&hair=Ponytail_red&" + WAREHOUSE,
 }
 json.dump(looks, open('looks.json','w'), indent=1)

@@ -25,9 +25,11 @@ Notes:
 | `characters/cashier_1..5.png` | The register cashiers — one fixed look per register, store uniform (`Cashier.gd`) | same | same |
 | `characters/player_1..4.png` | Players — the same store uniform, one face per player slot (`Player.gd`) | same | same |
 | `characters/manager.png` | The manager — one fixed look, charcoal suit + red tie (`Manager.gd`) | same | same |
+| `characters/driver_produce.png`, `driver_delivery.png` | The forklift drivers (Week 26) — one fixed driver per forklift, warehouse crew: yellow hard hat, safety-yellow overalls (`Forklift.gd`, `DeliveryForklift.gd`) | same | same |
 
 Made with the generator's own "ZIP: Split by animation" export (only the walk
-sheet is used) — the exact selection for every look is in
+sheet is used; for the forklift drivers, only the seated-on-a-chair frame of
+the sit sheet) — the exact selection for every look is in
 `tools/lpc/looks.json`, the steps in `tools/lpc/`. The staff name tag (3x2 white
 pixels on the polo) was added afterwards by `tools/lpc/post.py`.
 
@@ -48,5 +50,5 @@ Credits-screen / Steam-page text:
 > JaidynReiman, Evert, TheraHedwig, MuffinElZangano, Durrani, Pierre Vigier
 > (pvigier), Lanea Zimmerman (Sharm), Manuel Riecke (MrBeast), Joe White, Nila122,
 > Carlo Enrico Victoria (Nemisys), Thane Brimhall (pennomi), Mandi Paugh,
-> laetissima, thecilekli and William.Thompsonj. Full per-file credits and source
+> laetissima, thecilekli, William.Thompsonj and Napsio (Vitruvian Studio). Full per-file credits and source
 > links: CREDITS-LPC.csv. Sprite sheets lightly modified for Shift Work (name tag).

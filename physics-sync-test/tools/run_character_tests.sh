@@ -2,7 +2,8 @@
 # WEEK 25 — runs every character-art test (tools/character_test.gd): the solo
 # suite twice (two separate sessions — their IDENTITY lines must match, i.e.
 # the same cashier at the same register and the same manager every session),
-# then a real 3-player ENet session (host + 2 clients).
+# then a real 3-player ENet session (host + 2 clients). WEEK 26: both include
+# the forklift drivers (C8 solo, N4 co-op; their looks are in the IDENTITY lines).
 #   GODOT=/path/to/godot tools/run_character_tests.sh
 set -u
 cd "$(dirname "$0")/.."

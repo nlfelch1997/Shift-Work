@@ -66,6 +66,10 @@ func reset_for_new_day() -> void:
 		carrying = ""
 		drops_today = 0
 
+## WEEK 26: its own fixed driver (Forklift.gd's driver_look()).
+func driver_look() -> String:
+	return "driver_delivery"
+
 func _delivery() -> Node:
 	return get_tree().current_scene.delivery
 

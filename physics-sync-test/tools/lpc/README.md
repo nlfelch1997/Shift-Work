@@ -20,6 +20,13 @@ Credits: the generator's per-look CSVs merged into
 `assets/characters/CREDITS-LPC.csv`; summary and Credits-screen text in
 `assets/CREDITS.md`.
 
+   Forklift drivers (`driver_*`, Week 26) never stand up, so `post.py` keeps only
+   the seated-on-a-chair column of their `sit.png` instead (64x256: one frame per
+   facing). Regenerate just those: `node gen.mjs looks.json driver_produce`, then
+   `python3 post.py ../../assets/characters driver_produce driver_delivery`.
+
 Uniform rule (legible at a glance): staff (cashiers + players) = bright green
 polo, charcoal pants, name tag; manager = charcoal suit coat, white shirt, red
-tie; customers = everyday clothes, never green tops.
+tie; customers = everyday clothes, never green tops; warehouse crew (forklift
+drivers) = yellow hard hat, safety-yellow overalls over charcoal long sleeves,
+work boots.
