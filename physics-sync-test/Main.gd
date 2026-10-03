@@ -664,6 +664,7 @@ const CleanupScript := preload("res://Cleanup.gd")
 const EndlessScript := preload("res://Endless.gd")
 const HubUIScript := preload("res://HubUI.gd")
 const SoundDirectorScript := preload("res://SoundDirector.gd")
+const JuiceScript := preload("res://Juice.gd")
 const BreakRoomScript := preload("res://BreakRoom.gd")
 const SaveGameScript := preload("res://SaveGame.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
@@ -1218,6 +1219,7 @@ var cleanup: Node2D
 var endless: Node
 var hub_ui: CanvasLayer
 var sound_director: Node
+var juice: Node2D
 ## WEEK 23 — the dressed break room and its coffee machine (BreakRoom.gd).
 var break_room: Node2D
 
@@ -1335,6 +1337,11 @@ func _ready() -> void:
 	sound_director = SoundDirectorScript.new()
 	sound_director.name = "SoundDirector"
 	add_child(sound_director)
+	# WEEK 27 — juice: local visual feedback on the same replicated events
+	# (see Juice.gd). Cosmetic only; nothing reads it.
+	juice = JuiceScript.new()
+	juice.name = "Juice"
+	add_child(juice)
 	player_spawner.spawn_function = _spawn_player_node
 	product_spawner.spawn_function = _spawn_product_node
 	customer_spawner.spawn_function = _spawn_customer_node
@@ -2405,6 +2412,7 @@ func _announce_writeup(peer_id: int, reason: String) -> void:
 	else:
 		show_toast("%s written up for %s  -$%d" % [player_display_name(peer_id), reason, WRITEUP_PENALTY])
 	Sfx.play("writeup") # everyone hears it: it docks the whole crew's pay
+	juice.writeup(peer_id, WRITEUP_PENALTY)
 
 ## Every peer, local: the bottom-row toast (write-ups red; WEEK 23's coffee
 ## toasts pass their own colour).
@@ -2625,6 +2633,7 @@ func _announce_order_result(filled: bool, section: String, qty: int) -> void:
 		_order_result_text = "Priority order missed (%s) — no bonus" % section
 	_order_result_timer = PRIORITY_ORDER_RESULT_SECONDS
 	Sfx.play("order_filled" if filled else "order_missed")
+	juice.order_result(filled)
 
 func _build_alert_layer() -> void:
 	var layer := CanvasLayer.new()
