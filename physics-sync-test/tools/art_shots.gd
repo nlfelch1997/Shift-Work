@@ -31,6 +31,7 @@ func _run() -> void:
 	var p: Node2D = main.players[1]
 	var cam: Camera2D = p.get_node("Camera")
 	main.debug_label.visible = false
+	main.status_hud = false
 	# WEEK 16 — the Store sign at the entrance, closed during prep (standing
 	# at it, so the E hint shows), then open.
 	p.teleport_to(main.STORE_SIGN_POS + Vector2(-20, 45))

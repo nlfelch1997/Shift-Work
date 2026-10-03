@@ -26,6 +26,7 @@ func shot(name: String) -> void:
 
 func _run() -> void:
 	main.debug_label.visible = false
+	main.status_hud = false
 	while not main.shift_active:
 		await process_frame
 	main.shift_time_left = 0.05

@@ -25,6 +25,7 @@ func _run() -> void:
 	main.add_child(cam)
 	cam.make_current()
 	main.debug_label.visible = false
+	main.status_hud = false
 	DirAccess.make_dir_recursive_absolute("user://forklift_shots")
 	for f in [main.forklift, main.delivery_forklift]:
 		# Freeze it in place (the delivery one drives during prep).

@@ -88,6 +88,7 @@ func shot(name: String, at: Vector2, zoom: float) -> void:
 	main.add_child(cam)
 	cam.make_current()
 	main.debug_label.visible = false
+	main.status_hud = false
 	for i in 6:
 		await process_frame
 	DirAccess.make_dir_recursive_absolute("user://char_shots")
