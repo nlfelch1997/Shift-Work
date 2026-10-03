@@ -667,6 +667,11 @@ func _try_interact() -> void:
 	if main.break_room.near_vending(global_position):
 		main.break_room.poke_vending()
 		return
+	# PLAYTEST FIX: trash by hand, any time — when a piece of litter is the
+	# nearest thing in reach (Cleanup.gd's LITTER_PAY_PER_PIECE).
+	if litter_beats_stock():
+		main.cleanup.try_pick_litter()
+		return
 	var nearest := _find_nearest_free_carryable()
 	if nearest:
 		_interact_with(nearest, my_id)
@@ -861,25 +866,49 @@ func _stackable_in_reach(carried: Node2D, my_id: int) -> Node2D:
 	if carried_count(my_id) >= get_tree().current_scene.endless.carry_capacity():
 		return null
 	var best: Node2D = null
-	var best_dist := BOT_PICKUP_RANGE * 1.2
+	var best_dist := CarryableScript.PICKUP_RANGE
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		if obj.is_in_group("delivery_box") or obj.get_node("Carryable").carrier_id != 0:
 			continue
+		if obj.get_node("Carryable").shelved:
+			continue # filling your arms never strips a shelf
 		var d := global_position.distance_to(obj.global_position)
 		if d < best_dist:
 			best_dist = d
 			best = obj
 	return best
 
+## True when an empty-handed E here would pick up litter rather than stock:
+## a piece is in reach and no loose stock is nearer (shelved stock never
+## wins over trash — leave the shelf alone). Every peer (the hint uses it).
+func litter_beats_stock() -> bool:
+	var main = get_tree().current_scene
+	var hit: Array = main.cleanup.nearest_litter(global_position)
+	if hit[0] == 0:
+		return false
+	var nearest := _find_nearest_free_carryable()
+	return nearest == null or nearest.get_node("Carryable").shelved or global_position.distance_to(nearest.global_position) > hit[1]
+
+## The item E picks up: the nearest free one within Carryable.PICKUP_RANGE
+## (see that constant for the playtest fix). PLAYTEST FIX: loose stock wins
+## over shelved stock — with the wider reach, E beside a stocked shelf would
+## otherwise often grab a shelved item instead of the loose one you walked
+## up to. A shelved item is still yours to take back when nothing loose is
+## in reach.
 func _find_nearest_free_carryable() -> Node2D:
 	var best: Node2D = null
-	var best_dist := BOT_PICKUP_RANGE * 1.2 # a bit more generous than the bot heuristic
+	var best_dist := CarryableScript.PICKUP_RANGE
+	var best_shelved := true
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		var c: Node = obj.get_node("Carryable")
 		if c.carrier_id != 0:
 			continue
 		var d := global_position.distance_to(obj.global_position)
-		if d < best_dist:
+		if d > CarryableScript.PICKUP_RANGE:
+			continue
+		var is_shelved: bool = c.shelved
+		if (best_shelved and not is_shelved) or (is_shelved == best_shelved and d < best_dist) or best == null:
 			best_dist = d
 			best = obj
+			best_shelved = is_shelved
 	return best

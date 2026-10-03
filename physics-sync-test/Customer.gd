@@ -57,6 +57,13 @@ const RETARGET_INTERVAL := 1.5 # disruptive: how often to pick a new thing to bu
 const BROWSE_RETARGET_INTERVAL := 2.5
 const BROWSE_RADIUS := 200.0 # how far a browse destination can land from the shopper's current spot
 const MAX_LIFETIME_SHOPPER := 30.0 # initial budget before any real target (a stocked item, then its checkout) is ever picked — see _lifetime_budget below for how this grows once one is
+## PLAYTEST FIX (Oct 2026, see Main.gd's _restock_customers()): each
+## disruptive customer stays a random 60-100% of MAX_LIFETIME_DISRUPTIVE —
+## host-only (this runs where the AI runs), cosmetic to peers. The opening
+## wave spawns in one tick, and with a flat 45s every red customer in it
+## walked out in the same second; jittered, they leave (and get replaced)
+## spread across a ~18s window, so new ones trickle in all shift.
+const DISRUPTIVE_LIFETIME_JITTER := 0.6
 const MAX_LIFETIME_DISRUPTIVE := 45.0 # disruptive never commits to one distant target (its retargets are all local, BROWSE/RETARGET_RADIUS-scale), so this stays a flat cap
 ## DYNAMIC LIFETIME BUDGET — PATTERN-LEVEL PLAYTEST ROOT-CAUSE FIX. This is
 ## the THIRD round of "customers are timing out" reported after a map-length
@@ -231,7 +238,12 @@ func _ready() -> void:
 	set_physics_process(true)
 	target_position = position
 	_spawn_position = position
-	_lifetime_budget = MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE
+	_lifetime_budget = MAX_LIFETIME_SHOPPER if role == "shopper" else MAX_LIFETIME_DISRUPTIVE * randf_range(DISRUPTIVE_LIFETIME_JITTER, 1.0)
+	# PLAYTEST FIX: shelved stock sits on its own layer that players, shoppers
+	# and loose stock pass through (Carryable.gd's LAYER_SHELF_STOCK). A
+	# disruptive customer's whole job is knocking it off, so it still collides.
+	if role == "disruptive":
+		collision_mask |= CarryableScript.LAYER_SHELF_STOCK
 	_stall_check_pos = position # seed with spawn position, not ZERO — a ZERO default would register a false "moved a huge distance" on the very first check
 	# items_target included here (Week 7 multi-item playtest gap): the log
 	# previously had no way to distinguish "this shopper was only ever
@@ -482,7 +494,9 @@ func _push_rigid_bodies(delta: float) -> void:
 			continue
 		var impulse: Vector2 = -collision.get_normal() * PUSH_FORCE * delta
 		if carryable.is_multiplayer_authority():
-			collider.apply_central_impulse(impulse)
+			# Through request_push() (a local call: sender 0, unattributed, as
+			# before) so a shelved item is un-shelved before it moves.
+			carryable.request_push(impulse)
 		else:
 			carryable.rpc_id(carryable.get_multiplayer_authority(), "request_push", impulse)
 

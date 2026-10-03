@@ -86,6 +86,19 @@ const PAN_CAPACITY := 8
 const BIN_RANGE := 70.0
 ## --- Scoring ---
 const CLEAN_BONUS_MAX := 0.25 # a spotless store: +25% of the day's gross pay
+## PLAYTEST FIX (Oct 2026 outside playtest: "no reason to touch trash until
+## the shift's over"). Every piece of litter that leaves the floor — picked
+## up by hand during the shift (E, empty hands, within LITTER_HAND_RANGE) or
+## swept into a dustpan at close — pays LITTER_PAY_PER_PIECE on the spot,
+## with a "+$1" popup where it was (Juice.gd). Its own line on the report
+## (Main.gd's _pay_today()/_pay_week()), ON TOP of the cleanliness bonus:
+## the bonus formula (finish_cleanup()) is untouched — it still scores
+## whatever's on the floor at close, and isn't a share of this.
+const LITTER_PAY_PER_PIECE := 1
+## E-by-hand reach for a piece of litter: the store's shared E radius (see
+## Carryable.gd's PICKUP_RANGE); the host allows a little net slack on top.
+const LITTER_HAND_RANGE := 70.0
+const LITTER_HAND_NET_SLACK := 12.0
 
 ## Layout. WEEK 20 (playtest): the tool station lives in the BREAK ROOM,
 ## just west of the time clock, so grabbing the tools and clocking out are
@@ -144,6 +157,10 @@ var litter_total := 0
 var litter_left := 0
 var clean_bonus_today := 0
 var clean_bonus_week := 0
+## Pieces of litter collected today (by hand or broom) and this week's
+## LITTER_PAY_PER_PIECE total — host-written, replicated. Saved with the week.
+var litter_collected_today := 0
+var litter_pay_week := 0
 
 ## Host-only.
 var _next_litter_id := 1
@@ -176,7 +193,7 @@ func _ready() -> void:
 	# dropped enough litter to hit it. ON_CHANGE state goes out as reliable
 	# deltas (fragmented, no MTU cap), and only when a value changes — every
 	# one of these is reassigned, never mutated in place (see `litter`).
-	for prop in [".:litter", ".:tools", ".:knocked_names", ".:mop_total", ".:mop_left", ".:litter_total", ".:litter_left", ".:clean_bonus_today", ".:clean_bonus_week"]:
+	for prop in [".:litter", ".:tools", ".:knocked_names", ".:mop_total", ".:mop_left", ".:litter_total", ".:litter_left", ".:clean_bonus_today", ".:clean_bonus_week", ".:litter_collected_today", ".:litter_pay_week"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
@@ -233,6 +250,7 @@ func reset_for_new_day() -> void:
 	_progress = {}
 	_litter_timer = randf_range(0.6, 1.4)
 	litter_dropped_today = 0
+	litter_collected_today = 0
 	mop_total = 0
 	mop_left = 0
 	litter_total = 0
@@ -435,8 +453,62 @@ func _sweep_at(head: Vector2, delta: float, pan: int) -> Array:
 			best = maxf(best, _progress[k])
 	if not swept.is_empty():
 		litter = litter.filter(func(p): return not (p["id"] in swept))
+		_note_collected(swept.size())
 		_update_left()
 	return [best, swept.size()]
+
+## Host: n pieces just left the floor into someone's hands or dustpan.
+func _note_collected(n: int) -> void:
+	litter_collected_today += n
+	litter_pay_week += n * LITTER_PAY_PER_PIECE
+
+## Every peer (replicated counter): today's pay from picked-up litter.
+func litter_pay_today() -> int:
+	return litter_collected_today * LITTER_PAY_PER_PIECE
+
+## --- Litter by hand, any time (PLAYTEST FIX, see LITTER_PAY_PER_PIECE) ----
+
+## Any peer: the piece of litter nearest `pos` within LITTER_HAND_RANGE, as
+## [id, distance], or [0, INF]. Player.gd compares it with the nearest stock.
+func nearest_litter(pos: Vector2, reach := LITTER_HAND_RANGE) -> Array:
+	var best_id := 0
+	var best_d := INF
+	for piece in litter:
+		var d: float = pos.distance_to(piece["pos"])
+		if d <= reach and d < best_d:
+			best_d = d
+			best_id = piece["id"]
+	return [best_id, best_d]
+
+## Any peer: the local player pressed E, empty-handed, nearest to litter.
+func try_pick_litter() -> void:
+	if multiplayer.is_server():
+		_pick_litter(multiplayer.get_unique_id())
+	else:
+		_request_pick_litter.rpc_id(1)
+
+@rpc("any_peer", "reliable")
+func _request_pick_litter() -> void:
+	if multiplayer.is_server():
+		_pick_litter(multiplayer.get_remote_sender_id())
+
+## Host-only. Checked against where the HOST sees the player, like the tools.
+func _pick_litter(peer: int) -> void:
+	var p = main.players.get(peer)
+	if p == null or not is_instance_valid(p) or main.is_day_report_active() or tool_of(peer) >= 0:
+		return
+	var hit := nearest_litter(p.global_position, LITTER_HAND_RANGE + LITTER_HAND_NET_SLACK)
+	if hit[0] == 0:
+		return
+	var id: int = hit[0]
+	litter = litter.filter(func(piece): return piece["id"] != id)
+	_note_collected(1)
+	if main.cleanup_active:
+		_update_left()
+	# Picking up trash is work, as far as the manager's concerned.
+	var manager := get_tree().get_first_node_in_group("manager")
+	if manager:
+		manager.note_work(peer)
 
 ## Host-only, at clock-out (Main.gd's clock_out()): score it, pay it.
 ## gross = the day's pay before write-ups.
@@ -720,9 +792,16 @@ func _process(_delta: float) -> void:
 ## The contextual hint over my own player's head.
 func _update_hint(me: int, cleanup: bool) -> void:
 	_hint.visible = false
-	if not cleanup or not main.players.has(me) or main.is_day_report_active():
+	if not main.players.has(me) or main.is_day_report_active():
 		return
 	var p: Node2D = main.players[me]
+	if not cleanup:
+		# PLAYTEST FIX: litter can be picked up by hand during the shift.
+		if main.shift_active and p.carried_count(me) == 0 and p.litter_beats_stock():
+			_hint.text = "E: pick up trash  (+$%d)" % LITTER_PAY_PER_PIECE
+			_hint.position = p.global_position + Vector2(-130, -62)
+			_hint.visible = true
+		return
 	if main.near_time_clock(p.global_position):
 		return # E clocks out there (Main.gd's own hint)
 	var held := tool_of(me)

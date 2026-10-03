@@ -235,6 +235,7 @@ func _recheck_occupied(i: int) -> void:
 		# cleanup phase until it's back on a shelf (Cleanup.gd).
 		if carryable.carrier_id == 0:
 			obj.set_meta("knocked", true)
+		carryable.set_shelved(false)
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
@@ -248,6 +249,10 @@ func _settle_check_empty(i: int, delta: float) -> void:
 	if _settle_timers[i] >= SETTLE_TIME:
 		_occupant[i] = candidate
 		filled[i] = true
+		# PLAYTEST FIX: placed stock stops colliding with players and loose
+		# stock (Carryable.gd's LAYER_SHELF_STOCK) — a bump no longer undoes
+		# the stocking; the forklift and disruptive customers still can.
+		candidate.get_node("Carryable").set_shelved(true)
 		if candidate.has_meta("knocked"):
 			candidate.remove_meta("knocked")
 		# WEEK 11 — the one place "an item was stocked" is decided, so it's
@@ -328,6 +333,7 @@ func set_stack_rows(rows: int) -> void:
 	filled = new_filled # reassigned, not resized in place, so the synchronizer sees a new value
 	_settle_timers.resize(slots.size())
 	_settle_timers.fill(0.0)
+	_unshelve_all()
 	_occupant.resize(slots.size())
 	_occupant.fill(null)
 
@@ -344,7 +350,16 @@ func outermost_slot_offset() -> float:
 		best = maxf(best, -slot.position.y)
 	return best
 
+## Host: every item this shelf counted goes back to ordinary loose stock.
+func _unshelve_all() -> void:
+	if not is_multiplayer_authority():
+		return
+	for occ in _occupant:
+		if occ != null and is_instance_valid(occ):
+			occ.get_node("Carryable").set_shelved(false)
+
 func reset() -> void:
+	_unshelve_all()
 	for i in slots.size():
 		_occupant[i] = null
 		filled[i] = false
@@ -369,6 +384,7 @@ func wreck(from_pos: Vector2) -> bool:
 	for i in slots.size():
 		if _occupant[i] != null and is_instance_valid(_occupant[i]):
 			_occupant[i].set_meta("knocked", true) # WEEK 19 cleanup mess
+			_occupant[i].get_node("Carryable").set_shelved(false) # collides again before the spill below flings it
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
