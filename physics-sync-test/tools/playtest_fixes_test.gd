@@ -932,6 +932,13 @@ func _run_practice(net := false) -> void:
 	await _walk_to(cell_center(Vector2i(2, 2)) + Vector2(-200, -100), 20.0, 60.0)
 	while tut.current_id() == "forklift" and tw < 60.0:
 		var fkp: Vector2 = main.delivery_forklift.global_position
+		if tw >= 20.0 and player().global_position.distance_to(fkp) > 500.0:
+			# The test's walking bot got wedged somewhere on the way (seen once
+			# in a loaded co-op run) — this checks the step, not the bot's
+			# pathing, so put it in Storage and carry on.
+			print("PRACTICE  bot stuck at %s on the way to the forklift — teleporting into Storage" % player().global_position.round())
+			player().teleport_to(cell_center(Vector2i(2, 2)) + Vector2(-200, -100))
+			await wait(0.3)
 		await _walk_to(fkp + Vector2(0, -200), 3.0, 60.0)
 		tw += 3.0
 	var fk_d: float = player().global_position.distance_to(main.delivery_forklift.global_position)
