@@ -1,6 +1,6 @@
 extends Node2D
 ## Wires everything together:
-## - a Host/Join menu for manual two-window testing
+## - a Host/Join menu (Join connects to the typed Host IP; blank = 127.0.0.1)
 ## - command-line flags (--server / --client / --bot) for automated,
 ##   headless testing (no windows, no keyboard needed)
 ## - player spawning via MultiplayerSpawner
@@ -1198,6 +1198,10 @@ const UI_LAYER_REPORT := 4
 @onready var menu_layer: CanvasLayer = $MenuLayer
 @onready var host_button: Button = $MenuLayer/Menu/HostButton
 @onready var join_button: Button = $MenuLayer/Menu/JoinButton
+## PLAYTEST PREP: the host address Join connects to (e.g. a Radmin VPN IP).
+## Left blank, its placeholder shows — and _join_address() falls back to —
+## DEFAULT_JOIN_ADDRESS, so a same-PC join still needs no typing.
+@onready var ip_input: LineEdit = $MenuLayer/Menu/IpInput
 ## The full per-frame dump (peer id, every carryable's position, shelf
 ## fill, hazard state) — dev-only, hidden by default, F3 toggles it on this
 ## peer only (see _unhandled_input). status_label is the small
@@ -1271,6 +1275,8 @@ var bot_run_seconds := 20.0
 ## instead of the real host port, without touching Net.gd's own PORT
 ## constant (which is still what --server always listens on).
 var connect_port := Net.PORT
+## What Join uses when the IP field is blank or obviously malformed.
+const DEFAULT_JOIN_ADDRESS := "127.0.0.1"
 ## WEEK 21 test plumbing: --port=N moves a --server off Net.PORT, so several
 ## headless test runs can go at once (clients pass the same N as --connect-port=).
 var host_port := Net.PORT
@@ -1468,6 +1474,10 @@ func _parse_cli_args() -> void:
 	for arg in args:
 		if arg.begins_with("--connect-port="):
 			connect_port = int(arg.substr("--connect-port=".length()))
+		elif arg.begins_with("--connect-ip="):
+			# Fills the menu's IP field, so --client goes through the exact
+			# same read as a typed-in address (see _join_address()).
+			ip_input.text = arg.substr("--connect-ip=".length())
 		elif arg.begins_with("--port="):
 			host_port = int(arg.substr("--port=".length()))
 		elif arg.begins_with("--duration="):
@@ -1668,8 +1678,30 @@ func _on_host_pressed() -> void:
 		_resume_past_story(resume)
 
 func _on_join_pressed() -> void:
+	var address := _join_address()
 	menu_layer.hide()
-	Net.join_game("127.0.0.1", connect_port)
+	if not Net.join_game(address, connect_port):
+		# create_client refused outright (e.g. an unresolvable hostname) —
+		# connection_failed will never fire, so bring the menu back here.
+		print("[Main] Couldn't start joining %s — showing menu again." % address)
+		menu_layer.show()
+
+## The IP field's text, trimmed. Blank -> DEFAULT_JOIN_ADDRESS. Anything that
+## is neither an IP nor a plain hostname (stray spaces, "ip:port", other
+## punctuation) also falls back to it, with a log line saying so — no full
+## validation, just enough that a typo can't hand ENet garbage.
+func _join_address() -> String:
+	var typed := ip_input.text.strip_edges()
+	if typed.is_empty():
+		return DEFAULT_JOIN_ADDRESS
+	if typed.is_valid_ip_address():
+		return typed
+	for c in typed:
+		if not (c == "." or c == "-" or (c >= "0" and c <= "9") \
+				or (c.to_lower() >= "a" and c.to_lower() <= "z")):
+			print("[Main] Join address '%s' doesn't look like an IP — using %s." % [typed, DEFAULT_JOIN_ADDRESS])
+			return DEFAULT_JOIN_ADDRESS
+	return typed
 
 ## connected_to_server fires once ENet finishes the handshake, which is when
 ## our peer id is guaranteed to be valid. The server spawns us (see
