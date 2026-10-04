@@ -108,6 +108,10 @@ var _wrecked := {} # shelf body -> bool
 var _toppled := {} # display body -> bool
 var _spill_pos := {} # id -> Vector2
 var _litter_pos := {} # id -> Vector2
+var _litter_collected := -1
+var _litter_owed_t := 0.0
+var _litter_owed := 0 # collected count that went up before its pieces left the floor
+var _litter_gone: Array = [] # [pos, age] pieces gone before the count went up
 var _mess_left := -1
 var _knocked := {} # product name -> its node
 var _report_shown := false
@@ -496,11 +500,48 @@ func _watch_cleanup(quiet: bool) -> void:
 	var now := {}
 	for l in cl.litter:
 		now[l["id"]] = l["pos"]
-	if main.cleanup_active and not quiet:
-		for id in _litter_pos:
-			if not now.has(id):
-				_sparkle(_litter_pos[id])
+	# PLAYTEST FIX (Oct 2026): every piece of litter picked up — by hand
+	# during the shift or swept up at close — pops "+$1" where it was
+	# (Cleanup.gd's LITTER_PAY_PER_PIECE). Only pieces that left the floor
+	# while the replicated collected count went up: a day reset clears the
+	# floor AND zeroes the count, so it never pops. Same popup list as the
+	# sales (MAX_POPUPS, oldest dropped), coalesced by distance (_litter_key()):
+	# a broom sweeping five pieces is one "+$5" that grows, not five stacked.
+	# The floor and the count are two properties of one synchronizer; on a
+	# client they can land a frame apart, so each side waits briefly for the
+	# other (_litter_owed / _litter_gone) instead of assuming the same frame.
+	var collected: int = cl.litter_collected_today
+	if _litter_collected >= 0 and collected >= _litter_collected:
+		_litter_owed += collected - _litter_collected
+	else:
+		_litter_owed = 0 # first look, or a new day zeroed it
+		_litter_gone.clear()
+	_litter_collected = collected
+	for id in _litter_pos:
+		if now.has(id):
+			continue
+		if main.cleanup_active and not quiet:
+			_sparkle(_litter_pos[id])
+		_litter_gone.append([_litter_pos[id], 0.0])
 	_litter_pos = now
+	var dt := get_process_delta_time()
+	for i in range(_litter_gone.size() - 1, -1, -1):
+		var g: Array = _litter_gone[i]
+		if _litter_owed > 0:
+			_litter_owed -= 1
+			_litter_gone.remove_at(i)
+			if not quiet:
+				var at: Vector2 = g[0]
+				popup(at + Vector2(0, -12), cl.LITTER_PAY_PER_PIECE, "+$%d", C_MONEY, _litter_key(at))
+				_note("litter_pay", at)
+		else:
+			g[1] += dt
+			if g[1] > 0.5:
+				_litter_gone.remove_at(i) # left the floor without being collected (a day reset)
+	# A count with no piece to match within half a second never will.
+	_litter_owed_t = _litter_owed_t + dt if _litter_owed > 0 else 0.0
+	if _litter_owed_t > 0.5:
+		_litter_owed = 0
 	# Knocked stock picked up / re-shelved during cleanup (Cleanup's
 	# replicated knocked_names): a sparkle where it is as it stops counting.
 	var knocked := {}
@@ -521,6 +562,18 @@ func _watch_cleanup(quiet: bool) -> void:
 		spray(particles, at + Vector2(0, 30), 30, CONFETTI, Vector2(120, 280), Vector2(0.9, 1.3), 420.0, 1, 4.0, 220.0)
 		_note("spotless", at)
 	_mess_left = left if main.cleanup_active else -1
+
+## Coalescing key for a litter "+$": a young litter popup within
+## LITTER_COALESCE_PX gets the new piece added to it; otherwise a new one.
+const LITTER_COALESCE_PX := 140.0
+var _litter_key_n := 0
+func _litter_key(at: Vector2) -> String:
+	for p in popups:
+		var k = p["key"]
+		if typeof(k) == TYPE_STRING and k.begins_with("litter") and p["t"] < COALESCE_SECONDS and (p["pos"] + Vector2(0, 12)).distance_to(at) <= LITTER_COALESCE_PX:
+			return k
+	_litter_key_n += 1
+	return "litter:%d" % _litter_key_n
 
 ## A fresh priority order: the banner punches in (it's a call to action —
 ## this makes it read, it doesn't compete with it).

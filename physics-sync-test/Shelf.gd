@@ -111,6 +111,15 @@ var wrecked := false
 ## _occupant, replicated next to `filled`; no stock logic reads it.
 var occupant_names: Array = []
 var _wreck_timer := 0.0
+## Authority-only. PLAYTEST FIX companion (Oct 2026): shelved stock no longer
+## collides with loose stock (Carryable.gd's LAYER_SHELF_STOCK), so a loose
+## item can come to rest INSIDE an occupied slot's capture circle — and would
+## then drop into the slot the moment its stocked item was bought, a free
+## "restock" nobody did (found by the 3-player net-orders test). Per slot:
+## instance ids of loose items seen inside it while it was occupied. They
+## can't settle into that slot until they've left LEAVE_RADIUS or someone has
+## picked them up (set one down there by hand and it counts, as always).
+var _squatters: Array = []
 var _polygon_rotation := 0.0
 var _polygon_color := Color.WHITE
 var _wreck_label: Label
@@ -134,6 +143,9 @@ func _ready() -> void:
 	_settle_timers.resize(slots.size())
 	_settle_timers.fill(0.0)
 	_occupant.resize(slots.size())
+	_squatters.resize(slots.size())
+	for i in _squatters.size():
+		_squatters[i] = {}
 	set_multiplayer_authority(1)
 
 	var polygon: Polygon2D = body.get_node("Polygon2D")
@@ -186,10 +198,27 @@ func _physics_process(delta: float) -> void:
 			wrecked = false
 		return
 	for i in slots.size():
+		_update_squatters(i)
 		if _occupant[i] != null:
 			_recheck_occupied(i)
 		else:
 			_settle_check_empty(i, delta)
+
+## See _squatters. Marks loose items sitting in this slot while it's taken,
+## and forgets any that have since left, been picked up, or been freed.
+func _update_squatters(i: int) -> void:
+	var sq: Dictionary = _squatters[i]
+	for id in sq.keys():
+		var o = instance_from_id(id)
+		if o == null or not is_instance_valid(o) or o.get_node("Carryable").carrier_id != 0 or o.global_position.distance_to(slots[i].global_position) > LEAVE_RADIUS:
+			sq.erase(id)
+	if _occupant[i] == null:
+		return
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj == _occupant[i] or obj.get_node("Carryable").carrier_id != 0:
+			continue
+		if obj.global_position.distance_to(slots[i].global_position) <= CAPTURE_RADIUS:
+			sq[obj.get_instance_id()] = true
 
 ## Runs on EVERY peer (no authority check) — purely visual, driven off the
 ## already-replicated `filled` array, same split as the rest of this file:
@@ -235,6 +264,7 @@ func _recheck_occupied(i: int) -> void:
 		# cleanup phase until it's back on a shelf (Cleanup.gd).
 		if carryable.carrier_id == 0:
 			obj.set_meta("knocked", true)
+		carryable.set_shelved(false)
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
@@ -248,6 +278,10 @@ func _settle_check_empty(i: int, delta: float) -> void:
 	if _settle_timers[i] >= SETTLE_TIME:
 		_occupant[i] = candidate
 		filled[i] = true
+		# PLAYTEST FIX: placed stock stops colliding with players and loose
+		# stock (Carryable.gd's LAYER_SHELF_STOCK) — a bump no longer undoes
+		# the stocking; the forklift and disruptive customers still can.
+		candidate.get_node("Carryable").set_shelved(true)
 		if candidate.has_meta("knocked"):
 			candidate.remove_meta("knocked")
 		# WEEK 11 — the one place "an item was stocked" is decided, so it's
@@ -259,6 +293,8 @@ func _find_settling_candidate(slot_index: int) -> RigidBody2D:
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		if obj in _occupant:
 			continue # already claimed by another slot (this shelf or another)
+		if _squatters[slot_index].has(obj.get_instance_id()):
+			continue # was sitting here while the slot was taken (see _squatters)
 		var carryable: Node = obj.get_node("Carryable")
 		if carryable.carrier_id != 0:
 			continue
@@ -328,8 +364,12 @@ func set_stack_rows(rows: int) -> void:
 	filled = new_filled # reassigned, not resized in place, so the synchronizer sees a new value
 	_settle_timers.resize(slots.size())
 	_settle_timers.fill(0.0)
+	_unshelve_all()
 	_occupant.resize(slots.size())
 	_occupant.fill(null)
+	_squatters.resize(slots.size())
+	for i in _squatters.size():
+		_squatters[i] = {}
 
 ## A client can briefly hold a replicated `filled` sized for the other row
 ## count (the day and the array arrive separately) — never index past it.
@@ -344,8 +384,18 @@ func outermost_slot_offset() -> float:
 		best = maxf(best, -slot.position.y)
 	return best
 
+## Host: every item this shelf counted goes back to ordinary loose stock.
+func _unshelve_all() -> void:
+	if not is_multiplayer_authority():
+		return
+	for occ in _occupant:
+		if occ != null and is_instance_valid(occ):
+			occ.get_node("Carryable").set_shelved(false)
+
 func reset() -> void:
+	_unshelve_all()
 	for i in slots.size():
+		_squatters[i] = {}
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
@@ -369,6 +419,7 @@ func wreck(from_pos: Vector2) -> bool:
 	for i in slots.size():
 		if _occupant[i] != null and is_instance_valid(_occupant[i]):
 			_occupant[i].set_meta("knocked", true) # WEEK 19 cleanup mess
+			_occupant[i].get_node("Carryable").set_shelved(false) # collides again before the spill below flings it
 		_occupant[i] = null
 		filled[i] = false
 		_settle_timers[i] = 0.0
