@@ -86,6 +86,11 @@ const SETTLING_GRACE := 2.0
 ## home until the store opens) froze a helper beside it for good.
 const FORKLIFT_YIELD := 130.0
 const FORKLIFT_FLEE := 95.0
+## "In its path": up to this far ahead of its centre, within its half-width
+## plus this to the side.
+const FORKLIFT_PATH_AHEAD := 170.0
+const FORKLIFT_PATH_SIDE := 30.0
+const FLEE_SPEED := 160.0
 const FORKLIFT_PAD := 22.0
 const FORKLIFT_HALF := Vector2(46.0, 22.0) # Forklift.tscn's 92x44 box...
 const FORKLIFT_BOX_OFFSET := 6.0 # ...centred 6px ahead of its origin
@@ -126,6 +131,8 @@ var _clock := 0.0 # this helper's own game-time clock (deltas, so --fixed-fps ru
 var _slot_skip := {} # "shelf id:slot" -> _clock until which it's passed over
 var _replan_t := 0.0
 var _delivering := false
+var _fk_last_rot := 0.0
+var _fk_rot_now := 0.0
 var _astar := AStarGrid2D.new()
 var _room := Rect2()
 ## Diagnostics read by the tests.
@@ -256,6 +263,9 @@ func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority() or not active:
 		return
 	_clock += delta
+	var fk_now := _forklift_live()
+	var fk_rot: float = fk_now.rotation if fk_now != null else 0.0
+	_track_forklift_after(fk_rot)
 	# Frozen under the report like everything else (Shelf/Customer do the same).
 	if main.is_day_report_active():
 		return
@@ -267,6 +277,17 @@ func _physics_process(delta: float) -> void:
 		_job = {"kind": "home"}
 		status = ""
 		_walk_toward(home(), delta)
+		return
+	# Out of the forklift's way first, even mid-action (FOUND BY THE SOAK: a
+	# ram came for the shelf a helper was standing at, setting stock down).
+	# The pickup/drop already happened; the beat after it is just dropped.
+	var flee := _forklift_step(delta)
+	if flee != Vector2.INF:
+		if _pause > 0.0:
+			_pause = 0.0
+			_finish_action()
+		_move_to(flee)
+		_path_goal = Vector2.INF
 		return
 	if _pause > 0.0:
 		_pause -= delta
@@ -629,9 +650,11 @@ func _forklift_live() -> Node2D:
 		return null
 	return fk
 
-## Moving, or flashing its beacon before a ram.
+## Moving, turning on the spot, or flashing its beacon before a ram.
+## FOUND BY THE SOAK: it turns in place with zero velocity, and a helper that
+## only watched velocity got swept by its forks mid-turn.
 func _forklift_moving(fk: Node2D) -> bool:
-	return fk.velocity.length() > 5.0 or fk.alert
+	return fk.velocity.length() > 5.0 or fk.alert or absf(angle_difference(fk.rotation, _fk_last_rot)) > 0.0005
 
 ## Inside the forklift's body grown by `margin` (false if it isn't here).
 func _in_forklift(p: Vector2, margin: float) -> bool:
@@ -641,22 +664,46 @@ func _in_forklift(p: Vector2, margin: float) -> bool:
 	var local: Vector2 = (p - fk.global_position).rotated(-fk.rotation) - Vector2(FORKLIFT_BOX_OFFSET, 0.0)
 	return absf(local.x) < FORKLIFT_HALF.x + margin and absf(local.y) < FORKLIFT_HALF.y + margin
 
-## Inside FLEE of a moving forklift: a step directly away from it, kept in the
-## room's open band (Vector2.INF = no need).
+## A step out of a moving forklift's way (Vector2.INF = no need), kept in the
+## room's open band. In its path (ahead of it, within its width plus a body):
+## sideways, out of the lane — FOUND BY THE SOAK: stepping straight away from
+## it is running ahead of it, and it drives faster than a base helper walks.
+## Close enough to be swept by a turn: straight away. Either way at least
+## FLEE_SPEED: anyone hops out of a forklift's way.
 func _forklift_step(delta: float) -> Vector2:
 	var fk := _forklift_live()
 	if fk == null or not _forklift_moving(fk):
 		return Vector2.INF
-	var away := position - fk.global_position
-	if away.length() >= FORKLIFT_FLEE:
+	var rel := position - fk.global_position
+	var heading := Vector2.RIGHT.rotated(fk.rotation) * (-1.0 if fk.reversing else 1.0)
+	var ahead := rel.dot(heading)
+	var side := rel.dot(heading.orthogonal())
+	var dir := Vector2.ZERO
+	if rel.length() < FORKLIFT_FLEE:
+		dir = rel.normalized() if rel.length() > 0.01 else Vector2.UP
+	if ahead > -30.0 and ahead < FORKLIFT_PATH_AHEAD and absf(side) < FORKLIFT_HALF.y + FORKLIFT_PATH_SIDE and (fk.velocity.length() > 5.0 or fk.alert):
+		var s := signf(side)
+		if s == 0.0:
+			s = 1.0
+		# Toward the room's middle if the near wall's in the way.
+		var out := heading.orthogonal() * s
+		var probe := position + out * 40.0
+		if probe.y < _room.position.y + BAND_Y.x or probe.y > _room.position.y + BAND_Y.y or probe.x < _room.position.x + 60.0 or probe.x > _room.end.x - 60.0:
+			out = -out
+		dir = out
+	if dir == Vector2.ZERO:
 		return Vector2.INF
 	forklift_yield_s += delta
-	if away.length() < 0.01:
-		away = Vector2.UP
-	var p := position + away.normalized() * speed * delta
+	var p := position + dir * maxf(speed, FLEE_SPEED) * delta
 	p.x = clampf(p.x, _room.position.x + 60.0, _room.end.x - 60.0)
 	p.y = clampf(p.y, _room.position.y + BAND_Y.x, _room.position.y + BAND_Y.y)
 	return p
+
+## The forklift's rotation one physics frame ago (turning-on-the-spot check):
+## this frame's reading becomes "last" for the next one.
+func _track_forklift_after(rot: float) -> void:
+	_fk_last_rot = _fk_rot_now
+	_fk_rot_now = rot
 
 ## Inside YIELD: don't take a step that gets any closer to it.
 func _forklift_blocks(nxt: Vector2) -> bool:
