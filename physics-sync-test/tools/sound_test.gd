@@ -247,7 +247,11 @@ func _run_solo() -> void:
 	check(peak_rate(heard, "footstep", 0.25) <= 1, "S2 never two footsteps within 0.25s")
 
 	# S3 pickup / drop / throw, and the throw's impact.
-	player().teleport_to(Vector2(1440, 300))
+	# Oct 2026: from the hub's open north-west corner, so the throw goes
+	# straight up into the bare wall. (It was Dry Goods, where the impact came
+	# from the stocked shelf — and stocked items no longer collide with thrown
+	# stock: Carryable.gd's LAYER_SHELF_STOCK.)
+	player().teleport_to(Vector2(1060, 660))
 	await wait(0.3)
 	var obj := free_product()
 	move_body(obj, player().global_position + Vector2(42, 0)) # clear of the player's body, inside PICKUP_RANGE
