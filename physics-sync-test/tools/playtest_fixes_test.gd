@@ -767,10 +767,12 @@ func _run_trash() -> void:
 	check(cl.clean_bonus_today == expect and expect > 0, "T5: cleanliness bonus is the unchanged formula on the gross ($%d == $%d, gross $%d, litter %d%%) — trash pay isn't in it" % [cl.clean_bonus_today, expect, main._gross_pay_today(), roundi(cl.litter_fraction() * 100)])
 	check(main._pay_today() == main._gross_pay_today() + cl.clean_bonus_today + cl.litter_collected_today - main.writeups_today * main.WRITEUP_PENALTY - main.break_room.dollars_today(), "T5: pay = gross + bonus + $1 x %d pieces" % cl.litter_collected_today)
 	check(main.report_cleanup_label.text.contains("trash picked up (%d)" % cl.litter_collected_today), "T5: the report shows the trash line: %s" % main.report_cleanup_label.text.replace("\n", " / "))
+	# OCT 2026 PHASE 2: there's no week in the save any more — the day's pay
+	# (trash pay included) goes into the bank, and the bank is what's saved.
 	var snap: Dictionary = load("res://SaveGame.gd").snapshot(main)
-	check(snap["week"]["litter_pay"] == cl.litter_pay_week and cl.litter_pay_week == cl.litter_collected_today, "T6: the week's trash pay is in the save ($%d)" % snap["week"]["litter_pay"])
-	var round_trip: Dictionary = load("res://SaveGame.gd").sanitize({"version": 1, "week": {"sold": 3}})
-	check(round_trip["week"]["litter_pay"] == 0, "T6: an older save without it loads as $0")
+	check(main.money == main._pay_today() and snap["shop"]["money"] == main.money and cl.litter_pay_week == cl.litter_collected_today, "T6: the day's pay, $%d trash included, went into the bank (%s) and the bank is in the save" % [cl.litter_collected_today, main._format_money(main.money)])
+	var round_trip: Dictionary = load("res://SaveGame.gd").sanitize({"version": 2, "shop": {"completed_day": 3}})
+	check(round_trip["shop"]["money"] == 0, "T6: a save without a bank loads as $0")
 	finish()
 
 ## =============================================================================

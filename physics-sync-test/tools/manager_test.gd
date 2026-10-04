@@ -26,6 +26,12 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
+	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
+	# and Day 7's report still finishes the week into Endless Mode (the debug
+	# --endless route) for the endless checks.
+	main.test_follow_old_calendar = true
+	main.legacy_endless_route = true
 	# WEEK 16: written against a day that opens with a stocked floor and
 	# customers from the start (no prep phase): both as they were.
 	main.opening_stock_fraction = 1.0
@@ -135,6 +141,12 @@ func _run_host() -> void:
 	await shot("day3_report")
 
 	# ---- Day 4: manager ON. Long day so every scenario fits.
+	# OCT 2026 PHASE 2: he arrives once the crew's lifetime earnings pass
+	# MANAGER_EARNED (no longer just because it's Day 4) — the earnings are
+	# put there, then the report has to forecast him before he shows up.
+	main.lifetime_earned = maxi(main.lifetime_earned, main.MANAGER_EARNED)
+	await wait(0.2)
+	check(main.report_shop_label.text.begins_with("NEXT SHIFT: THE MANAGER"), "Day 3 report: forecasts the manager for next shift ('%s')" % main.report_shop_label.text.get_slice("\n", 0))
 	main.shift_duration = 200.0
 	main._on_continue_pressed()
 	await wait_until(func(): return main.shift_active, 5.0)
@@ -282,13 +294,14 @@ func _run_host() -> void:
 	await wait_until(func(): return main.shift_active, 5.0)
 	check(main.current_day == 5 and mgr().active, "Day 5: manager still active")
 	check(main.writeups_today == 0 and main.writeups_week == 2 and main.writeups_by_peer.is_empty(), "Day 5: today's write-ups reset, week keeps 2")
-	# Route derivation for a section that isn't off the hub (Bakery, Day 7) —
-	# checked by evaluating the path with the day bumped for one call.
-	var real_day: int = main.current_day
-	main.current_day = 7
+	# Route derivation for a section that isn't off the hub (Bakery) — checked
+	# by evaluating the path with every section owned for one call (Phase 2:
+	# sections are bought, not opened by Day 7).
+	var real_owned: int = main.sections_owned
+	main.sections_owned = 4
 	var bakery_path: Array = mgr()._cell_path(main, Vector2i(2, 0))
 	var dairy_path: Array = mgr()._cell_path(main, Vector2i(0, 1))
-	main.current_day = real_day
+	main.sections_owned = real_owned
 	check(bakery_path == [Vector2i(1, 0), Vector2i(2, 0)], "route: Bakery reached through Dry Goods %s" % str(bakery_path))
 	check(dairy_path == [Vector2i(0, 1)], "route: Dairy/Frozen straight off the hub %s" % str(dairy_path))
 	finish()
@@ -314,7 +327,7 @@ func _run_net_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 15.0)
 	var me: int = main.multiplayer.get_unique_id()
 	await wait_until(func(): return main.shift_active and main.current_day == 4, 15.0)
-	check(mgr().active and mgr().visible, "net client: manager active on Day 4 (replicated day)")
+	check(mgr().active and mgr().visible, "net client: manager active on Day 4 (replicated stage)")
 	await wait(1.0)
 	main.players[me].teleport_to(Vector2(1440, 1000))
 	var saw_warning := await wait_until(func(): return main._watch_label.visible, 20.0)

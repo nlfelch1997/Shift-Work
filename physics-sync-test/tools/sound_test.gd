@@ -36,6 +36,12 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
+	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
+	# and Day 7's report still finishes the week into Endless Mode (the debug
+	# --endless route) for the endless checks.
+	main.test_follow_old_calendar = true
+	main.legacy_endless_route = true
 	sfx = root.get_node("Sfx")
 	sfx.played.connect(func(s, _p): heard.append([Time.get_unix_time_from_system(), s]))
 	var mode := "sound"
@@ -228,7 +234,7 @@ func _run_solo() -> void:
 	me = 1
 	await wait(0.5)
 	check(main.current_day == 7, "started on Day 7 (every hazard on)")
-	check(count("final_shift") == 1, "S0 the FINAL SHIFT fanfare played once as Day 7 started (%d)" % count("final_shift"))
+	check(count("final_shift") == 1, "S0 the fanfare played once as Day 7 started (its RUSH SEASON banner; was FINAL SHIFT) (%d)" % count("final_shift"))
 	check(sfx.music_track == "prep" and not main.store_open, "S1 prep phase: calm music ('%s')" % sfx.music_track)
 	park_everything()
 	await wait(1.6) # past the director's warm-up

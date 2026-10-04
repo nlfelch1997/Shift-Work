@@ -9,7 +9,11 @@ GODOT="${GODOT:-godot}"
 SAVE="--save-file=user://save_test/save.json"
 run() { echo "=== $*"; "$GODOT" --headless --path . --script res://tools/save_test.gd -- "$@" 2>&1 | grep -E "^(PASS|FAIL|RESULT)|\[Save\]|SCRIPT ERROR|ERROR:" ; return "${PIPESTATUS[0]}"; }
 status=0
-for p in 1 2 3 4 5; do run --server $SAVE --prep-seconds=900 --test=save --phase=$p || status=1; done
+# OCT 2026 PHASE 2: 7 (relaunch past the old week) runs between 2 and 3, and
+# 3/4 take the debug --endless route into the untouched Endless Mode.
+for p in 1 2 7; do run --server $SAVE --prep-seconds=900 --test=save --phase=$p || status=1; done
+for p in 3 4; do run --server $SAVE --endless --prep-seconds=900 --test=save --phase=$p || status=1; done
+run --server $SAVE --prep-seconds=900 --test=save --phase=5 || status=1
 run --server --day=3 --prep-seconds=900 --test=save --phase=6 || status=1
 for t in net-save net-save-story; do
   echo "=== $t (host + client)"

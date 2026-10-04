@@ -667,6 +667,18 @@ func _try_interact() -> void:
 	if main.break_room.near_vending(global_position):
 		main.break_room.poke_vending()
 		return
+	# OCT 2026 PHASE 2: empty-handed at a for-sale section's gate -> buy it
+	# (the host decides: prep only, next in line, enough in the bank). When it
+	# can't be bought right now, the press only says why if there's nothing
+	# to pick up here instead (the prompt over the gate already shows why).
+	var for_sale: String = main.for_sale_gate_at(global_position)
+	if for_sale != "" and main.shift_active:
+		if main.purchase_blocker(for_sale) == "":
+			main.try_buy_section(for_sale)
+			return
+		if _find_nearest_free_carryable() == null and not litter_beats_stock():
+			main.show_toast("%s: %s" % [for_sale, main.purchase_blocker(for_sale)], Color(1, 0.85, 0.3), 2.5)
+			return
 	# PLAYTEST FIX: trash by hand, any time — when litter is in reach and no
 	# loose stock is (Cleanup.gd's LITTER_PAY_PER_PIECE).
 	if litter_beats_stock():

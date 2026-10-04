@@ -65,8 +65,8 @@ extends Node2D
 ## Every number below is a FLAGGED placeholder, tuned against the solo and
 ## co-op bot passes in tools/hazards_test.gd, not a human playtest.
 
-const LIGHTS_START_DAY := 6
-const SPILLS_START_DAY := 6
+## OCT 2026 PHASE 2: no day gate here any more (LIGHTS/SPILLS_START_DAY are
+## gone) — Main.gd's hazard_levels() turns both on at complication stage 4.
 
 ## --- Lights ---
 const LIGHTS_FIRST_DELAY := 14.0 # s into the shift before the first event
@@ -128,8 +128,8 @@ const PHASE_FORMING := 0
 const PHASE_WET := 1
 const PHASE_DRYING := 2
 
-## Every peer, from configure(): is today a Day 6+ day. Not replicated —
-## each peer derives it from the replicated current_day, like the forklift.
+## Every peer, from configure_levels(): are lights/spills on this shift. Not
+## replicated — each peer derives it from replicated state, like the forklift.
 var active := false
 var finale := false
 
@@ -228,9 +228,6 @@ func _mark_emissive() -> void:
 			if prompt:
 				prompt.z_index = Z_EMISSIVE
 
-func configure(day: int, is_finale := false) -> void:
-	var lvl := 2 if is_finale else 1
-	configure_levels(lvl if day >= LIGHTS_START_DAY else 0, lvl if day >= SPILLS_START_DAY else 0)
 
 ## WEEK 21 — the lights and the spills each get their own level (0 off, 1
 ## normal, 2 the Day 7 numbers) from Main.gd's hazard_levels(): the story's
