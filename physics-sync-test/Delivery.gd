@@ -55,7 +55,6 @@ extends Node2D
 ## (a StaticBody2D, permanent), so nobody can stand where the truck goes.
 
 ## --- TUNABLE (every one a FLAGGED placeholder, tuned against the bot sims) ---
-const DELIVERY_START_DAY := 1 # Storage is open from Day 1, and so is receiving
 ## WEEK 16: 3s (was 8) — prep starts the moment the shift does, and the first
 ## truck is the only work there is until it arrives.
 const TRUCK_FIRST_DELAY := 3.0 # s into the shift before the first truck pulls in
@@ -198,9 +197,10 @@ func _ready() -> void:
 		_build_pad(section)
 	_build_truck()
 
-func configure(day: int, is_finale := false) -> void:
+## OCT 2026 PHASE 2: no day gate — Storage and its trucks run every shift.
+func configure(is_finale := false) -> void:
 	finale = is_finale
-	active = day >= DELIVERY_START_DAY
+	active = true
 
 ## Tier index, the same (unlocked sections - 1) Main.gd's density tables use.
 func _tier() -> int:

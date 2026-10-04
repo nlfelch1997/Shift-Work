@@ -1,6 +1,6 @@
 extends Node
 class_name Gate
-## A day-gated barrier between two store sections. REDESIGNED after
+## A barrier between two store sections (sealed until the section is bought). REDESIGNED after
 ## playtest feedback: the original version was a narrow ~120px doorway cut
 ## into two permanent wall segments (Main.tscn's old "DividerNUpper"/
 ## "DividerNLower" nodes), and multiple NPCs trying to path through that
@@ -28,19 +28,15 @@ class_name Gate
 ## removes the assumption entirely: it seals its own boundary unassisted,
 ## whether or not a wall happens to help at either end.
 ##
-## Deliberately NOT authority/network-gated like Carryable/Shelf/Cashier —
-## same reasoning as before this redesign: every peer parses the same
-## --day= CLI flag (or the same default) independently in Main.gd and
-## calls configure() with the identical result, so there's no live,
-## unpredictable state here that needs a single broadcast source of truth.
-##
-## FLAGGED ASSUMPTION, unchanged: every peer in a session must be launched
-## with the SAME --day= value — there's no sync check that catches a
-## mismatch. Same category of assumption --shift-seconds= already relies
-## on; fine for a debug/testing flag, not for a real day-progression
-## system later.
+## Deliberately NOT authority/network-gated like Carryable/Shelf/Cashier:
+## every peer calls configure_open() from the same replicated state (Main.gd's
+## sections_owned on DaySync), so there's nothing here to sync.
 
-@export var required_day := 1 # this boundary opens once Main.gd's debug_day reaches this
+## OCT 2026 PHASE 2: sections are BOUGHT now, not opened by a day — Main.gd
+## decides open/locked (is_section_open()) and what the locked side says
+## ("FOR SALE — $600"), and calls configure_open() on every peer from the
+## replicated sections_owned. (The old required_day/configure(current_day)
+## pair is gone with the day gates.)
 
 var body: StaticBody2D
 var collision: CollisionShape2D
@@ -50,23 +46,16 @@ func _ready() -> void:
 	body.add_to_group("gate")
 	collision = body.get_node("CollisionShape2D")
 
-## Called once by Main.gd right after it determines debug_day (from the
-## --day= CLI flag or its default), independently on every peer.
-func configure(current_day: int) -> void:
-	var unlocked := current_day >= required_day
-	collision.disabled = unlocked
-	# Unlocked = fully invisible, not just passable — the brief asked for
-	# one continuous open floor with no visible seam once a section is
-	# open, not a floor that still shows where a door used to be. Locked
-	# shows a thin marker line + the day it opens, so it reads as "not
-	# open yet" instead of an unexplained invisible wall.
-	body.get_node("Locked").visible = not unlocked
-	body.get_node("Locked/Label").text = "LOCKED — opens Day %d" % required_day
-	print("[%s] required_day=%d current_day=%d -> %s" % [body.name, required_day, current_day, "OPEN" if unlocked else "LOCKED"])
-
-## WEEK 21 — endless shifts: open or closed by the taken posting, not a day.
+## Open (invisible, passable) or closed (sealed, with closed_text on its sign).
+## WEEK 21 — endless shifts: by the taken posting. Phase 2: by ownership.
 func configure_open(open: bool, closed_text: String) -> void:
+	# Unlocked = fully invisible, not just passable — the brief asked for
+	# one continuous open floor with no visible seam once a section is open.
 	collision.disabled = open
 	body.get_node("Locked").visible = not open
-	body.get_node("Locked/Label").text = closed_text
-	print("[%s] endless shift -> %s" % [body.name, "OPEN" if open else "CLOSED"])
+	var label: Label = body.get_node("Locked/Label")
+	label.text = closed_text
+	# A longer sign ("FOR SALE — $2600 (after Dairy/Frozen)") widens both ways,
+	# so it stays centred on the gate line instead of running off to one side.
+	label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	print("[%s] -> %s" % [body.name, "OPEN" if open else "CLOSED (%s)" % closed_text])

@@ -70,10 +70,17 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 2: these tests were written for the 7-day story — a
+	# Day N -> N+1 rollover hands the crew old Day N+1's sections and earnings
+	# (Main.gd's test_follow_old_calendar), so each day keeps its old meaning.
+	main.test_follow_old_calendar = true
 	var mode := "interact"
 	for a in args:
 		if a.begins_with("--test="):
 			mode = a.substr(7)
+	# Day 7's report finishes the old week into Endless Mode (debug --endless
+	# route) — the only way into the untouched Endless code until Phase 4.
+	main.legacy_endless_route = mode in ["endless", "net-endless", "endless-board"]
 	# WEEK 16: the store now opens empty (every unit arrives by truck). The
 	# tests written before that are about other systems and were written
 	# against a floor that opens stocked — they keep it. The solo sim and the
@@ -316,16 +323,16 @@ func _run_interact() -> void:
 			dairy_products += 1
 	check(dairy_products > 0, "Dairy/Frozen products spawned: %d (slots: %d)" % [dairy_products, dairy_slots])
 	var slots_by_day := {}
-	var real_day: int = main.current_day
+	var real_day := _econ_snap()
 	for d in [3, 4, 5]:
-		main.current_day = d
+		_as_day(d)
 		var total := 0
 		var rows: int = main.STACK_ROWS_BY_TIER[clampi(main._unlocked_sections().size() - 1, 0, 3)]
 		for s in main.shelves:
 			if main.is_unlocked_at_pos(s.global_position):
 				total += 3 * rows
 		slots_by_day[d] = [total, main._product_baseline()]
-	main.current_day = real_day
+	_econ_restore(real_day)
 	print("DENSITY  day -> [reachable slots, product cap]: %s" % str(slots_by_day))
 	check(slots_by_day[5][1] / 3.0 > slots_by_day[4][1] / 2.0, "Day 5 spawn density (product cap per open section) is higher than Day 4's: %s" % str(slots_by_day))
 	check(slots_by_day[5][0] == 2 * 48, "Day 5 shelves stock two deep: %d reachable slots (48 one-deep: 16 shelves)" % slots_by_day[5][0])
@@ -688,10 +695,12 @@ func _run_solo() -> void:
 		print(line)
 		day_stats.append(line)
 		check(stats["banner_clash"] == 0, "Day %d: order banner never overlapped the LOOK BUSY warning / toast (%d frames)" % [day, stats["banner_clash"]])
-		check(day < main.PRIORITY_ORDER_START_DAY or main.orders_called_today > 0, "Day %d: priority orders called: %d" % [day, main.orders_called_today])
-		check(day >= main.PRIORITY_ORDER_START_DAY or main.orders_called_today == 0, "Day %d: no priority orders before Day %d" % [day, main.PRIORITY_ORDER_START_DAY])
-		var env_day: bool = day >= main.ambience.LIGHTS_START_DAY
-		check(env_day == (main.ambience.spills_today > 0 and main.ambience.lights_events_today > 0), "Day %d: spills %d, lights events %d (%s)" % [day, main.ambience.spills_today, main.ambience.lights_events_today, "Day 6+: both happen" if env_day else "none before Day 6"])
+		# OCT 2026 PHASE 2: by complication stage (orders 3, lights+spills 4).
+		var orders_on: bool = main.complication_stage >= main.STAGE_ORDERS
+		check(not orders_on or main.orders_called_today > 0, "Day %d: priority orders called: %d" % [day, main.orders_called_today])
+		check(orders_on or main.orders_called_today == 0, "Day %d: no priority orders before stage %d" % [day, main.STAGE_ORDERS])
+		var env_day: bool = main.complication_stage >= main.STAGE_ENVIRONMENT
+		check(env_day == (main.ambience.spills_today > 0 and main.ambience.lights_events_today > 0), "Day %d: spills %d, lights events %d (%s)" % [day, main.ambience.spills_today, main.ambience.lights_events_today, "stage 4+: both happen" if env_day else "none before stage 4"])
 		if day != solo_days[-1]:
 			main._on_continue_pressed()
 	print("SOLO SUMMARY%s" % (" (careless: never dodges the forklift)" if careless else ""))
@@ -1117,6 +1126,23 @@ func _avoid_spills(pos: Vector2, dir: Vector2, goal: Vector2) -> Vector2:
 ## ---------------------------------------------------------------------------
 ## WEEK 11 — PRIORITY ORDERS + STOCKING GRACE
 
+## OCT 2026 PHASE 2 — "evaluate as if it were Day d": the economy old Day d
+## had (Main.gd's DEBUG_DAY_PRESETS, stage included), and back again.
+func _econ_snap() -> Array:
+	return [main.current_day, main.sections_owned, main.complication_stage, main.lifetime_earned, main.money]
+
+func _econ_restore(snap: Array) -> void:
+	main.current_day = snap[0]
+	main.sections_owned = snap[1]
+	main.complication_stage = snap[2]
+	main.lifetime_earned = snap[3]
+	main.money = snap[4]
+
+func _as_day(d: int) -> void:
+	main.current_day = d
+	main._apply_debug_day_preset(d)
+	main._advance_complication_stage()
+
 func section_by_name(n: String) -> Dictionary:
 	for s in main.SECTIONS:
 		if s["name"] == n:
@@ -1187,12 +1213,12 @@ func _run_orders() -> void:
 	# the finale) — so a team that uses the whole ceiling sells exactly as long
 	# as it used to.
 	var sd: float = main.shift_duration
-	var real_day: int = main.current_day
+	var real_day := _econ_snap()
 	var table := {}
 	for d in range(1, 8):
-		main.current_day = d
+		_as_day(d)
 		table[d] = [main._prep_ceiling(), main._current_shift_duration()]
-	main.current_day = real_day
+	_econ_restore(real_day)
 	print("PREP  day -> [prep ceiling, day clock]: %s" % str(table))
 	var want := {1: [180.0, sd], 2: [180.0, sd], 3: [360.0, sd], 4: [360.0, sd], 5: [540.0, sd], 6: [540.0, sd], 7: [720.0, sd - main.FINALE_SELLING_CUT]}
 	for d in range(1, 8):
@@ -1344,11 +1370,11 @@ func _run_orders() -> void:
 	check(main.order_section != "", "O4: the interval timer calls one out on its own (%s x%d)" % [main.order_section, main.order_needed])
 	check(is_equal_approx(main._order_timer, main._priority_order_interval()) or main._order_timer > main._priority_order_interval() - 1.0, "O4: next call-out %.0fs later" % main._order_timer)
 	main._clear_priority_order()
-	main.current_day = 4
+	_as_day(4)
 	main._order_timer = 0.01
 	main._tick_priority_orders(1.0)
 	check(main.order_section == "", "O4: no orders on Day 4")
-	main.current_day = real_day
+	_econ_restore(real_day)
 	main._order_timer = 1.0e9
 
 	# --- O5: day rollover with an order open — the report shows the orders
@@ -2308,6 +2334,11 @@ func _e3_watch(timeout: float) -> Dictionary:
 	var ok := await wait_until(func(): return a.lights_event_id != start_id and a.lights_event_id != 0, timeout)
 	if not ok:
 		return {}
+	# OCT 2026 PHASE 2 — HARNESS RACE FIX: when a frame runs two physics steps
+	# (a loaded machine), the id change is seen in the second and process_frame
+	# fires before this frame's Ambience._process has built the pattern —
+	# _pattern was still [] and _pattern[-1] errored. Wait until it's built.
+	await wait_until(func(): return a._played_event_id == a.lights_event_id and not a._pattern.is_empty(), 2.0)
 	await process_frame
 	var out := {"start": Time.get_unix_time_from_system(), "id": a.lights_event_id, "pattern": JSON.stringify(a._pattern), "min": 1.0, "overlay_ok": true, "back": false}
 	var len: float = a._pattern[-1][0]
@@ -2380,7 +2411,7 @@ func _run_net_ambience_host() -> void:
 	check(main.players.size() == want, "net: %d players connected (%s)" % [main.players.size(), str(names.values())])
 	var day: int = main.current_day
 	check(day >= 6 and amb().active, "net: Day %d, lights/spills active" % day)
-	check(main.is_finale() == (day >= main.FINALE_START_DAY) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "E0 host: finale %s on every system" % ("ON" if main.is_finale() else "off"))
+	check(main.is_finale() == (day >= main.LEGACY_WEEK_DAYS) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "E0 host: top tier %s on every system" % ("ON" if main.is_finale() else "off"))
 	park_everything()
 	await wait(2.0)
 	var ids: Array = main.players.keys()
@@ -2568,7 +2599,7 @@ func _run_net_ambience_host() -> void:
 var _banner_seen := false
 var _banner_text := ""
 
-## Client, from connect: did the FINAL SHIFT banner ever show on this screen.
+## Client, from connect: did the start-of-shift banner ever show on this screen.
 func _watch_finale_banner() -> void:
 	var t := 0.0
 	while t < 40.0 and not _banner_seen:
@@ -2588,11 +2619,12 @@ func _run_net_ambience_client() -> void:
 	var day: int = main.current_day
 	check(day >= 6 and amb().active, "%s: Day %d (replicated), lights/spills active" % [who, day])
 	await wait(0.5)
-	check(main.is_finale() == (day >= main.FINALE_START_DAY) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "%s: E0 finale %s on every system, on my side" % [who, "ON" if main.is_finale() else "off"])
-	if day == main.FINALE_START_DAY:
-		check(_banner_seen and _banner_text == "FINAL SHIFT", "%s: E0 saw the FINAL SHIFT banner on my own screen" % who)
-	else:
-		check(not _banner_seen, "%s: E0 no finale banner on Day %d" % [who, day])
+	check(main.is_finale() == (day >= main.LEGACY_WEEK_DAYS) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "%s: E0 top tier %s on every system, on my side" % [who, "ON" if main.is_finale() else "off"])
+	# OCT 2026 PHASE 2: a debug Day 6/7 start announces its newest
+	# complication (lights+spills / the top tier) — the banner that replaced
+	# the one-time FINAL SHIFT one.
+	var want_title: String = main.COMPLICATION_STAGES[main.complication_stage]["title"]
+	check(_banner_seen and _banner_text == want_title, "%s: E0 saw the '%s' banner on my own screen ('%s')" % [who, want_title, _banner_text])
 	# E1
 	var go := await _net_read("e1_go.json", 60.0)
 	var lane: Dictionary = _lane_for(go.get("lanes", {}), me)
@@ -2730,16 +2762,18 @@ func _run_finale() -> void:
 	# --- F0: Day 6 is exactly Week 11's Day 6, and so is every earlier day.
 	check(not main.is_finale() and not fk().finale and not mgr().finale and not a.finale, "F0 Day 6: finale off everywhere")
 	var day_numbers_ok := true
-	var real_day: int = main.current_day
+	var real_day := _econ_snap()
 	for d in [1, 2, 3, 4, 5, 6]:
-		main.current_day = d
+		_as_day(d)
 		if main._selling_window() != base_shift or main._priority_order_interval() != maxf(main.PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW):
 			day_numbers_ok = false
-	main.current_day = real_day
+	_econ_restore(real_day)
 	check(day_numbers_ok, "F0 Days 1-6: full selling window and order cadence are the pre-finale numbers")
 	check(main._current_shift_duration() == 540.0 + base_shift and main._prep_ceiling() == 540.0, "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
 	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main._priority_order_interval() and main._order_timer > main._priority_order_interval() - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main._priority_order_interval()])
-	check(not main._finale_banner.visible and main.finale_banner_left == 0.0, "F0 Day 6: no FINAL SHIFT banner")
+	# OCT 2026 PHASE 2: Day 6's start announces stage 4 (lights + spills).
+	await wait_until(func(): return main._finale_banner.visible, 1.0)
+	check(main._finale_banner.get_child(0).text == main.COMPLICATION_STAGES[main.STAGE_ENVIRONMENT]["title"] and main.stage_banner == main.STAGE_ENVIRONMENT, "F0 Day 6: the banner is lights+spills' ('%s'), not a finale one" % main._finale_banner.get_child(0).text)
 	park_everything()
 	var lap6 := forklift_lap_pauses()
 	var catch6 := await time_to_writeup()
@@ -2769,7 +2803,7 @@ func _run_finale() -> void:
 	saw_banner_at_start = await wait_until(func(): return main._finale_banner.visible, 1.0)
 	var banner_start := Time.get_ticks_msec()
 	check(main.shift_active and main.is_finale() and fk().finale and mgr().finale and a.finale, "F1 Day 7: finale on for forklift, manager, spills/lights")
-	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "FINAL SHIFT", "F1 Day 7: FINAL SHIFT banner up as the shift starts")
+	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "RUSH SEASON", "F1 Day 7: the top tier's RUSH SEASON banner up as the shift starts ('%s')" % main._finale_banner.get_child(0).text)
 	check(main._prep_ceiling() == 720.0 and main._current_shift_duration() == 720.0 + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
 	check(main._selling_window() < base_shift, "F1 Day 7: tighter selling window than Day 6 — %.0fs < %.0fs" % [main._selling_window(), base_shift])
 	check(main._order_timer > main._priority_order_interval() - 1.0 and main._order_timer <= main._priority_order_interval() and main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main._priority_order_interval(), main._order_timer])
@@ -2805,11 +2839,11 @@ func _run_finale() -> void:
 	mgr().watch_level = 0.0
 	main._toast_timer = 0.0
 	main._order_result_timer = 0.0
-	await wait_until(func(): return (Time.get_ticks_msec() - banner_start) / 1000.0 > main.FINALE_BANNER_SECONDS - 0.7, 6.0)
+	await wait_until(func(): return (Time.get_ticks_msec() - banner_start) / 1000.0 > main.STAGE_BANNER_SECONDS - 0.7, 8.0)
 	check(main._finale_banner.visible and main._finale_banner.modulate.a < 1.0, "F1: banner fading in its last second (alpha %.2f)" % main._finale_banner.modulate.a)
 	await wait_until(func(): return not main._finale_banner.visible, 3.0)
 	var shown_for := (Time.get_ticks_msec() - banner_start) / 1000.0
-	check(not main._finale_banner.visible and absf(shown_for - main.FINALE_BANNER_SECONDS) < 0.5, "F1: banner gone after %.1fs" % shown_for)
+	check(not main._finale_banner.visible and absf(shown_for - main.STAGE_BANNER_SECONDS) < 0.5, "F1: banner gone after %.1fs" % shown_for)
 
 	# --- F2: each system escalated, measured.
 	park_everything()
@@ -2848,15 +2882,17 @@ func _run_finale() -> void:
 	for sp in a.spills.duplicate():
 		a.remove_spill(sp["id"])
 
-	# --- F3: the banner is once, not every day after. WEEK 21: there IS no
-	# Day 8 any more — Day 7 closes the story (WEEK COMPLETE), and nothing
-	# starts until someone picks an endless shift in the hub.
+	# --- F3: the banner is once, not every day after. OCT 2026 PHASE 2: and
+	# the top tier is SUSTAINED — Day 8 runs, still at the top tier, with no
+	# second banner (it used to end the story at WEEK COMPLETE).
 	main.shift_time_left = 0.05
 	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	check(main.continue_button.text == "Continue", "F3: Day 7's report has no 'Finish the Week' ('%s')" % main.continue_button.text)
 	main._on_continue_pressed()
-	await wait(1.0)
-	var again := await wait_until(func(): return main._finale_banner.visible or main.shift_active, 1.5)
-	check(not again and main.current_day == 7 and main.endless.screen == main.endless.SCREEN_WEEK_COMPLETE, "F3 after Day 7: WEEK COMPLETE, no Day 8 shift, no second FINAL SHIFT banner")
+	await wait_until(func(): return main.shift_active and main.current_day == 8, 5.0)
+	var again := await wait_until(func(): return main._finale_banner.visible, 1.5)
+	check(main.shift_active and main.current_day == 8 and not again and main.endless.screen == main.endless.SCREEN_NONE, "F3: Day 8 starts — no WEEK COMPLETE, no second banner")
+	check(main.is_finale() and fk().finale and mgr().finale and a.finale and main._selling_window() == base_shift - main.FINALE_SELLING_CUT, "F3: Day 8 is still the top tier (sustained), tight clock %.0fs" % main._selling_window())
 	finish()
 
 ## ---------------------------------------------------------------------------
@@ -3533,7 +3569,7 @@ func _run_prep() -> void:
 	await shot("p3_store_open")
 	var came := await wait_until(func(): return live_customers() > 0, 4.0)
 	check(came, "P3: customers start arriving right away (%d)" % live_customers())
-	if day >= main.PRIORITY_ORDER_START_DAY:
+	if main.hazard_levels()["orders"] > 0:
 		var ot: float = main._order_timer
 		await wait(1.0)
 		check(main._order_timer < ot - 0.5, "P3: priority order call-outs counting now (%.1f -> %.1f)" % [ot, main._order_timer])
@@ -3837,8 +3873,13 @@ func _run_hazard_pause() -> void:
 ## WEEK 21 — Day 7's report -> WEEK COMPLETE -> the hub -> a posting with
 ## every section open and every hazard on at level 1 (host test hook: the
 ## posting is rewritten on the board before it's taken).
+## OCT 2026 PHASE 2: without the debug --endless route, Day 7's report just
+## leads to Day 8 — the top tier, every section open and every hazard on —
+## which is exactly the shift this wants.
 func _take_all_hazards_shift() -> void:
 	main._on_continue_pressed()
+	if not main.legacy_endless_route:
+		return
 	await wait_until(func(): return main.endless.screen == main.endless.SCREEN_WEEK_COMPLETE, 5.0)
 	main.enter_hub()
 	var o: Dictionary = main.endless.offers[2].duplicate(true)
@@ -5168,7 +5209,7 @@ func _check_shift_outcome(tag: String) -> Dictionary:
 ## presses Continue / the enter button — a Callable, so the net run can have a
 ## client do it.
 func _check_week_complete(tag: String) -> void:
-	check(main.report_layer.visible and main.report_title_label.text == "Day 7 Complete!" and main.report_week_label.text.begins_with("Week Total:"), "%s: Day 7's report is an ordinary day report ('%s' / '%s')" % [tag, main.report_title_label.text, main.report_week_label.text])
+	check(main.report_layer.visible and main.report_title_label.text == "Day 7 Complete!" and main.report_week_label.text.begins_with("Bank:"), "%s: Day 7's report is an ordinary day report — Phase 2: the bank line, no week ('%s' / '%s')" % [tag, main.report_title_label.text, main.report_week_label.text])
 	check(main.continue_button.text == "Finish the Week", "%s: Day 7's button reads 'Finish the Week'" % tag)
 
 func _check_week_screen(tag: String, wallet_before: int, week_sold: int) -> void:

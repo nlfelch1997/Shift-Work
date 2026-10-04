@@ -34,6 +34,12 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
+	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
+	# and Day 7's report still finishes the week into Endless Mode (the debug
+	# --endless route) for the endless checks.
+	main.test_follow_old_calendar = true
+	main.legacy_endless_route = true
 	_hook.call_deferred() # main.juice exists once Main's _ready has run
 	root.get_node("Sfx").log_plays = false
 	var mode := "juice"

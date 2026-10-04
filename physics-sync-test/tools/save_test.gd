@@ -4,10 +4,14 @@ extends SceneTree
 ## process reading the file the previous one wrote. tools/run_save_tests.sh
 ## runs the whole sequence; each phase alone:
 ##
-##   Solo — play the story, quit mid-day, relaunch, finish the week, quit on
-##   Day 7's report, relaunch into WEEK COMPLETE, earn + spend Bucks, quit,
-##   relaunch into the hub (SAVE = --save-file=user://save_test/save.json):
-##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --test=save --phase=1   (2, 3, 4)
+##   OCT 2026 PHASE 2 (save VERSION 2, the shopkeeper economy): solo — earn,
+##   buy Produce mid-prep, quit mid-day, relaunch (bank, sections, stage and
+##   lifetime sales back; the day replays), play to Day 7, relaunch into Day 8
+##   (the game goes on past the old week), then — the debug --endless route —
+##   relaunch into WEEK COMPLETE, earn + spend Bucks, quit, relaunch into the
+##   hub (SAVE = --save-file=user://save_test/save.json). Run in this order:
+##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --test=save --phase=1   (2, 7)
+##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --endless --test=save --phase=3   (4)
 ##   Damaged / missing files, and debug starts never touching the real save:
 ##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --test=save --phase=5
 ##     godot --headless --path . --script res://tools/save_test.gd -- --server --day=3 --test=save --phase=6
@@ -16,7 +20,7 @@ extends SceneTree
 ##   through the host, and its own file must never change:
 ##     godot --headless --path . --script res://tools/save_test.gd -- --server --save-file=user://save_test/host.json --test=net-save &
 ##     godot --headless --path . --script res://tools/save_test.gd -- --client --save-file=user://save_test/client.json --test=net-save
-##   (--test=net-save-story: the same, with a mid-story save: Day 5, Week Total)
+##   (--test=net-save-story: the same, with a mid-game save: Day 5, the bank)
 ##
 ## Sales are injected on the host (a cashier's replicated total_sold), and a
 ## shift is ended by running its clock out — the save/load paths, the report,
@@ -75,6 +79,7 @@ func _initialize() -> void:
 			match phase:
 				1: _phase1.call_deferred()
 				2: _phase2.call_deferred()
+				7: _phase7.call_deferred()
 				3: _phase3.call_deferred()
 				4: _phase4.call_deferred()
 				5: _phase5.call_deferred()
@@ -172,8 +177,8 @@ func view() -> Dictionary:
 	return {
 		"day": main.current_day, "screen": en().screen, "wallet": en().wallet,
 		"upgrades": en().upgrades, "run": en().run_stats, "shift": en().shift_number,
-		"week_summary": en().week_summary, "week_sold": main._total_sold(),
-		"writeups_week": main.writeups_week, "pay_week": main._pay_week(),
+		"week_summary": en().week_summary, "lifetime_sold": main._total_sold(),
+		"money": main.money, "earned": main.lifetime_earned, "owned": main.sections_owned, "stage": main.complication_stage,
 		"speed_mult": en().speed_mult(), "carry": en().carry_capacity(), "badge": en().has_badge(),
 	}
 
@@ -181,52 +186,64 @@ func view() -> Dictionary:
 ## SOLO
 ## =============================================================================
 
-## Fresh install: Day 1 -> Day 2 -> quit partway through Day 3.
+## Fresh install: Day 1 -> Day 2 -> buy Produce in Day 3's prep -> quit
+## partway through Day 3.
 func _phase1() -> void:
 	check(main.load_status == SaveGameScript.LOAD_NONE and main.save_enabled, "P1: no save file -> a fresh start (status %d), saving on" % main.load_status)
 	check(await wait_shift(), "P1: Day 1's shift starts")
-	check(main.current_day == 1 and en().wallet == 0 and en().upgrades.is_empty(), "P1: Day 1, empty wallet, no upgrades")
+	check(main.current_day == 1 and main.money == 0 and main.sections_owned == 1 and en().wallet == 0 and en().upgrades.is_empty(), "P1: Day 1, empty bank, Dry Goods only")
 	check(not FileAccess.file_exists(SOLO), "P1: nothing saved before a day is done")
-	add_sales(5)
+	add_sales(50)
 	main.record_writeup(1, "testing")
 	await end_shift_now()
+	var pay1: int = main._pay_today()
 	var d := disk()
-	check(not d.is_empty() and d["story"]["completed_day"] == 1 and not d["story"]["complete"], "P1: Day 1's report autosaved: completed day 1 (%s)" % str(d.get("story")))
-	check(d.get("week", {}).get("sold") == 5 and d["week"]["writeups"] == 1, "P1: the week so far is in it: sold 5, 1 write-up (%s)" % str(d.get("week")))
+	check(not d.is_empty() and d["shop"]["completed_day"] == 1 and d["shop"]["money"] == pay1 and d["shop"]["lifetime_earned"] == pay1, "P1: Day 1's report autosaved: completed day 1, bank %s (%s)" % [main._format_money(pay1), str(d.get("shop"))])
+	check(d["shop"]["lifetime_sold"] == 50 and d["shop"]["sections_owned"] == 1, "P1: lifetime sold 50, 1 section")
 	main._on_continue_pressed()
 	check(await wait_shift() and main.current_day == 2, "P1: Continue -> Day 2")
-	add_sales(7)
+	add_sales(40)
 	await end_shift_now()
 	d = disk()
-	check(d["story"]["completed_day"] == 2 and d["week"]["sold"] == 12, "P1: Day 2 autosaved: completed 2, week sold 12 (%s)" % str(d.get("week")))
+	check(d["shop"]["completed_day"] == 2 and d["shop"]["lifetime_sold"] == 90 and d["shop"]["money"] == main.money, "P1: Day 2 autosaved: completed 2, sold 90, bank %s" % main._format_money(main.money))
 	main._on_continue_pressed()
 	check(await wait_shift() and main.current_day == 3, "P1: Continue -> Day 3")
+	var bank0: int = main.money
+	check(main.buy_section("Produce", 1), "P1: Day 3 prep — Produce bought (bank %s)" % main._format_money(main.money))
+	d = disk()
+	check(d["shop"]["sections_owned"] == 2 and d["shop"]["money"] == bank0 - main.section_price("Produce") and d["shop"]["completed_day"] == 2, "P1: the purchase autosaved at once (2 sections, bank %s) — the day itself still isn't" % main._format_money(d["shop"]["money"]))
 	add_sales(4) # mid-day progress: must NOT survive the quit
 	await wait(0.5)
+	main.save_progress("mid-day test checkpoint")
 	d = disk()
-	check(d["story"]["completed_day"] == 2 and d["week"]["sold"] == 12, "P1: Day 3 in progress isn't saved (file still says completed 2, sold 12)")
+	check(d["shop"]["completed_day"] == 2 and d["shop"]["lifetime_sold"] == 90, "P1: a mid-day save counts no in-flight sales (file still says completed 2, sold 90)")
+	_write_text(EXPECT, JSON.stringify({"money": main.money, "earned": main.lifetime_earned}))
 	print("P1: quitting partway through Day 3 (4 sold that day)")
 	finish()
 
-## Relaunch: back at the start of Day 3 with Days 1-2 counted; play to Day 7's
-## report, press Save there, quit without finishing the week.
+## Relaunch: back at the start of Day 3 with Days 1-2 counted and Produce
+## still owned; play to Day 7's report, press Save there, quit.
 func _phase2() -> void:
+	var expect: Dictionary = _read_json(EXPECT)
 	check(main.load_status == SaveGameScript.LOAD_OK, "P2: the save loaded (status %d)" % main.load_status)
 	check(await wait_shift(), "P2: a shift starts")
 	check(main.current_day == 3 and main.completed_story_day == 2, "P2: resumes at Day 3 — the day after the last completed one (day %d)" % main.current_day)
-	check(main._total_sold() == 12 and main._sold_at_day_start == 12 and main.writeups_week == 1, "P2: week totals restored: sold %d (want 12, Day 3's 4 lost), write-ups %d" % [main._total_sold(), main.writeups_week])
-	check(main.multiplayer.is_server() and not en().screen, "P2: story play, no hub")
+	check(main._total_sold() == 90 and main._sold_at_day_start == 90, "P2: lifetime sales restored: %d (want 90, Day 3's 4 lost)" % main._total_sold())
+	check(main.money == int(expect["money"]) and main.lifetime_earned == int(expect["earned"]) and main.sections_owned == 2, "P2: bank %s, lifetime $%d, 2 sections — as saved" % [main._format_money(main.money), main.lifetime_earned])
+	check(main.get_node("Gates/GateMeatDeli/CollisionShape2D").disabled, "P2: Produce's gate is open after the relaunch")
+	check(main.complication_stage == main.STAGE_FORKLIFT, "P2: and the forklift stage arrived with this (replayed) shift's start (stage %d)" % main.complication_stage)
+	check(main.multiplayer.is_server() and not en().screen, "P2: shop play, no hub")
 	add_sales(3)
 	await end_shift_now()
-	check(main.report_layer.visible and main.report_week_label.text == "Week Total: 15" and main.report_today_label.text == "Sold Today: 3", "P2: Day 3's report: '%s' / '%s'" % [main.report_today_label.text, main.report_week_label.text])
-	check(disk()["story"]["completed_day"] == 3, "P2: Day 3 autosaved")
+	check(main.report_layer.visible and main.report_week_label.text.begins_with("Bank: %s" % main._format_money(main.money)) and main.report_today_label.text == "Sold Today: 3", "P2: Day 3's report: '%s' / '%s'" % [main.report_today_label.text, main.report_week_label.text])
+	check(disk()["shop"]["completed_day"] == 3, "P2: Day 3 autosaved")
 	for day in [4, 5, 6, 7]:
 		main._on_continue_pressed()
 		check(await wait_shift() and main.current_day == day, "P2: Day %d" % day)
 		add_sales(2)
 		await end_shift_now()
-		check(disk()["story"]["completed_day"] == day and disk()["week"]["sold"] == 15 + 2 * (day - 3), "P2: Day %d autosaved (week sold %d)" % [day, disk()["week"]["sold"]])
-	check(main.continue_button.text == "Finish the Week", "P2: Day 7's report says Finish the Week")
+		check(disk()["shop"]["completed_day"] == day and disk()["shop"]["lifetime_sold"] == 93 + 2 * (day - 3) and disk()["shop"]["money"] == main.money, "P2: Day %d autosaved (sold %d, bank %s)" % [day, disk()["shop"]["lifetime_sold"], main._format_money(main.money)])
+	check(main.continue_button.text == "Continue", "P2: Day 7's report just says Continue — no end of the week ('%s')" % main.continue_button.text)
 	check(main.save_button.text == "Save" and main.save_button.visible, "P2: the Save button is a real 'Save' now ('%s')" % main.save_button.text)
 	var before: int = main.saves_written
 	DirAccess.remove_absolute(SOLO) # prove the button writes it
@@ -235,10 +252,24 @@ func _phase2() -> void:
 	check(main.saves_written == before + 1 and FileAccess.file_exists(SOLO), "P2: Save button wrote the file (saves %d -> %d)" % [before, main.saves_written])
 	check(main.save_button.text == "Saved ✓", "P2: and says so ('%s')" % main.save_button.text)
 	var d := disk()
-	check(d["story"]["completed_day"] == 7 and not d["story"]["complete"] and d["endless"]["wallet"] == 0, "P2: saved on Day 7's report: completed 7, week not finished, no Bucks yet")
+	check(d["shop"]["completed_day"] == 7 and not d["endless"]["unlocked"] and d["endless"]["wallet"] == 0, "P2: saved on Day 7's report: completed 7, no Endless, no Bucks")
 	await wait(2.7)
 	check(main.save_button.text == "Save", "P2: the button reads 'Save' again after a moment")
-	print("P2: quitting on Day 7's report, before Finish the Week")
+	_write_text(EXPECT, JSON.stringify({"money": main.money, "earned": main.lifetime_earned, "owned": main.sections_owned, "stage": main.complication_stage}))
+	print("P2: quitting on Day 7's report")
+	finish()
+
+## Relaunch (no --endless): the game goes on — Day 8, everything as saved.
+## Leaves the file alone (no checkpoint reached) for the endless phases.
+func _phase7() -> void:
+	var expect: Dictionary = _read_json(EXPECT)
+	var raw := FileAccess.get_file_as_string(SOLO)
+	check(main.load_status == SaveGameScript.LOAD_OK, "P7: loaded")
+	check(await wait_shift() and main.current_day == 8 and not main.is_endless() and en().screen == en().SCREEN_NONE, "P7: a Day 7 save resumes on Day 8 — past the old week, no WEEK COMPLETE")
+	check(main.money == int(expect["money"]) and main.lifetime_earned == int(expect["earned"]) and main.sections_owned == int(expect["owned"]), "P7: bank %s, lifetime $%d, %d sections — as saved" % [main._format_money(main.money), main.lifetime_earned, main.sections_owned])
+	check(main.complication_stage >= int(expect["stage"]), "P7: stage %d (saved %d; at most one step on at this shift's start)" % [main.complication_stage, int(expect["stage"])])
+	check(main.status_label.text.begins_with("Day 8  ·  Bank %s" % main._format_money(main.money)), "P7: status line '%s'" % main.status_label.text)
+	check(FileAccess.get_file_as_string(SOLO) == raw, "P7: nothing written (no checkpoint yet)")
 	finish()
 
 ## Relaunch: straight to WEEK COMPLETE (paid once), the hub, an endless shift,
@@ -248,9 +279,10 @@ func _phase3() -> void:
 	check(await wait_until(func(): return en().screen == en().SCREEN_WEEK_COMPLETE and main.hub_ui.visible, 5.0), "P3: a Day 7 save that never finished the week opens on WEEK COMPLETE")
 	check(not main.shift_active and main.current_day == 7, "P3: no shift runs under it, Day 7")
 	check(en().wallet == 40 and main.story_complete, "P3: the week's 40 Bucks paid (wallet %d), story complete" % en().wallet)
-	check(int(en().week_summary.get("sold", -1)) == 23 and int(en().week_summary.get("writeups", -1)) == 1, "P3: WEEK COMPLETE counts the WHOLE week across both relaunches: sold %s (want 23), write-ups %s" % [str(en().week_summary.get("sold")), str(en().week_summary.get("writeups"))])
+	# Phase 2: the save keeps lifetime sales, not week totals (no week).
+	check(int(en().week_summary.get("sold", -1)) == 101, "P3: WEEK COMPLETE counts every sale across the relaunches: sold %s (want 101)" % str(en().week_summary.get("sold")))
 	var d := disk()
-	check(d["story"]["complete"] and d["endless"]["wallet"] == 40, "P3: autosaved at WEEK COMPLETE (complete, wallet 40)")
+	check(d["endless"]["unlocked"] and d["endless"]["wallet"] == 40, "P3: autosaved at WEEK COMPLETE (unlocked, wallet 40)")
 	await wait(0.3)
 	press(main.hub_ui.enter_button, "P3: WEEK COMPLETE's enter-the-hub")
 	check(await wait_until(func(): return en().screen == en().SCREEN_HUB and main.current_day == 8, 3.0), "P3: the hub (Day parks at 8)")
@@ -292,7 +324,7 @@ func _phase4() -> void:
 	check(en().wallet == int(expect["wallet"]), "P4: wallet %d == %d" % [en().wallet, int(expect["wallet"])])
 	check(_canon(en().upgrades) == _canon(expect["upgrades"]), "P4: upgrades %s == %s" % [str(en().upgrades), str(expect["upgrades"])])
 	check(_canon(en().run_stats) == _canon(expect["run"]) and en().shift_number == int(expect["shift"]), "P4: run totals %s, shift counter %d" % [str(en().run_stats), en().shift_number])
-	check(int(en().week_summary.get("sold", -1)) == 23, "P4: the week's results kept (sold %s)" % str(en().week_summary.get("sold")))
+	check(int(en().week_summary.get("sold", -1)) == 101, "P4: the week's results kept (sold %s)" % str(en().week_summary.get("sold")))
 	await wait(0.3)
 	press(main.hub_ui.offer_buttons[2], "P4: the hard posting")
 	check(await wait_shift() and en().shift_number == int(expect["shift"]) + 1, "P4: Shift #%d (the count continues)" % en().shift_number)
@@ -310,17 +342,17 @@ func _phase5() -> void:
 	check(main.load_status == SaveGameScript.LOAD_CORRUPT, "P5: a garbage file is reported damaged (status %d)" % main.load_status)
 	check(FileAccess.file_exists(SOLO + ".bad") and FileAccess.get_file_as_string(SOLO + ".bad").begins_with("{ this is not json"), "P5: the damaged file was copied aside to .bad")
 	check(await wait_shift(), "P5: the game still starts a shift (no soft-lock)")
-	check(main.current_day == 1 and en().wallet == 0 and en().upgrades.is_empty() and not main.story_complete, "P5: a fresh start: Day 1, no Bucks, no upgrades")
+	check(main.current_day == 1 and main.money == 0 and main.sections_owned == 1 and en().wallet == 0 and en().upgrades.is_empty() and not main.story_complete, "P5: a fresh start: Day 1, empty bank, no upgrades")
 	add_sales(3)
 	await end_shift_now()
 	var d := disk()
-	check(not d.is_empty() and d["story"]["completed_day"] == 1, "P5: the next checkpoint writes a good save over it")
+	check(not d.is_empty() and d["shop"]["completed_day"] == 1, "P5: the next checkpoint writes a good save over it")
 	# --- SaveGame.read on every kind of bad file.
 	var t := DIR + "unit.json"
 	var cases := {
 		"empty file": "",
 		"whitespace": "   \n",
-		"truncated": '{"version": 1, "story": {"completed_',
+		"truncated": '{"version": 2, "shop": {"completed_',
 		"a JSON array": "[1, 2, 3]",
 		"a JSON string": '"hello"',
 		"binary junk": "\u0001\u0002ÿþ",
@@ -335,16 +367,25 @@ func _phase5() -> void:
 	DirAccess.remove_absolute(t)
 	check(SaveGameScript.read(t)[0] == SaveGameScript.LOAD_NONE, "P5: a missing file -> 'no save'")
 	# Readable but wrong inside: loaded, every value made sane.
-	_write_text(t, JSON.stringify({"version": 1,
-		"story": {"completed_day": 42, "complete": "yes"},
-		"week": {"sold": -5, "writeups": "lots", "coffee_cups": 2.7},
-		"endless": {"wallet": 1e30, "upgrades": {"shoes": 99, "brace": -1, "soles": 1.9, "hax": 5}, "shift_number": "x",
+	# OCT 2026 PHASE 2: a version-1 (story) save is LEGACY — kept aside, not loaded.
+	var v1 := '{"version": 1, "story": {"completed_day": 4, "complete": false}, "week": {"sold": 30}}'
+	_write_text(t, v1)
+	DirAccess.remove_absolute(t + ".v1.bak")
+	var r1: Array = SaveGameScript.read(t)
+	check(r1[0] == SaveGameScript.LOAD_LEGACY and r1[1].is_empty(), "P5: a version-1 save -> LEGACY, nothing loaded (status %d)" % r1[0])
+	check(FileAccess.file_exists(t + ".v1.bak") and FileAccess.get_file_as_string(t + ".v1.bak") == v1, "P5: ...and copied aside to .v1.bak, byte for byte")
+	DirAccess.remove_absolute(t + ".v1.bak")
+	_write_text(t, JSON.stringify({"version": 2,
+		"shop": {"completed_day": -3, "money": "lots", "lifetime_earned": -5, "sections_owned": 9, "stage": "x", "lifetime_sold": 2.7},
+		"endless": {"unlocked": "yes", "wallet": 1e30, "upgrades": {"shoes": 99, "brace": -1, "soles": 1.9, "hax": 5}, "shift_number": "x",
 			"run_stats": {"shifts": 3, "medals": [1, "a", 2]}, "week_summary": {"sold": 9, "pay": -40, "evil": {}}}}))
 	var r: Array = SaveGameScript.read(t)
 	var s: Dictionary = r[1]
 	check(r[0] == SaveGameScript.LOAD_OK, "P5: a well-formed file with bad values still loads")
-	check(s["story"]["completed_day"] == 7 and s["story"]["complete"] == false, "P5: day 42 -> 7, 'yes' isn't true (%s)" % str(s["story"]))
-	check(s["week"]["sold"] == 0 and s["week"]["writeups"] == 0 and s["week"]["coffee_cups"] == 2, "P5: negative/strings -> 0, 2.7 -> 2 (%s)" % str(s["week"]))
+	check(s["shop"]["completed_day"] == 0 and s["shop"]["money"] == 0 and s["shop"]["lifetime_earned"] == 0, "P5: day -3 -> 0, a string bank -> 0, negative lifetime -> 0 (%s)" % str(s["shop"]))
+	check(s["shop"]["sections_owned"] == 4 and s["shop"]["stage"] == 0 and s["shop"]["lifetime_sold"] == 2 and s["endless"]["unlocked"] == false, "P5: 9 sections -> 4, a string stage -> 0, 2.7 -> 2, 'yes' isn't true (%s)" % str(s["shop"]))
+	_write_text(t, JSON.stringify({"version": 2, "shop": {"money": -250}}))
+	check(SaveGameScript.read(t)[1]["shop"]["money"] == -250 and SaveGameScript.read(t)[1]["shop"]["sections_owned"] == 1, "P5: a bank in the red loads as it was; missing sections -> 1")
 	check(s["endless"]["wallet"] == 1000000000 and s["endless"]["shift_number"] == 0, "P5: a huge wallet is capped, a string counter is 0")
 	check(_canon(s["endless"]["upgrades"]) == _canon({"shoes": 3, "soles": 1}), "P5: upgrades clamped to their max, unknown keys dropped (%s)" % str(s["endless"]["upgrades"]))
 	check(_canon(s["endless"]["run_stats"]["medals"]) == _canon([1, 0, 2, 0]) and _canon(s["endless"]["week_summary"]) == _canon({"sold": 9, "pay": -40}), "P5: medals and week summary cleaned (%s, %s)" % [str(s["endless"]["run_stats"]), str(s["endless"]["week_summary"])])
@@ -376,23 +417,20 @@ func _phase6() -> void:
 ## =============================================================================
 
 ## The host's save: a finished story, a run in progress.
-const HOST_ENDLESS_FILE := {"version": 1,
-	"story": {"completed_day": 7, "complete": true},
-	"week": {"sold": 0, "writeups": 0, "priority_sales": 0, "clean_bonus": 0, "coffee_cups": 0},
-	"endless": {"wallet": 137, "upgrades": {"shoes": 2, "brace": 1, "badge": 1}, "shift_number": 4,
+const HOST_ENDLESS_FILE := {"version": 2,
+	"shop": {"completed_day": 7, "money": 300, "lifetime_earned": 7000, "sections_owned": 4, "stage": 5, "lifetime_sold": 140},
+	"endless": {"unlocked": true, "wallet": 137, "upgrades": {"shoes": 2, "brace": 1, "badge": 1}, "shift_number": 4,
 		"run_stats": {"shifts": 4, "sold": 88, "bucks": 210, "medals": [1, 1, 1, 1]},
 		"week_summary": {"sold": 140, "pay": 1700, "writeups": 3, "priority_sales": 10, "clean_bonus": 90}}}
-## The host's save: mid-story, Days 1-4 done.
-const HOST_STORY_FILE := {"version": 1,
-	"story": {"completed_day": 4, "complete": false},
-	"week": {"sold": 30, "writeups": 2, "priority_sales": 0, "clean_bonus": 12, "coffee_cups": 1},
-	"endless": {"wallet": 0, "upgrades": {}, "shift_number": 0, "run_stats": {"shifts": 0, "sold": 0, "bucks": 0, "medals": [0, 0, 0, 0]}, "week_summary": {}}}
+## The host's save: mid-game, Days 1-4 done, Produce owned.
+const HOST_STORY_FILE := {"version": 2,
+	"shop": {"completed_day": 4, "money": 1234, "lifetime_earned": 1500, "sections_owned": 2, "stage": 2, "lifetime_sold": 30},
+	"endless": {"unlocked": false, "wallet": 0, "upgrades": {}, "shift_number": 0, "run_stats": {"shifts": 0, "sold": 0, "bucks": 0, "medals": [0, 0, 0, 0]}, "week_summary": {}}}
 ## The client's OWN save — different from the host's in every way. It must be
 ## ignored in the host's session, and never overwritten.
-const CLIENT_FILE := {"version": 1,
-	"story": {"completed_day": 2, "complete": false},
-	"week": {"sold": 9, "writeups": 0, "priority_sales": 0, "clean_bonus": 0, "coffee_cups": 0},
-	"endless": {"wallet": 999, "upgrades": {"janitor": 2}, "shift_number": 0, "run_stats": {}, "week_summary": {}}}
+const CLIENT_FILE := {"version": 2,
+	"shop": {"completed_day": 2, "money": 77, "lifetime_earned": 90, "sections_owned": 1, "stage": 0, "lifetime_sold": 9},
+	"endless": {"unlocked": false, "wallet": 999, "upgrades": {"janitor": 2}, "shift_number": 0, "run_stats": {}, "week_summary": {}}}
 
 var _step_n := 0
 
@@ -431,7 +469,7 @@ func _run_host() -> void:
 	check(await wait_until(func(): return main.players.size() >= 2, 30.0), "N0 host: the client joined")
 	await wait(1.5)
 	if story:
-		check(await wait_shift() and main.current_day == 5 and main._total_sold() == 30, "N0 host: Day 5 (after the saved Day 4), week sold 30")
+		check(await wait_shift() and main.current_day == 5 and main._total_sold() == 30 and main.money == 1234 and main.sections_owned == 2, "N0 host: Day 5 (after the saved Day 4), sold 30, bank $1234, 2 sections")
 	else:
 		check(en().screen == en().SCREEN_HUB and en().wallet == 137, "N0 host: in the hub with my 137 Bucks")
 	_step("view", {"view": view(), "tag": "N1 right after joining"})
@@ -476,9 +514,9 @@ func _host_endless() -> void:
 func _host_story() -> void:
 	add_sales(6)
 	await end_shift_now()
-	check(main.report_week_label.text == "Week Total: 36", "N2 host: Day 5's report '%s'" % main.report_week_label.text)
+	check(main.report_week_label.text.begins_with("Bank: %s" % main._format_money(main.money)) and main.money == 1234 + main._pay_today(), "N2 host: Day 5's report '%s'" % main.report_week_label.text)
 	var d := disk(HOST_SAVE)
-	check(d["story"]["completed_day"] == 5 and d["week"]["sold"] == 36 and d["week"]["writeups"] == 2, "N2 host: autosaved: completed 5, sold 36")
+	check(d["shop"]["completed_day"] == 5 and d["shop"]["lifetime_sold"] == 36 and d["shop"]["money"] == main.money, "N2 host: autosaved: completed 5, sold 36, bank %s" % main._format_money(main.money))
 	_step("report", {"view": view(), "week": main.report_week_label.text, "pay": main.report_pay_label.text})
 	await _client_answer()
 	_step("continue")

@@ -5,20 +5,22 @@ extends RefCounted
 ## clean values, and how to get it on and off the disk without ever leaving a
 ## half-written file behind.
 ##
-## WHAT IS SAVED — progress, never a shift in flight:
-## - the story: the last FULLY COMPLETED day (0-7) and whether the week is
-##   over (Endless Mode unlocked). A day only counts once its report is up
-##   (Main._end_shift()); quitting mid-day replays that day from its start.
-## - the story week's running totals (sold, write-ups, priority sales, the
-##   cleanliness bonus, coffee cups) — so Day 5's "Week Total" and the WEEK
-##   COMPLETE screen still count Days 1-4 after a relaunch. Only meaningful
-##   until the week is over.
-## - endless: the Bucks wallet, every upgrade level, the run's totals
-##   (shifts, sold, Bucks earned, medals), the shift counter ("Shift #N") and
-##   the week's results shown on WEEK COMPLETE.
+## WHAT IS SAVED — progress, never a shift in flight (VERSION 2, the Oct 2026
+## shopkeeper economy):
+## - the shop: the last FULLY COMPLETED day (a day only counts once its report
+##   is up — quitting mid-day replays that day from its start), the crew's
+##   bank, lifetime earnings, sections owned, the complication stage, and the
+##   lifetime sales count.
+## - endless (only reachable through the debug --endless route until Phase 4):
+##   the Bucks wallet, every upgrade level, the run's totals, the shift
+##   counter, the old week's results and whether it was unlocked.
 ## NOT saved: anything inside a shift (stock, customers, hazards, the clock),
-## the shift board's postings (a fresh board is rolled on load) and the coffee
-## machine's per-shift cups (they reset every shift anyway).
+## the shift board's postings and the coffee machine's per-shift cups.
+##
+## VERSION 1 SAVES (the 7-day story) are LOAD_LEGACY: story-day progress has no
+## honest translation into "owns N sections with $X", so they are NOT migrated.
+## The file is copied aside to <file>.v1.bak (never destroyed), and Main.gd
+## starts the crew fresh with a one-time message saying why.
 ##
 ## WHY JSON (not ConfigFile/var_to_str): it can only ever describe plain data.
 ## A ConfigFile is parsed with Godot's Variant parser, which also understands
@@ -30,16 +32,18 @@ extends RefCounted
 ## ROBUSTNESS: writes go to <file>.tmp, then replace the real file in one
 ## rename — a crash or power cut mid-write leaves the previous save intact.
 ## A file that won't parse, isn't an object, or is from a newer save version
-## is NOT loaded: the game starts fresh (Day 1, empty wallet) and the bad file
+## is NOT loaded: the game starts fresh (Day 1, empty bank) and the bad file
 ## is copied aside to <file>.bad so the next save can't destroy the evidence.
 
-const VERSION := 1
+const VERSION := 2
+const LEGACY_VERSION := 1 # the 7-day story's saves
 const DEFAULT_PATH := "user://shiftwork_save.json"
-const STORY_DAYS := 7
+const MAX_DAY := 1000000
 
 const LOAD_NONE := 0 # no file: a fresh start
 const LOAD_OK := 1
 const LOAD_CORRUPT := 2 # a file was there but unusable: a fresh start
+const LOAD_LEGACY := 3 # a pre-shopkeeper save: kept aside, a fresh start
 
 ## The save as plain data, from the host's live state.
 static func snapshot(main: Node) -> Dictionary:
@@ -47,19 +51,18 @@ static func snapshot(main: Node) -> Dictionary:
 	return {
 		"version": VERSION,
 		"saved_at": Time.get_datetime_string_from_system(),
-		"story": {
+		"shop": {
 			"completed_day": main.completed_story_day,
-			"complete": main.story_complete,
-		},
-		"week": {
-			"sold": main._total_sold(),
-			"writeups": main.writeups_week,
-			"priority_sales": main.priority_sales_week,
-			"clean_bonus": main.cleanup.clean_bonus_week,
-			"litter_pay": main.cleanup.litter_pay_week, # Oct 2026; older saves read 0
-			"coffee_cups": main.break_room.coffee_cups_week,
+			"money": main.money,
+			"lifetime_earned": main.lifetime_earned,
+			"sections_owned": main.sections_owned,
+			"stage": main.complication_stage,
+			# Mid-shift (a purchase checkpoint) only the days already done count:
+			# the shift in flight isn't saved, so neither are its sales.
+			"lifetime_sold": main._sold_at_day_start if main.shift_active else main._total_sold(),
 		},
 		"endless": {
+			"unlocked": main.story_complete,
 			"wallet": en.wallet,
 			"upgrades": en.upgrades.duplicate(),
 			"shift_number": en.shift_number,
@@ -96,20 +99,23 @@ static func read(path: String) -> Array:
 		_quarantine(path, "not a JSON object")
 		return [LOAD_CORRUPT, {}]
 	var version := int(clampf(_num(parsed.get("version"), -1), -1, 1e6))
+	if version == LEGACY_VERSION:
+		push_warning("[Save] %s is a pre-shopkeeper (version 1) save — not migrated; copied it to %s" % [path, legacy_backup_path(path)])
+		DirAccess.copy_absolute(path, legacy_backup_path(path))
+		return [LOAD_LEGACY, {}]
 	if version < 1 or version > VERSION:
 		_quarantine(path, "unknown save version %s" % str(parsed.get("version")))
 		return [LOAD_CORRUPT, {}]
 	return [LOAD_OK, sanitize(parsed)]
 
+static func legacy_backup_path(path: String) -> String:
+	return path + ".v1.bak"
+
 ## Every field cast and clamped; anything missing gets its fresh-game value.
 static func sanitize(raw: Dictionary) -> Dictionary:
-	var story: Dictionary = _dict(raw.get("story"))
-	var week: Dictionary = _dict(raw.get("week"))
+	var shop: Dictionary = _dict(raw.get("shop"))
 	var en: Dictionary = _dict(raw.get("endless"))
-	var complete := bool(story.get("complete", false)) if story.get("complete") is bool else false
-	var day := int(clampf(_num(story.get("completed_day"), 0), 0, STORY_DAYS))
-	if complete:
-		day = STORY_DAYS
+	var sections := int(clampf(_num(shop.get("sections_owned"), 1), 1, 4))
 	var upgrades := {}
 	var raw_up: Dictionary = _dict(en.get("upgrades"))
 	for u in preload("res://Endless.gd").UPGRADES:
@@ -128,16 +134,16 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 		if ws.has(k):
 			week_summary[k] = int(clampf(_num(ws[k], 0), -1e9, 1e9)) # pay can be negative
 	return {
-		"story": {"completed_day": day, "complete": complete},
-		"week": {
-			"sold": _count(week.get("sold")),
-			"writeups": _count(week.get("writeups")),
-			"priority_sales": _count(week.get("priority_sales")),
-			"clean_bonus": _count(week.get("clean_bonus")),
-			"litter_pay": _count(week.get("litter_pay")),
-			"coffee_cups": _count(week.get("coffee_cups")),
+		"shop": {
+			"completed_day": int(clampf(_num(shop.get("completed_day"), 0), 0, MAX_DAY)),
+			"money": int(clampf(_num(shop.get("money"), 0), -1e9, 1e9)), # can be in the red
+			"lifetime_earned": _count(shop.get("lifetime_earned")),
+			"sections_owned": sections,
+			"stage": int(clampf(_num(shop.get("stage"), 0), 0, 5)),
+			"lifetime_sold": _count(shop.get("lifetime_sold")),
 		},
 		"endless": {
+			"unlocked": bool(en.get("unlocked")) if en.get("unlocked") is bool else false,
 			"wallet": _count(en.get("wallet")),
 			"upgrades": upgrades,
 			"shift_number": _count(en.get("shift_number")),
