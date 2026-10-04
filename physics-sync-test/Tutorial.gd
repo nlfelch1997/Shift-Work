@@ -397,6 +397,8 @@ func _show(p: Node2D, me: int) -> void:
 var card_side := 0 # 0 left, 1 right (tests read it)
 func _place_card() -> void:
 	var vp := get_viewport().get_visible_rect().size
+	if vp.x < 400.0: # headless test runs report a placeholder size
+		vp = Vector2(ProjectSettings.get_setting("display/window/size/viewport_width"), ProjectSettings.get_setting("display/window/size/viewport_height"))
 	var ct := get_viewport().get_canvas_transform()
 	var keep_clear: Array[Vector2] = []
 	for n in [main.manager, main.forklift, main.delivery_forklift]:

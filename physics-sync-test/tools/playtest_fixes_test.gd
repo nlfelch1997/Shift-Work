@@ -179,6 +179,8 @@ func _run_net_disruptive_host() -> void:
 	for f in DirAccess.get_files_at(NET_DIR):
 		DirAccess.remove_absolute(NET_DIR + f)
 	var r := await _open_and_measure(window)
+	var want := int(_arg("players", "3"))
+	check(main.players.size() == want, "co-op: all %d players connected for the measurement (%d)" % [want, main.players.size()])
 	_net_write("host_crowd.json", {"samples": r["samples"]})
 	var o := _crowd_report("co-op host", r, window)
 	var ratio: float = main.CUSTOMER_DISRUPTIVE_RATIO
@@ -209,7 +211,7 @@ func _run_net_disruptive_host() -> void:
 func _run_net_disruptive_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	await wait_until(func(): return main.store_open, 120.0)
+	await wait_until(func(): return main.store_open, 900.0) # the host fills every shelf first (Day 7: minutes)
 	var samples := []
 	var red_names := {}
 	var t := 0.0
@@ -871,7 +873,7 @@ func _run_practice(net := false) -> void:
 	await wait(1.5)
 	await _shot_tutorial("04_stock")
 	var placed := 0
-	for k in 4:
+	for k in 8:
 		if tut.current_id() != "stock":
 			break
 		var pool := loose_products(sec)
@@ -879,6 +881,9 @@ func _run_practice(net := false) -> void:
 			break
 		var obj: RigidBody2D = pool[0]
 		await _walk_to(obj.global_position, 15.0, 45.0)
+		if player().global_position.distance_to(obj.global_position) > 60.0:
+			player().teleport_to(obj.global_position + Vector2(0, -40)) # the walking bot got wedged; this checks the step
+			await wait(0.3)
 		await tap("host_interact")
 		await wait(0.3)
 		if obj.get_node("Carryable").carrier_id != 1:
@@ -888,6 +893,9 @@ func _run_practice(net := false) -> void:
 		# toward the aisle, facing the slot.
 		var outward: Vector2 = -slot.get_parent().global_transform.y.normalized()
 		await _walk_to(slot.global_position + outward * 30.0, 15.0, 8.0)
+		if player().global_position.distance_to(slot.global_position + outward * 30.0) > 10.0:
+			player().teleport_to(slot.global_position + outward * 30.0)
+			await wait(0.3)
 		player().facing_angle = (-outward).angle()
 		await wait(0.1)
 		await tap("host_place")
@@ -905,7 +913,9 @@ func _run_practice(net := false) -> void:
 	var m: Node2D = main.manager
 	var watched := false
 	# Off the registers first (standing at one counts as working).
-	await _walk_to(player().global_position + Vector2(0, -170), 6.0, 20.0)
+	# (A fixed open spot in the hub, well clear of the registers.)
+	player().teleport_to(cell_center(Vector2i(1, 1)) + Vector2(0, -150))
+	await wait(0.4)
 	var spot: Vector2 = player().global_position
 	pin_manager(spot + Vector2(-150, 0), 0.0) # 150px west of me, looking right at me
 	steer(Vector2.ZERO)
