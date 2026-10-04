@@ -2601,6 +2601,7 @@ func _issue_priority_order(forced_section := "", forced_qty := 0) -> void:
 	order_time_left = _priority_order_window()
 	orders_called_today += 1
 	print("[Main] Priority order #%d: stock %d in %s (%.0fs)" % [_order_id, qty, pick, order_time_left])
+	_update_alert_layer(0.0) # the host's banner shows it this tick, not next frame
 
 func _open_slots_in_section(section: Dictionary) -> int:
 	var n := 0
@@ -2642,6 +2643,10 @@ func note_item_stocked(obj: Node, shelf_body: Node) -> void:
 	order_stocked += 1
 	if order_stocked >= order_needed:
 		_close_priority_order(true)
+	# Oct 2026: same tick as the count (this runs in Shelf.gd's physics step;
+	# the banner otherwise waited for the next _process — a frame behind
+	# whenever two physics steps landed in one frame under load).
+	_update_alert_layer(0.0)
 
 ## Host-only, called by Cashier.gd as a purchase completes.
 func note_sale(item: Node) -> void:

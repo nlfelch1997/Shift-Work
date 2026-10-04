@@ -667,8 +667,8 @@ func _try_interact() -> void:
 	if main.break_room.near_vending(global_position):
 		main.break_room.poke_vending()
 		return
-	# PLAYTEST FIX: trash by hand, any time — when a piece of litter is the
-	# nearest thing in reach (Cleanup.gd's LITTER_PAY_PER_PIECE).
+	# PLAYTEST FIX: trash by hand, any time — when litter is in reach and no
+	# loose stock is (Cleanup.gd's LITTER_PAY_PER_PIECE).
 	if litter_beats_stock():
 		main.cleanup.try_pick_litter()
 		return
@@ -879,15 +879,19 @@ func _stackable_in_reach(carried: Node2D, my_id: int) -> Node2D:
 	return best
 
 ## True when an empty-handed E here would pick up litter rather than stock:
-## a piece is in reach and no loose stock is nearer (shelved stock never
-## wins over trash — leave the shelf alone). Every peer (the hint uses it).
+## a piece is in reach and NO loose stock is (stocking is the job — trash
+## never steals an E press meant for a product; found by the 3-player
+## net-orders test, where a crew member kept grabbing wrappers lying beside
+## the stock they were reaching for and fell 30s behind). Shelved stock
+## doesn't count — trash beside a stocked shelf is fair game. Every peer
+## (the "E: pick up trash" hint uses it, so it always tells the truth).
 func litter_beats_stock() -> bool:
 	var main = get_tree().current_scene
 	var hit: Array = main.cleanup.nearest_litter(global_position)
 	if hit[0] == 0:
 		return false
 	var nearest := _find_nearest_free_carryable()
-	return nearest == null or nearest.get_node("Carryable").shelved or global_position.distance_to(nearest.global_position) > hit[1]
+	return nearest == null or nearest.get_node("Carryable").shelved
 
 ## The item E picks up: the nearest free one within Carryable.PICKUP_RANGE
 ## (see that constant for the playtest fix). PLAYTEST FIX: loose stock wins

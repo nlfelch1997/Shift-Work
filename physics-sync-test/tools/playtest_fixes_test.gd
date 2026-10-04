@@ -319,6 +319,22 @@ func _run_shelf() -> void:
 		loose.linear_velocity = Vector2(0, -620) # a full-speed throw, straight into the slot
 		await wait(0.8)
 	check(_stocked_on(sb).size() == full, "S2: three thrown products into the stocked row — %d/%d still stocked" % [_stocked_on(sb).size(), full])
+	# ...and the thrown one bounced off rather than coming to rest inside the
+	# occupied slot (it would drop into it the moment the stocked item sold —
+	# a free "restock" the net-orders test caught).
+	await wait(0.6)
+	var overlap := 1.0e9
+	for i in shelf.slots.size():
+		overlap = minf(overlap, loose.global_position.distance_to(shelf.slots[i].global_position))
+	check(overlap > shelf.CAPTURE_RADIUS, "S2: the thrown product isn't resting inside a stocked slot (nearest slot %.0fpx, capture %.0f)" % [overlap, shelf.CAPTURE_RADIUS])
+	var occ0: RigidBody2D = shelf._occupant[1]
+	occ0.get_node("Carryable").try_pickup(1, occ0.global_position)
+	await wait(0.6)
+	check(shelf._occupant[1] == null or shelf._occupant[1] == occ0, "S2: taking a stocked item off doesn't let a loose one auto-stock in its place")
+	occ0.get_node("Carryable").try_drop(1)
+	await wait(0.3)
+	move_body(occ0, occ0.global_position + Vector2(0, 250))
+	await wait(0.3)
 	# 3. A remote-style push request from a player is refused by the host.
 	var victim: RigidBody2D = _stocked_on(sb)[0]
 	var pos0 := victim.global_position
@@ -675,11 +691,11 @@ func _run_trash() -> void:
 	move_body(prod, hub + Vector2(0, 150))
 	var lid: int = cl.drop_litter(hub + Vector2(45, 150))
 	await wait(0.3)
-	p.teleport_to(hub + Vector2(0, 190)) # product 40px, trash 60px
+	p.teleport_to(hub + Vector2(45, 190)) # trash 40px, product 60px: stock still wins
 	await wait(0.3)
 	await tap("host_interact")
 	await wait(0.3)
-	check(prod.get_node("Carryable").carrier_id == 1 and cl.litter.size() == 1, "T3: product nearer than the trash -> E picks up the product (product %.0fpx, trash %.0fpx, carrier %d, litter %d)" % [p.global_position.distance_to(prod.global_position), p.global_position.distance_to(hub + Vector2(45, 150)), prod.get_node("Carryable").carrier_id, cl.litter.size()])
+	check(prod.get_node("Carryable").carrier_id == 1 and cl.litter.size() == 1, "T3: loose stock and trash both in reach -> E picks up the stock (product %.0fpx, trash %.0fpx, carrier %d, litter %d)" % [p.global_position.distance_to(prod.global_position), p.global_position.distance_to(hub + Vector2(45, 150)), prod.get_node("Carryable").carrier_id, cl.litter.size()])
 	await tap("host_interact")
 	await wait(0.3)
 	move_body(prod, hub + Vector2(0, 400))
@@ -688,7 +704,7 @@ func _run_trash() -> void:
 	await wait(0.3)
 	await tap("host_interact")
 	await wait(0.3)
-	check(cl.litter.size() == 0, "T3: trash nearer -> E picks up the trash")
+	check(cl.litter.size() == 0, "T3: no loose stock in reach -> E picks up the trash")
 	# 3. A burst: 12 pieces swept together at close coalesce, no clutter.
 	var before_pops := pops.size()
 	for i in 12:
