@@ -319,21 +319,29 @@ func _run_shelf() -> void:
 		loose.linear_velocity = Vector2(0, -620) # a full-speed throw, straight into the slot
 		await wait(0.8)
 	check(_stocked_on(sb).size() == full, "S2: three thrown products into the stocked row — %d/%d still stocked" % [_stocked_on(sb).size(), full])
-	# ...and the thrown one bounced off rather than coming to rest inside the
-	# occupied slot (it would drop into it the moment the stocked item sold —
-	# a free "restock" the net-orders test caught).
+	# A loose item resting INSIDE a stocked slot (stocked items no longer
+	# collide with loose ones) must not drop into that slot the moment its
+	# stocked item is taken — a free "restock" the net-orders test caught.
+	move_body(loose, shelf.slots[1].global_position + Vector2(6, 4))
 	await wait(0.6)
-	var overlap := 1.0e9
-	for i in shelf.slots.size():
-		overlap = minf(overlap, loose.global_position.distance_to(shelf.slots[i].global_position))
-	check(overlap > shelf.CAPTURE_RADIUS, "S2: the thrown product isn't resting inside a stocked slot (nearest slot %.0fpx, capture %.0f)" % [overlap, shelf.CAPTURE_RADIUS])
 	var occ0: RigidBody2D = shelf._occupant[1]
+	check(occ0 != null and loose.global_position.distance_to(shelf.slots[1].global_position) < shelf.CAPTURE_RADIUS, "S2: a loose product is resting inside the stocked slot (%.0fpx)" % loose.global_position.distance_to(shelf.slots[1].global_position))
 	occ0.get_node("Carryable").try_pickup(1, occ0.global_position)
-	await wait(0.6)
-	check(shelf._occupant[1] == null or shelf._occupant[1] == occ0, "S2: taking a stocked item off doesn't let a loose one auto-stock in its place")
+	await wait(1.0)
+	check(shelf._occupant[1] == null, "S2: the stocked item taken off -> the loose one sitting there does NOT auto-stock (slot %s)" % ("empty" if shelf._occupant[1] == null else String(shelf._occupant[1].name)))
 	occ0.get_node("Carryable").try_drop(1)
 	await wait(0.3)
 	move_body(occ0, occ0.global_position + Vector2(0, 250))
+	# Hand-placing (carry it, set it down) still stocks it, squatter or not.
+	loose.get_node("Carryable").try_pickup(1, loose.global_position)
+	await wait(0.2)
+	player().teleport_to(shelf.slots[1].global_position - sb.global_transform.y.normalized() * 30.0)
+	await wait(0.3)
+	player().facing_angle = (shelf.slots[1].global_position - player().global_position).angle()
+	await physics_frame
+	loose.get_node("Carryable").try_drop(1)
+	await wait_until(func(): return shelf._occupant[1] == loose, 2.0)
+	check(shelf._occupant[1] == loose, "S2: ...but carried and set down on that slot, it stocks as normal")
 	await wait(0.3)
 	# 3. A remote-style push request from a player is refused by the host.
 	var victim: RigidBody2D = _stocked_on(sb)[0]

@@ -140,9 +140,6 @@ func _ready() -> void:
 	# fast body travels each tick, not just its start/end position, which
 	# is exactly the fix for this class of bug.
 	body.continuous_cd = RigidBody2D.CCD_MODE_CAST_SHAPE
-	# Every loose item stops against shelved stock from the start (spawned and
-	# unpacked stock too, not just after its first drop) — see _apply_free_layers().
-	_apply_free_layers()
 
 	# IMPORTANT GOTCHA (carried over from Week 1): a CharacterBody2D's
 	# move_and_slide() does NOT automatically push a RigidBody2D it walks
@@ -309,27 +306,15 @@ func _rpc_set_shelved(v: bool) -> void:
 	shelved = v
 	if carrier_id == 0:
 		_apply_free_layers()
-		# Host: shelved stock is also FROZEN (the host's default static freeze,
-		# at rest) — loose stock still bumps into it (below) but can't budge
-		# it. Clients' copies are always frozen anyway. Every hazard push
-		# un-shelves (unfreezes) it first (request_push()).
-		if is_multiplayer_authority():
-			if v:
-				body.linear_velocity = Vector2.ZERO
-				body.angular_velocity = 0.0
-			body.freeze = v
 
-## The layers of an item nobody is holding: shelved stock on its own layer
-## that players and customers don't mask (they walk through it); loose stock
-## on the shared layer 1 and ALSO masking the shelved layer, so a loose item
-## stops against stocked stock instead of coming to rest inside an occupied
-## slot — FOUND BY THE 3-PLAYER net-orders TEST: with no collision at all, a
-## dropped or spilled product could sit overlapping a stocked item and then
-## drop into the slot the moment a shopper bought it (a free "restock"
-## nobody did, which also beat the crew to a priority order).
+## The layers of an item nobody is holding: shelved stock on its own layer,
+## colliding with nothing itself (only the hazards that mask it in can touch
+## it); everything else on the shared layer 1, as always. (Loose stock can
+## now come to rest overlapping a stocked item — Shelf.gd's "squatters" keep
+## it from dropping into that slot when the stocked item sells.)
 func _apply_free_layers() -> void:
 	body.collision_layer = LAYER_SHELF_STOCK if shelved else LAYER_FREE
-	body.collision_mask = 0 if shelved else (LAYER_FREE | LAYER_SHELF_STOCK)
+	body.collision_mask = 0 if shelved else LAYER_FREE
 
 ## --- Pickup / drop / throw ---------------------------------------------
 
