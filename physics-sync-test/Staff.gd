@@ -60,22 +60,50 @@ const HELPER_LOOKS := {"Produce": "cashier_4", "Dairy/Frozen": "cashier_5", "Bak
 
 ## ============================================================================
 ## NUMBERS — every one a FLAGGED, tunable placeholder (Phase 5 does the real
-## balance pass). How they were set: see the PHASE 3 block in Main.gd's
-## economy notes and the report — measured with tools/staff_test.gd's
-## --test=income (the solo bot, same brain as Phase 2's measurements, with
-## and without a helper in each section).
+## balance pass). Measured with tools/staff_test.gd --test=income: the solo
+## bot (the same competent-player brain Phase 2's prices came from) playing
+## whole shifts from old Day 3/5/7 economy presets, with and without helpers,
+## 3-5 runs each (--fixed-fps 60 bot sims; Oct 2026). Mean Pay Today a shift:
+##
+##                     no helper   base helpers   maxed helpers   player AFK*
+##   Day 3 (Produce)       $405         $980          $1051          $143
+##   Day 5 (+Dairy)        $235         $443          $456           $290
+##   Day 7 (+Bakery)       $213         $456          $509           $267
+##   opening early (the sign flipped 4 min into prep, --open-after=240):
+##   Day 5                 ~$780       $1478          $1536
+##   Day 7                 $422        $1621          $1293 (noise: sd ~$400)
+##   * the player never moves: what the helpers make on their own (the store
+##     opens when prep runs out).
+##
+## What that says: a base helper is worth about +$80-105 a shift to a solo
+## crew that opens late (the minimum selling window), and +$350-575 to one
+## that opens early because its helpers have the other aisles covered — and
+## alone, with nobody else working, ~$90-145. The wages below are set so even
+## the late-opening case stays in the black for every helper (Day 7, all
+## three: $456 - $210 = $246 vs $213 without), while staff is still a real
+## line on every report — a third to a half of what the helpers add in that
+## case. The hire fee is one to two shifts of a late-opening solo crew's pay,
+## so hiring competes with saving for the next section. Wages climb with the
+## section like the prices do.
+## UPGRADES measured small on income (+2-7% a shift, maxed vs base) even
+## though they nearly triple a helper's throughput (tools/staff_test.gd
+## --test=effect: 12 units shelved in 74s base, 44s speed-maxed, 39s
+## carry-maxed, 27s both): a section's sales are capped by the crowd, not by
+## how fast its shelves refill, and stock a helper doesn't sell in its aisle
+## gets bought in another. So they're priced as a cheap optimisation, and
+## FLAGGED for Phase 5: they want a demand-side reason to matter.
 ## ============================================================================
 ## Paid once, at the board, on hiring.
-const HIRE_FEE := {"Produce": 150, "Dairy/Frozen": 250, "Bakery": 350}
+const HIRE_FEE := {"Produce": 150, "Dairy/Frozen": 200, "Bakery": 250}
 ## Per shift worked, out of the bank at clock-out.
-const WAGE := {"Produce": 60, "Dairy/Frozen": 75, "Bakery": 90}
+const WAGE := {"Produce": 60, "Dairy/Frozen": 70, "Bakery": 80}
 ## Level 0 = as hired. Speed in px/s (a customer browses at 90, a player
 ## walks at 220); carry in items per trip.
 const SPEED_BY_LEVEL := [80.0, 110.0, 140.0]
 const CARRY_BY_LEVEL := [1, 2, 3]
 ## Price of the NEXT level (index = current level).
-const SPEED_COSTS := [200, 400]
-const CARRY_COSTS := [250, 500]
+const SPEED_COSTS := [100, 200]
+const CARRY_COSTS := [100, 200]
 ## Back-stock boxes a section can hold; a truck's box for a full back room
 ## isn't brought (the truck carries one less).
 const BACKSTOCK_MAX := 3

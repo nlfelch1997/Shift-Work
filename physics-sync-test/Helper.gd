@@ -340,7 +340,13 @@ func _choose_job() -> void:
 			_job["kind"] = "place"
 	elif held.size() < capacity and not loose.is_empty() and room_for > 0:
 		var obj: Node2D = _nearest_node(loose, position)
-		_job = {"kind": "pick", "obj": obj}
+		# The spot to stop at is fixed when the job is chosen (just short of
+		# the item, on the side we're coming from) — recomputing it from where
+		# we stand each frame moved the goal every frame, and every goal change
+		# is a re-plan.
+		var to := position - obj.global_position
+		var stop := obj.global_position + (to.normalized() * PICK_REACH if to.length() > PICK_REACH else to)
+		_job = {"kind": "pick", "obj": obj, "at": obj.global_position, "goal": stop}
 	elif held.is_empty() and loose.is_empty() and not empty.is_empty() and main.staff.backstock_of(section) > 0:
 		_job = {"kind": "unpack"}
 	else:
@@ -350,7 +356,7 @@ func _job_valid() -> bool:
 	match _job["kind"]:
 		"pick":
 			var obj = _job["obj"]
-			return is_instance_valid(obj) and not obj.is_queued_for_deletion() and _is_loose(obj)
+			return is_instance_valid(obj) and not obj.is_queued_for_deletion() and _is_loose(obj) and obj.global_position.distance_to(_job["at"]) < 12.0
 		"place":
 			var shelf: Node = _job["shelf"]
 			return not shelf.wrecked and not shelf.filled[_job["i"]] and not _held().is_empty() and not _slot_claimed(shelf, _job["i"])
@@ -361,10 +367,7 @@ func _job_valid() -> bool:
 func _job_goal() -> Vector2:
 	match _job["kind"]:
 		"pick":
-			var obj: Node2D = _job["obj"]
-			var to := position - obj.global_position
-			# Stop just short of it, on whichever side we're coming from.
-			return obj.global_position + (to.normalized() * PICK_REACH if to.length() > PICK_REACH else to)
+			return _job["goal"]
 		"place":
 			return _job["stand"]
 		"unpack":
@@ -391,8 +394,9 @@ func _arrive() -> void:
 			status = "unpacking…"
 			_pause_with(UNPACK_TIME, "unpack")
 		_:
+			# Waiting at home: the job stays, so it's re-chosen every 0.5s
+			# (_physics_process), not every frame.
 			facing_angle = PI * 0.5
-			_job = {}
 
 func _pause_with(t: float, action: String) -> void:
 	_pause = t

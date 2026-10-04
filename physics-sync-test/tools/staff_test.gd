@@ -15,6 +15,8 @@ func _initialize() -> void:
 	current_scene = main
 	careless = true
 	var client := "--client" in args
+	if _mode == "soak":
+		main.cleanup_ceiling_override = 5.0 # (economy_test's soak does the same)
 	if _mode == "save":
 		_prepare_staff_save_phase() # the file has to be there before Main hosts
 	if _mode == "income" and "--afk" in args:
@@ -139,7 +141,13 @@ func _loose_stockable() -> int:
 	return n
 
 ## The shelves the bot is responsible for: a staffed section's are the helper's.
+## --open-after=S: the bot flips the sign S seconds into prep instead (a crew
+## that opens early because its helpers have the other aisles covered).
+var _open_after := -1.0
+
 func _fill_ratio() -> float:
+	if _open_after >= 0.0:
+		return 0.0 # _open_at() flips the sign
 	var f := 0
 	var n := 0
 	for sb in main.shelves:
@@ -152,8 +160,19 @@ func _fill_ratio() -> float:
 		n += sb.get_node("Shelf").slot_count()
 	return float(f) / maxf(1.0, n)
 
+## The sign flips at exactly S seconds of shift clock, whatever the bot is
+## doing (FOUND BY THE FIRST OPEN-EARLY BATCH: a bot holding stock it had
+## nowhere to put never counted as free to walk to the sign, and two of four
+## runs opened at the ceiling instead).
+func _open_at(s: float) -> void:
+	var len0: float = main.shift_time_left
+	await wait_until(func(): return len0 - main.shift_time_left >= s or main.store_open or not main.shift_active, 3000.0)
+	if not main.store_open and main.shift_active:
+		main.open_store(1)
+
 func _run_income() -> void:
 	_hire_spec = _parse_hire()
+	_open_after = float(_arg_int("--open-after=", -1))
 	var afk := "--afk" in OS.get_cmdline_user_args()
 	var shifts := _arg_int("--shifts=", 1)
 	await wait_until(func(): return main.players.has(1), 20.0)
@@ -167,6 +186,8 @@ func _run_income() -> void:
 		var money0: int = main.money
 		var life0: int = main.lifetime_earned
 		var t0 := _wall()
+		if _open_after >= 0.0:
+			_open_at(_open_after)
 		if afk:
 			await wait_until(func(): return main.is_day_report_active(), 3000.0)
 		else:
@@ -184,7 +205,7 @@ func _run_income() -> void:
 				var h := helper(sec)
 				helper_bits.append("%s[s%d c%d]: placed %d, unpacked %d, walked %.0fpx, yield %.0fs" % [sec, main.staff.speed_level(sec), main.staff.carry_level(sec), h.placed_today, h.unpacked_today, h.walked_px, h.forklift_yield_s])
 		var pay: int = main._pay_today()
-		print("INCOME day=%d stage=%d sections=%d hire=%s afk=%d share=%d shift=%d | sold %d by %s | pay %s, wages %s, net %s | bank %s -> %s, lifetime +%d | opened at %.0fs by %s, prep ceiling %.0fs | boxes diverted %d (skipped %d), bot placed %d | %s | wall %.0fs" % [main.debug_day, main.complication_stage, main.sections_owned, str(_hire_spec).replace(" ", ""), 1 if afk else 0, 1 if _share else 0, n + 1, sold, str(main.sold_by_section_today).replace(" ", ""), main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(pay - main.staff.wages_today), main._format_money(money0), main._format_money(main.money), main.lifetime_earned - life0, stats.get("opened_at", -1.0), stats.get("opened_by", "ceiling" if afk else "?"), stats["grace"], main.staff.boxes_diverted_today, main.staff.boxes_skipped_today, stats["placed"], "; ".join(helper_bits), _wall() - t0])
+		print("INCOME day=%d open_after=%d stage=%d sections=%d hire=%s afk=%d share=%d shift=%d | sold %d by %s | pay %s, wages %s, net %s | bank %s -> %s, lifetime +%d | opened at %.0fs by %s, prep ceiling %.0fs | boxes diverted %d (skipped %d), bot placed %d | %s | wall %.0fs" % [main.debug_day, int(_open_after), main.complication_stage, main.sections_owned, str(_hire_spec).replace(" ", ""), 1 if afk else 0, 1 if _share else 0, n + 1, sold, str(main.sold_by_section_today).replace(" ", ""), main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(pay - main.staff.wages_today), main._format_money(money0), main._format_money(main.money), main.lifetime_earned - life0, stats.get("opened_at", -1.0), stats.get("opened_by", "ceiling" if afk else "?"), stats["grace"], main.staff.boxes_diverted_today, main.staff.boxes_skipped_today, stats["placed"], "; ".join(helper_bits), _wall() - t0])
 		check(main.money == money0 + pay - main.staff.wages_today, "shift %d: bank moved by pay - wages exactly (%s -> %s)" % [n + 1, main._format_money(money0), main._format_money(main.money)])
 		check(main.lifetime_earned == life0 + maxi(0, pay), "shift %d: lifetime earned grew by the pay alone (wages don't touch it)" % (n + 1))
 		if n < shifts - 1:
@@ -758,7 +779,9 @@ func _run_staff_hazards() -> void:
 ## UNSTAFFED shelf stocked all shift, the helpers do theirs). Node/object/
 ## memory/frame drift per shift, the hazard watcher throughout, and the
 ## helpers keep working every shift.
-##   godot --headless --path . --script res://tools/staff_test.gd -- --server --day=7 --no-save --shifts=8 --test=soak [--hire=...]
+##   godot --headless --path . --script res://tools/staff_test.gd -- --server --day=7 --no-save --shifts=8 --prep-seconds=180 --test=soak [--hire=...]
+## (--prep-seconds keeps each shift ~5 min: the store opens at once, so the
+## whole clock is selling time; the default 12-min prep makes it ~2 hours.)
 ## =============================================================================
 
 ## The crew leaves staffed sections to their helpers.

@@ -596,6 +596,11 @@ extends Node2D
 ## - LIFETIME EARNED (lifetime_earned): every positive Pay Today ever banked.
 ##   Spending never lowers it — it's what money-gated complications read, so
 ##   buying a section can never switch a hazard back off.
+## - OCT 2026 PHASE 3 — HIRED HELPERS (Staff.gd, Helper.gd): one per section
+##   after Dry Goods, hired at the break room's staff board out of the bank;
+##   their wages come out at clock-out beside the pay (_bank_shift_pay()), and
+##   like every other spend they never touch lifetime_earned. Their numbers
+##   and the measurements behind them are in Staff.gd's NUMBERS block.
 ## - SECTIONS ARE BOUGHT (sections_owned): the crew starts with Dry Goods and
 ##   buys the rest IN ORDER (Produce, Dairy/Frozen, Bakery — SECTIONS order),
 ##   each at its own price (SECTION_PRICES). Bought at the section's own gate:
