@@ -6,7 +6,7 @@ extends RefCounted
 ## half-written file behind.
 ##
 ## WHAT IS SAVED — progress, never a shift in flight (VERSION 2, the Oct 2026
-## shopkeeper economy):
+## shopkeeper economy; VERSION 3 adds the hired staff):
 ## - the shop: the last FULLY COMPLETED day (a day only counts once its report
 ##   is up — quitting mid-day replays that day from its start), the crew's
 ##   bank, lifetime earnings, sections owned, the complication stage, and the
@@ -35,7 +35,10 @@ extends RefCounted
 ## is NOT loaded: the game starts fresh (Day 1, empty bank) and the bad file
 ## is copied aside to <file>.bad so the next save can't destroy the evidence.
 
-const VERSION := 2
+## OCT 2026 PHASE 3: version 3 adds "staff" (hired helpers and their upgrade
+## levels). A version-2 save (Phase 2) loads as-is with nobody hired — the
+## crew it describes had no way to hire anyone yet, so that's exactly true.
+const VERSION := 3
 const LEGACY_VERSION := 1 # the 7-day story's saves
 const DEFAULT_PATH := "user://shiftwork_save.json"
 const MAX_DAY := 1000000
@@ -61,6 +64,8 @@ static func snapshot(main: Node) -> Dictionary:
 			# the shift in flight isn't saved, so neither are its sales.
 			"lifetime_sold": main._sold_at_day_start if main.shift_active else main._total_sold(),
 		},
+		# OCT 2026 PHASE 3: section -> {"speed": level, "carry": level}.
+		"staff": main.staff.staff.duplicate(true),
 		"endless": {
 			"unlocked": main.story_complete,
 			"wallet": en.wallet,
@@ -128,6 +133,19 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 	if raw_medals is Array:
 		for i in mini(4, raw_medals.size()):
 			medals[i] = _count(raw_medals[i])
+	# OCT 2026 PHASE 3: only hireable sections the shop owns, levels clamped.
+	var staff := {}
+	var raw_staff: Dictionary = _dict(raw.get("staff"))
+	var staff_script := preload("res://Staff.gd")
+	var section_order: Array = ["Dry Goods"] + staff_script.HELPER_SECTIONS
+	for sec in staff_script.HELPER_SECTIONS:
+		var st = raw_staff.get(sec)
+		if not st is Dictionary or section_order.find(sec) >= sections:
+			continue
+		staff[sec] = {
+			"speed": int(clampf(_num(st.get("speed"), 0), 0, staff_script.SPEED_BY_LEVEL.size() - 1)),
+			"carry": int(clampf(_num(st.get("carry"), 0), 0, staff_script.CARRY_BY_LEVEL.size() - 1)),
+		}
 	var ws: Dictionary = _dict(en.get("week_summary"))
 	var week_summary := {}
 	for k in ["sold", "pay", "writeups", "priority_sales", "clean_bonus"]:
@@ -142,6 +160,7 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 			"stage": int(clampf(_num(shop.get("stage"), 0), 0, 5)),
 			"lifetime_sold": _count(shop.get("lifetime_sold")),
 		},
+		"staff": staff,
 		"endless": {
 			"unlocked": bool(en.get("unlocked")) if en.get("unlocked") is bool else false,
 			"wallet": _count(en.get("wallet")),

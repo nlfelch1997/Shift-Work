@@ -236,6 +236,11 @@ func _find_carrier(id: int) -> Node2D:
 	for c in get_tree().get_nodes_in_group("customer"):
 		if c.get("carry_id") == id:
 			return c
+	# OCT 2026 PHASE 3: a hired helper (Helper.gd) carries the same way a
+	# customer does — its own negative carry_id, a range of its own.
+	for h in get_tree().get_nodes_in_group("helper"):
+		if h.get("carry_id") == id:
+			return h
 	return null
 
 ## Smoothing runs in _process (tied to actual render rate), not
