@@ -813,6 +813,8 @@ func _await_step(id: String, timeout: float) -> bool:
 ## The step card never covers a hazard cue or the step's own target.
 func _card_clear(what: String, world_pos: Vector2) -> void:
 	var tut := _tut()
+	if DisplayServer.get_name() == "headless":
+		return # screen-space check: headless viewports report placeholder sizes (run it under xvfb-run)
 	await process_frame
 	var pt: Vector2 = tut.get_viewport().get_canvas_transform() * world_pos
 	var r: Rect2 = tut._card.get_global_rect()
@@ -948,17 +950,17 @@ func _run_practice(net := false) -> void:
 	# Hub -> Sidewalk -> Storage (Produce, east of the hub, is locked on Day 1).
 	await _walk_to(cell_center(Vector2i(1, 2)), 20.0, 60.0)
 	await _walk_to(cell_center(Vector2i(2, 2)) + Vector2(-200, -100), 20.0, 60.0)
-	while tut.current_id() == "forklift" and tw < 60.0:
-		var fkp: Vector2 = main.delivery_forklift.global_position
-		if tw >= 20.0 and player().global_position.distance_to(fkp) > 500.0:
-			# The test's walking bot got wedged somewhere on the way (seen once
-			# in a loaded co-op run) — this checks the step, not the bot's
-			# pathing, so put it in Storage and carry on.
-			print("PRACTICE  bot stuck at %s on the way to the forklift — teleporting into Storage" % player().global_position.round())
-			player().teleport_to(cell_center(Vector2i(2, 2)) + Vector2(-200, -100))
-			await wait(0.3)
-		await _walk_to(fkp + Vector2(0, -200), 3.0, 60.0)
-		tw += 3.0
+	# Then stand and watch from Storage's open middle (walking at a point by
+	# the forklift kept routing the bot back out through the hub).
+	var watch: Vector2 = cell_center(Vector2i(2, 2)) + Vector2(-200, -100)
+	if player().global_position.distance_to(watch) > 80.0:
+		print("PRACTICE  bot at %s, not in Storage — teleporting to the watching spot" % player().global_position.round())
+		player().teleport_to(watch)
+		await wait(0.3)
+	steer(Vector2.ZERO)
+	while tut.current_id() == "forklift" and tw < 30.0:
+		await wait(0.5)
+		tw += 0.5
 	var fk_d: float = player().global_position.distance_to(main.delivery_forklift.global_position)
 	check(tut.current_id() != "forklift", "PR7: watched the delivery forklift -> step done (%.0fs, %.0fpx from it)" % [tw, fk_d])
 	await _shot_tutorial("07_forklift")
