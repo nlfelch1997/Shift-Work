@@ -330,6 +330,7 @@ func _run_purchase() -> void:
 	var t_cross := -1.0
 	var t_cart := -1.0
 	t = 0.0
+	var w0 := _wall()
 	var skipped: Array = []
 	var picked_p2: Array = []
 	while is_instance_valid(c) and not c.is_queued_for_deletion() and t < 120.0:
@@ -342,7 +343,7 @@ func _run_purchase() -> void:
 		if fmod(t, 3.0) < 0.1:
 			trace_shopper(c)
 		await wait(0.1)
-		t += 0.1
+		t = _wall() - w0 # wall clock (a loaded machine stretches each wait)
 	check(sold_now() - sold0 == 1 and sold_of("Bakery") - bak0 == 1, "P2: Produce sold out -> it bought the Bakery item only (%d sale)" % (sold_now() - sold0))
 	check(skipped == ["Produce"] and picked_p2 == ["Bakery"], "P2: ...Produce crossed off (skipped %s, picked %s)" % [str(skipped), str(picked_p2)])
 	check(t_cross > 0.0 and t_cart > 0.0 and t_cross - t_cart >= main.CustomerScript.LIST_PATIENCE - 1.0, "P2: ...after waiting ~%.0fs for a restock (crossed off %.1fs after the Bakery pickup)" % [main.CustomerScript.LIST_PATIENCE, t_cross - t_cart])
@@ -385,8 +386,8 @@ func _run_purchase() -> void:
 		await fill_section(sec)
 
 	# P6 a forced leave (store closing / shift start) with items in the cart:
-	# they go out of play with the shopper — nothing dumped on the floor, so
-	# no stock to settle onto a shelf and be bumped off as cleanup mess
+	# the whole cart set down as plain loose stock, side by side, shown again —
+	# and not knocked (Shelf.gd's tag that makes stock cleanup mess)
 	c = await spawn_shopper(["Bakery", "Dry Goods", "Produce"])
 	await wait_until(func(): return is_instance_valid(c) and c.cart_items().size() >= 2, 90.0)
 	await wait(0.3)
@@ -395,9 +396,16 @@ func _run_purchase() -> void:
 	var sold6 := sold_now()
 	c.force_leave()
 	await wait(0.5)
-	check(held.all(func(o): return not is_instance_valid(o)), "P6: force_leave took the cart's items out of play (none left on the floor)")
+	check(held.all(func(o): return is_instance_valid(o) and o.get_node("Carryable").carrier_id == 0 and o.visible), "P6: force_leave set the whole cart down, shown again")
 	check(sold_now() == sold6, "P6: ...unpaid (no sale)")
-	check(get_nodes_in_group("carryable").all(func(o): return o.visible or o.get_node("Carryable").carrier_id != 0), "P6: ...no hidden item left behind")
+	var spread6 := true
+	for i in held.size():
+		for j in range(i + 1, held.size()):
+			if held[i].global_position.distance_to(held[j].global_position) < 20.0:
+				spread6 = false
+	check(spread6, "P6: ...side by side, not in one pile")
+	await wait(3.0) # time to settle onto a slot, if one is in reach
+	check(held.all(func(o): return not is_instance_valid(o) or not o.has_meta("knocked")), "P6: ...none of it tagged knocked (no cleanup mess from a dropped cart): %s" % str(held.map(func(o): return o.has_meta("knocked") if is_instance_valid(o) else "-")))
 	await clear_loose_stock()
 
 	# P6b a timeout at the register (the rare case) still drops the cart as

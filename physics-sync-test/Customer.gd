@@ -604,16 +604,13 @@ func _leave() -> void:
 ## than duplicating it — this isn't a lifetime timeout, but the cleanup work
 ## is identical.
 ##
-## OCT 2026 PHASE 3B: a forced leave (the store closing for cleanup, a new
-## shift starting) takes the cart's unpaid items with it — they go back to
-## the stockroom, out of play — instead of dumping up to a list's worth of
-## stock on the floor beside whatever shelf the shopper was at. Every product
-## is reset at the next shift start anyway, and dropped stock that settles
-## onto a shelf and is bumped off again counts as cleanup mess (Shelf.gd's
-## "knocked"), which a full cart would add where one held item rarely did.
+## OCT 2026 PHASE 3B: with a cart, _leave() sets the whole cart down side by
+## side as plain loose stock, as it did the one held item. (Tried and
+## reverted: taking the unpaid items out of play instead. It broke the
+## invariant that stock only ever vanishes when it's sold — the priority-
+## order bookkeeping test counts exactly that — for no real gain, since every
+## product is reset at the next shift start anyway.)
 func force_leave() -> void:
-	for item in cart_items():
-		item.queue_free()
 	_leave()
 
 ## move_and_slide() doesn't push a RigidBody2D it walks into on its own —
