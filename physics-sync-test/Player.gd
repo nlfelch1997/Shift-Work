@@ -121,6 +121,9 @@ func _ready() -> void:
 	# player + item ran away together (~870px/s) to the bottom wall. Only
 	# downward pushes did it. Same setting the forklift already uses.
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	# Floating mode stops dead on a wall hit within 15 degrees of head-on;
+	# grounded mode always slid along it. 0 keeps the old wall-slide feel.
+	wall_min_slide_angle = 0.0
 	# MULTIPLAYER BUG FIX (found by tools/hazards_test.gd --test=net-orders,
 	# scenario N0): players pass through each other. Movement is client-
 	# authoritative — each process simulates only its OWN player; every other
