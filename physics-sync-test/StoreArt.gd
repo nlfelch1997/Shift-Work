@@ -491,11 +491,15 @@ func _belt_point(lane_x: float) -> Vector2:
 func _run_conveyors(delta: float) -> void:
 	if _lanes.is_empty():
 		return
-	var carried := {} # carrier id -> item
+	# carrier id -> the item it rings up next (OCT 2026 PHASE 3B: a cart holds
+	# several — the first one in, the same pick Cashier.next_item_of() makes).
+	var carried := {}
+	var seqs := {}
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		var c: Node = obj.get_node_or_null("Carryable")
-		if c and c.carrier_id != 0:
+		if c and c.carrier_id != 0 and not obj.is_queued_for_deletion() and (not seqs.has(c.carrier_id) or c.carry_seq < seqs[c.carrier_id]):
 			carried[c.carrier_id] = obj
+			seqs[c.carrier_id] = c.carry_seq
 	var customers := get_tree().get_nodes_in_group("customer")
 	for lane in _lanes:
 		var body: Node2D = lane["body"]

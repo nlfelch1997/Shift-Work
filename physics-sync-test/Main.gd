@@ -1143,6 +1143,17 @@ const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
 ## new one invented for this), not Day 1, matching "keep single-item trips
 ## for the early days" literally.
 const ITEMS_TARGET_BY_TIER := [1, 2, 2, 3]
+## OCT 2026 PHASE 3B — SHOPPING LISTS. ITEMS_TARGET_BY_TIER above is no longer
+## read: a shopper now walks in with a LIST (Customer.gd's shopping_list),
+## drawn by make_shopping_list() below from the sections that are open AND
+## have stock on their shelves at that moment. Its length is a random
+## [min, max] per tier — FLAGGED, tunable (Phase 5). Centred on the old fixed
+## targets (1, 2, 2, 3) so the change measures where customers shop, not a
+## jump in how much each one buys.
+const SHOPPING_LIST_BY_TIER := [[1, 2], [2, 3], [2, 3], [2, 4]]
+## The most times one section can appear on a list (and never more than its
+## shelves hold right then) — keeps a list spread across sections.
+const SHOPPING_LIST_MAX_PER_SECTION := 2
 ## WEEK 10 — Day 5+ density, same tier shape as the arrays above (Day 5-6 =
 ## tier 2, when Dairy/Frozen opens). Both FLAGGED placeholders, tuned against
 ## the solo sim in tools/hazards_test.gd, not a human playtest:
@@ -3587,7 +3598,7 @@ func _unlocked_sections() -> Array:
 ## already flags. A live node reference from the scene tree doesn't have
 ## that restriction, since it's a runtime lookup, not a parse-time
 ## import). Playtest feedback found shopper/disruptive target-picking
-## (Customer.gd's _find_stocked_item/_find_nearest_cashier/
+## (Customer.gd's _find_wanted_item/_find_nearest_cashier/
 ## _pick_browse_target/_pick_disruptive_target) had no concept of
 ## section-lock at all — a shopper standing near a boundary could target
 ## the NEAREST cashier by raw distance regardless of which side of a
@@ -3672,6 +3683,49 @@ func _items_target_for_current_tier() -> int:
 	var tier := clampi(_unlocked_sections().size() - 1, 0, ITEMS_TARGET_BY_TIER.size() - 1)
 	return ITEMS_TARGET_BY_TIER[tier]
 
+## OCT 2026 PHASE 3B — host-only. A new shopper's list: section names, one
+## entry per item wanted (see SHOPPING_LIST_BY_TIER). Only sections that are
+## open and have stock on a shelf right now can appear, each at most
+## min(SHOPPING_LIST_MAX_PER_SECTION, its stocked units) times, so the store
+## can satisfy the list as it stands. Spread on purpose: every stocked section
+## is equally likely, whatever its distance from the door, and distinct
+## sections are drawn before any repeats. [] when nothing is stocked (the
+## shopper browses and asks again).
+func make_shopping_list() -> PackedStringArray:
+	var stocked := stocked_units_by_section()
+	var sections: Array = stocked.keys()
+	sections.shuffle()
+	var tier := clampi(_unlocked_sections().size() - 1, 0, SHOPPING_LIST_BY_TIER.size() - 1)
+	var want := randi_range(int(SHOPPING_LIST_BY_TIER[tier][0]), int(SHOPPING_LIST_BY_TIER[tier][1]))
+	var out := PackedStringArray()
+	var taken := {}
+	var added := true
+	while out.size() < want and added:
+		added = false
+		for sec in sections:
+			if out.size() >= want:
+				break
+			var n: int = taken.get(sec, 0)
+			if n < mini(SHOPPING_LIST_MAX_PER_SECTION, int(stocked[sec])):
+				out.append(sec)
+				taken[sec] = n + 1
+				added = true
+	return out
+
+## Host: open section name -> units on its shelves now (only sections with
+## at least one). A shelf only takes its own section's stock (Shelf.gd's
+## _color_matches()), so the shelf's cell says what's on it.
+func stocked_units_by_section() -> Dictionary:
+	var out := {}
+	for shelf_body in shelves:
+		if not is_unlocked_at_pos(shelf_body.global_position):
+			continue
+		var n: int = shelf_body.get_node("Shelf").filled_objects().size()
+		if n > 0:
+			var sec := _section_name_at(shelf_body.global_position)
+			out[sec] = int(out.get(sec, 0)) + n
+	return out
+
 ## See CASHIER_COUNT_BY_TIER's own comment. Called from _configure_cashiers()
 ## below, which is what actually enables/disables that many of the central
 ## checkout's stations.
@@ -3755,7 +3809,7 @@ func _spawn_pos_is_clear(pos: Vector2) -> bool:
 ## customer spawns at and physically walks in from, rather than popping
 ## into existence at whichever section they're headed to. All customers
 ## spawn HERE regardless of role or eventual target, then use their
-## existing target-picking AI (Customer.gd's _find_stocked_item/
+## existing target-picking AI (Customer.gd's _find_wanted_item/
 ## _pick_browse_target/_pick_disruptive_target/_find_nearest_cashier — none
 ## of that changed, this only moves WHERE they start) to walk toward
 ## wherever they're actually headed — Sidewalk, then Checkout (where the
@@ -3843,12 +3897,17 @@ func _spawn_customer(role: String) -> void:
 	var pos := _store_entrance_pos()
 	var carry_id := _next_customer_carry_id
 	_next_customer_carry_id -= 1
+	# OCT 2026 PHASE 3B: a shopper's list rides in the spawn data, so every
+	# peer has it from the first frame (later changes go through the
+	# customer's own synchronizer).
+	var list := make_shopping_list() if role == "shopper" else PackedStringArray()
 	customer_spawner.spawn({
 		"index": _customer_spawn_index,
 		"pos": pos,
 		"role": role,
 		"carry_id": carry_id,
-		"items_target": _items_target_for_current_tier(),
+		"items_target": list.size(),
+		"list": list,
 		"look": _deal_customer_look(),
 	})
 	_customer_spawn_index += 1
@@ -3860,6 +3919,7 @@ func _spawn_customer_node(data: Dictionary) -> Node:
 	c.role = data["role"]
 	c.carry_id = data["carry_id"]
 	c.items_target = data["items_target"]
+	c.shopping_list = data.get("list", PackedStringArray())
 	c.look_index = data.get("look", 1)
 	return c
 

@@ -20,4 +20,11 @@ TESTS+=(
 "save-staff-1|staff|0|0|0|--server --save-file=user://staff_test/save.json --test=save --phase=1|"
 "save-staff-2|staff|0|0|0|--server --save-file=user://staff_test/save.json --test=save --phase=2|"
 "save-staff-3|staff|0|0|0|--server --save-file=user://staff_test/save.json --test=save --phase=3|"
+# OCT 2026 PHASE 3B (shopping lists + carts) — tools/shopping_test.gd. Real
+# wall-clock time. shop-traffic is the regression this phase exists for (a
+# fully stocked Bakery gets real traffic).
+"shop-lists|shopping|0|0|0|--server --day=7 --no-save --test=lists|"
+"shop-purchase|shopping|0|0|0|--server --day=7 --no-save --test=purchase|"
+"shop-traffic|shopping|0|0|0|--server --day=7 --no-save --test=traffic --seconds=300|"
+"shop-net|shopping|0|2|0|--server --players=3 --day=7 --no-save --test=net-shopping|"
 )

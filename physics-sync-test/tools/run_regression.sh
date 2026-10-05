@@ -94,7 +94,7 @@ TESTS=(
 # Only these lines of each process's output are kept (the full logs carry a
 # DATA line per object per frame — hundreds of MB a test, enough to fill the
 # disk over a suite). The exit code rides along as a last "EXITCODE n" line.
-KEEP='^(PASS|FAIL|RESULT|INFO|SOLO|SOAK|DISRUPTIVE|PRACTICE|PICKUP|TRASH|SHOT|BOARD|REPORT|NET|JUICE|PERF|PEAKS|IDENTITY|DENSITY|PREP|FIN|EXITCODE)|SCRIPT ERROR|ERROR|^[[:space:]]+at: |\[Main\]|\[Economy\]|\[Staff\]|\[Save\]|handle_crash'
+KEEP='^(PASS|FAIL|RESULT|INFO|TRAFFIC|TRACE|SOLO|SOAK|DISRUPTIVE|PRACTICE|PICKUP|TRASH|SHOT|BOARD|REPORT|NET|JUICE|PERF|PEAKS|IDENTITY|DENSITY|PREP|FIN|EXITCODE)|SCRIPT ERROR|ERROR|^[[:space:]]+at: |\[Main\]|\[Economy\]|\[Staff\]|\[Save\]|handle_crash'
 export KEEP
 launch() { # launch <out file> <command...>
   local out=$1; shift

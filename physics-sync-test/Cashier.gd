@@ -218,7 +218,7 @@ func _physics_process(delta: float) -> void:
 	var customer := _customer_by_carry_id(front_id)
 	if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
 		return # nobody in line has reached the register yet
-	var item := _carried_by(front_id)
+	var item := next_item_of(front_id)
 	if item == null:
 		_queue.erase(front_id)
 		return
@@ -226,7 +226,12 @@ func _physics_process(delta: float) -> void:
 	if elapsed >= CHECKOUT_WAIT_SECONDS:
 		_waiting.erase(front_id)
 		_complete_purchase(item, front_id)
-		_queue.erase(front_id)
+		# OCT 2026 PHASE 3B — a cart is rung up one item at a time, each the
+		# same CHECKOUT_WAIT_SECONDS a single item always took: a shopper
+		# stays at the front until the cart is empty (the item just sold is
+		# already queued for deletion, so it no longer counts).
+		if next_item_of(front_id) == null:
+			_queue.erase(front_id)
 	else:
 		_waiting[front_id] = elapsed
 
@@ -236,12 +241,25 @@ func _customer_by_carry_id(carry_id: int) -> Node:
 			return c
 	return null
 
-func _carried_by(carry_id: int) -> Node2D:
-	for obj in get_tree().get_nodes_in_group("carryable"):
+## The item carry_id is ringing up next: the first one into its cart (lowest
+## carry_seq — the same order on every peer, see Carryable.gd), so StoreArt's
+## conveyor (every peer) slides the same item the host is about to sell.
+## Static: StoreArt asks without a Cashier of its own. Skips anything already
+## queued for deletion (sold this tick).
+static func next_item_of_in(tree: SceneTree, carry_id: int) -> Node2D:
+	var best: Node2D = null
+	var best_seq := 0
+	for obj in tree.get_nodes_in_group("carryable"):
+		if obj.is_queued_for_deletion():
+			continue
 		var c: Node = obj.get_node("Carryable")
-		if c.carrier_id == carry_id:
-			return obj
-	return null
+		if c.carrier_id == carry_id and (best == null or c.carry_seq < best_seq):
+			best = obj
+			best_seq = c.carry_seq
+	return best
+
+func next_item_of(carry_id: int) -> Node2D:
+	return next_item_of_in(get_tree(), carry_id)
 
 ## carry_id (added this session, for the queue rework) is who was just
 ## served — the caller (_physics_process above) already removes it from

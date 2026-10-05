@@ -28,6 +28,33 @@ extends CharacterBody2D
 ##   pressure" into one behavior, which is exactly what this session's
 ##   brief asked to keep distinct.
 ##
+## OCT 2026 PHASE 3B — SHOPPING LISTS AND CARTS. A shopper no longer walks to
+## whatever stocked item is nearest. Playtest income testing found that capped
+## sales at "who is nearest the Sidewalk": a fully stocked Bakery, the
+## farthest section, sold 0-7 items a shift while Produce/Dairy sold 40+. Now:
+## - THE LIST (shopping_list): drawn by the host at spawn (Main.gd's
+##   make_shopping_list()) from the sections that are open AND stocked, spread
+##   evenly across them however far each is from the door. One entry per item
+##   wanted. The shopper fetches the nearest stocked item that is ON its list,
+##   crossing each off as it goes into the cart.
+## - SOLD OUT: when nothing left on the list is on a shelf, the shopper browses
+##   for LIST_PATIENCE seconds (a helper or player may restock it), then
+##   crosses those items off and checks out with what it has, or leaves
+##   without buying anything if the cart is still empty.
+## - THE CART: purely cosmetic, pushed in front (side view facing left/right,
+##   front view facing up/down, from the supermarket pack's own cart art).
+##   Everything picked up still goes through Carryable.gd exactly as before (a
+##   reliable pickup, carrier_id = carry_id); the items ride hidden at
+##   cart_point() and the cart draws a small copy of each in its basket. No
+##   collision of its own, so speed, the 28px body, pathing, the forklift
+##   knockback and the checkout queue are all exactly what they were.
+## - CHECKOUT: one trip to the register with the whole cart, rung up one item
+##   at a time — each the same Cashier.CHECKOUT_WAIT_SECONDS a single item
+##   always took, each its own sale through note_sale() (Cashier.gd).
+## Every peer draws the cart and the list bubble from replicated state: the
+## list (spawn data, then this node's synchronizer) and who carries what
+## (Carryable.gd's reliable carrier_id). Disruptive customers have neither.
+##
 ## carry_id: see the long comment on Carryable.gd's _find_carrier() for why
 ## this exists instead of reusing multiplayer authority.
 ##
@@ -166,6 +193,58 @@ const DETOUR_DURATION := 1.0 # how long to hold a sideways detour before aiming 
 ## for the mechanism.
 const MAX_DETOUR_EPISODES_PER_SIDE := 3
 
+## OCT 2026 PHASE 3B — FLAGGED, tunable. How long a shopper waits (browsing)
+## when nothing left on its list is stocked, before crossing those items off.
+const LIST_PATIENCE := 10.0
+## The cart and list art: the supermarket pack's own (assets/supermarket/1.png
+## carts; the list icons are product sprites StoreArt.gd already uses).
+const CART_SHEET := "res://assets/supermarket/1.png"
+const CART_SIDE := Rect2i(625, 256, 47, 57) # grey cart, red handle, basket left
+const CART_FRONT := Rect2i(678, 170, 37, 70) # grey cart seen end-on, handle up
+const CART_SIDE_SCALE := 0.62 # ~29x35 px beside a ~37 px person
+const CART_FRONT_SCALE := 0.5 # ~18x35 px
+## Cart centre relative to the customer, per CharacterSprite row (up, left,
+## down, right). Wheels on the feet line (FEET_AT y=13) beside the body.
+const CART_OFFSETS := [Vector2(0, -10), Vector2(-25, -4), Vector2(0, 24), Vector2(25, -4)]
+const CART_ITEM_SIZE := 13.0 # px, the copy of each carried item in the basket
+const CART_REFRESH := 0.1 # s between re-reads of what's in the cart
+## Where the basket's heap sits, in cart-sprite pixels from its centre (side
+## view facing left; mirrored facing right), and the copies' scatter.
+const CART_BASKET_SIDE := Vector2(-4, -12)
+const CART_BASKET_FRONT := Vector2(0, -16)
+const CART_HEAP := [Vector2(-5, 3), Vector2(6, 2), Vector2(0, -4), Vector2(-8, -6), Vector2(8, -7), Vector2(1, -11)]
+const LIST_ICONS := {
+	"Dry Goods": ["res://assets/supermarket/4.png", Rect2i(488, 628, 33, 41)],
+	"Produce": ["res://assets/supermarket/4.png", Rect2i(626, 388, 44, 41)],
+	"Dairy/Frozen": ["res://assets/supermarket/4.png", Rect2i(447, 675, 19, 43)],
+	"Bakery": ["res://assets/supermarket/2.png", Rect2i(722, 244, 44, 45)],
+}
+const LIST_ICON_SIZE := 13.0
+## OCT 2026 PHASE 3B — CELL ROUTING (FOUND BY THE PURCHASE TEST). Shoppers
+## walk straight at their target (there's no navigation mesh), which was fine
+## while "nearest item" kept them in the hub's own spokes. A list sends them
+## to Bakery, which hangs off Dry Goods: the straight line from the door cuts
+## through Produce into the sealed Bakery/Produce wall (Main.gd's GRID MAP),
+## and a shopper leaned on it until it timed out — likely part of why Bakery
+## sold so little before. The open connections a customer may walk, from the
+## same map (Break Room and Storage are off limits, see
+## _keep_outside_excluded_zones()): Sidewalk-hub, hub-Dry Goods, hub-Produce,
+## hub-Dairy/Frozen, Dry Goods-Bakery. Within one cell, or into a cell that
+## shares an open edge, the walk stays the plain straight line it always was.
+const ROUTE_LINKS := {
+	Vector2i(1, 2): [Vector2i(1, 1)],
+	Vector2i(1, 1): [Vector2i(1, 2), Vector2i(1, 0), Vector2i(2, 1), Vector2i(0, 1)],
+	Vector2i(1, 0): [Vector2i(1, 1), Vector2i(2, 0)],
+	Vector2i(2, 0): [Vector2i(1, 0)],
+	Vector2i(2, 1): [Vector2i(1, 1)],
+	Vector2i(0, 1): [Vector2i(1, 1)],
+}
+## A doorway waypoint sits this far into the next cell (so reaching it means
+## having crossed), and at least this far from the edge's corners.
+const ROUTE_STEP_IN := 60.0
+const ROUTE_EDGE_MARGIN := 160.0
+const LIST_BUBBLE_Y := -44.0 # above the head (a person's art tops out ~-24)
+
 @export var role := "shopper" # "shopper" or "disruptive"
 @export var carry_id := 0 # unique negative int, assigned by Main.gd — see Carryable.gd's _find_carrier()
 ## Multi-item shopping trips (playtest request), shopper-only — set by
@@ -174,6 +253,11 @@ const MAX_DETOUR_EPISODES_PER_SIDE := 3
 ## successful purchases this shopper aims to complete before leaving
 ## voluntarily, tracked by _items_bought below and record_purchase().
 @export var items_target := 1
+## OCT 2026 PHASE 3B — what this shopper still wants: one section name per
+## item (Main.gd's make_shopping_list()). Host-written; reaches every peer in
+## the spawn data, then on change through this node's synchronizer, which is
+## all the list bubble reads. items_target is now its starting length.
+@export var shopping_list := PackedStringArray()
 ## WEEK 25 — which everyday-clothes look this customer wears (assets/
 ## characters/customer_<n>.png, 1..LOOK_COUNT). Dealt by the host in
 ## Main.gd's _spawn_customer() and carried in the spawn data, so every peer
@@ -215,6 +299,25 @@ var _spawn_position := Vector2.ZERO
 ## is committed to. See that constant's own header comment.
 var _lifetime_budget := 0.0
 
+# --- OCT 2026 PHASE 3B: list + cart (host: shopping state) ---
+var _list_made := false # a list was ever drawn (an empty one at spawn is retried)
+var _list_wait := 0.0 # seconds nothing left on the list has been stocked
+var _checking_out := false
+## Host diagnostics, read by the tests: sections picked into the cart, and
+## list entries crossed off unbought.
+var picked_sections: Array = []
+var skipped_sections: Array = []
+# (every peer: the drawn cart and bubble)
+var _cart: Node2D
+var _cart_sprite: Sprite2D
+var _cart_items: Node2D
+var _cart_row := -1
+var _cart_refresh := 0.0
+var _cart_names: Array = [] # item names currently drawn in the basket
+var _hidden_items: Array = [] # items this peer hid because they're in the cart
+var _bubble: Node2D
+var _bubble_list := PackedStringArray()
+
 # --- disruptive state ---
 var _retarget_timer := 0.0
 var _retarget_pos := Vector2.ZERO
@@ -249,7 +352,8 @@ func _ready() -> void:
 	# previously had no way to distinguish "this shopper was only ever
 	# asked to buy 1 item" from "it was asked for 2+ but something stopped
 	# it after the first" — see _leave()'s own matching addition below.
-	print("[%s] spawned role=%s carry_id=%d items_target=%d pos=%s" % [name, role, carry_id, items_target, position])
+	_list_made = not shopping_list.is_empty()
+	print("[%s] spawned role=%s carry_id=%d items_target=%d list=%s pos=%s" % [name, role, carry_id, items_target, ",".join(shopping_list), position])
 	# Shopper = calm blue-green ("good pressure"), disruptive = red ("bad
 	# pressure") — visually distinct at a glance, same reasoning as
 	# Player.gd coloring host vs. client differently.
@@ -258,6 +362,9 @@ func _ready() -> void:
 	# under the feet (the polygon stays hidden, its rotation code untouched).
 	$Polygon2D.visible = false
 	body_sprite = CharacterSpriteScript.attach(self, "customer_%d" % look_index, "facing_angle", $Polygon2D.color)
+	if role == "shopper":
+		_build_cart()
+		_build_bubble()
 	set_multiplayer_authority(1)
 
 	var sync := MultiplayerSynchronizer.new()
@@ -266,6 +373,10 @@ func _ready() -> void:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
+	# The list: only when it changes (a pickup, a cross-off, a late draw).
+	var list_path := NodePath(".:shopping_list")
+	config.add_property(list_path)
+	config.property_set_replication_mode(list_path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
 	sync.replication_config = config
 	sync.name = "Sync" # explicit, identical name on every peer — see Player.gd's note on why an auto-generated name breaks replication
 	sync.set_multiplayer_authority(1)
@@ -305,8 +416,16 @@ func _physics_process(delta: float) -> void:
 	# time a new target is committed to, replacing the old separate
 	# browsing-vs-carrying comparisons.
 	if _lifetime > _lifetime_budget:
-		_leave()
-		return
+		# OCT 2026 PHASE 3B: out of time mid-list with something in the cart —
+		# cross off the rest and check out with it, rather than dumping a
+		# cart's worth of stock on the floor. Out of time again at the
+		# register (or with an empty cart): leave, as before.
+		if role == "shopper" and not _checking_out and not cart_items().is_empty():
+			_cross_off(shopping_list.duplicate(), "out of time")
+			_start_checkout()
+		else:
+			_leave()
+			return
 
 	_interact_cooldown -= delta
 	var dir := Vector2.ZERO
@@ -413,7 +532,13 @@ func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 	return dir
 
 func _process(delta: float) -> void:
-	if not Net.is_active() or is_multiplayer_authority():
+	if not Net.is_active():
+		return
+	if _cart != null:
+		_update_cart(delta)
+	if _bubble != null and shopping_list != _bubble_list:
+		_rebuild_bubble()
+	if is_multiplayer_authority():
 		return
 	var t: float = clamp(SMOOTHING_RATE * delta, 0.0, 1.0)
 	position = position.lerp(target_position, t)
@@ -428,6 +553,9 @@ func _process(delta: float) -> void:
 ## leaves satisfied instead of looking for another item.
 func record_purchase() -> void:
 	_items_bought += 1
+	# OCT 2026 PHASE 3B: being rung up is progress — a long cart never times
+	# out at the register mid-scan.
+	_lifetime_budget = max(_lifetime_budget, _lifetime + LIFETIME_BASE_BUFFER)
 
 ## If still carrying something (e.g. it timed out before ever reaching a
 ## cashier), drop it first so it doesn't vanish along with a held item —
@@ -453,13 +581,15 @@ func _leave() -> void:
 	# customers never stock shelves themselves) can time out looking
 	# identical, from outside the log, to one that was only ever asked to
 	# buy 1.
-	print("[%s] leaving (role=%s, items_bought=%d/%d)" % [name, role, _items_bought, items_target])
+	print("[%s] leaving (role=%s, items_bought=%d/%d, skipped=%s, cart=%d)" % [name, role, _items_bought, items_target, ",".join(skipped_sections), cart_items().size()])
 	if _committed_cashier and is_instance_valid(_committed_cashier):
 		_committed_cashier.get_node("Cashier").leave_queue(carry_id)
-	var carried := _find_carried_by_me()
-	if carried:
-		var c: Node = carried.get_node("Carryable")
-		c.try_drop(carry_id)
+	# OCT 2026 PHASE 3B: the whole cart, spread side by side (Carryable.gd's
+	# armful drop) so the items don't land in one pile.
+	var side := 0
+	for carried in cart_items():
+		carried.get_node("Carryable").try_drop(carry_id, side)
+		side += 1
 	queue_free()
 
 ## Called by Main.gd's _despawn_all_customers() at the start of every day's
@@ -473,7 +603,17 @@ func _leave() -> void:
 ## the existing _leave() cleanup (drop-if-carrying, then queue_free) rather
 ## than duplicating it — this isn't a lifetime timeout, but the cleanup work
 ## is identical.
+##
+## OCT 2026 PHASE 3B: a forced leave (the store closing for cleanup, a new
+## shift starting) takes the cart's unpaid items with it — they go back to
+## the stockroom, out of play — instead of dumping up to a list's worth of
+## stock on the floor beside whatever shelf the shopper was at. Every product
+## is reset at the next shift start anyway, and dropped stock that settles
+## onto a shelf and is bumped off again counts as cleanup mess (Shelf.gd's
+## "knocked"), which a full cart would add where one held item rarely did.
 func force_leave() -> void:
+	for item in cart_items():
+		item.queue_free()
 	_leave()
 
 ## move_and_slide() doesn't push a RigidBody2D it walks into on its own —
@@ -527,52 +667,61 @@ func request_shove(from_position: Vector2) -> void:
 ## from spawn to that target. See LIFETIME_DISTANCE_MULTIPLIER's own header
 ## comment for the full reasoning.
 func _extend_lifetime_budget(target_pos: Vector2) -> void:
-	var travel_time := _spawn_position.distance_to(target_pos) / SPEED
+	# OCT 2026 PHASE 3B: a list sends a shopper section to section, so the next
+	# leg can start far from the door (Dairy -> Bakery crosses the store) —
+	# the longer of the two walks, from here or from the spawn.
+	var travel_time := maxf(_spawn_position.distance_to(target_pos), global_position.distance_to(target_pos)) / SPEED
 	_lifetime_budget = max(_lifetime_budget, _lifetime + LIFETIME_BASE_BUFFER + travel_time * LIFETIME_DISTANCE_MULTIPLIER)
 
+## OCT 2026 PHASE 3B — the list-driven trip (see the file header): fetch
+## the nearest stocked item that's on the list, into the cart, until the list
+## is done or crossed off; then one trip to the register with the cart.
 func _shopper_input(delta: float) -> Vector2:
-	var carried := _find_carried_by_me()
-	if carried == null:
-		if _committed_item and (not is_instance_valid(_committed_item) or _item_taken_by_someone_else(_committed_item) or not _is_still_stocked(_committed_item)):
-			_committed_item = null
-		# FOUND WHILE WIRING multi-item trips: the only way `carried` goes
-		# from non-null back to null is a completed purchase (a shove/stun
-		# doesn't drop the item — see request_shove()'s own comment; nothing
-		# else un-carries it) or this customer's own _leave(), which frees
-		# the whole node anyway. So reaching here with a still-set
-		# _committed_cashier ALWAYS means "I just finished with that
-		# cashier" — clearing it forces the NEXT item (if items_target > 1)
-		# to call request_join_queue() again for its own trip, instead of
-		# skipping straight to walking to the bare checkout position with
-		# no queue entry at all (queue_slot_position() falls back to the
-		# checkout marker for an unrecognized carry_id) and then just
-		# standing there forever, since Cashier.gd only ever processes
-		# whoever is actually at the front of _queue.
-		_committed_cashier = null
-		if _committed_item == null:
-			# Multi-item shopping trips (playtest request): a satisfied
-			# shopper (already bought items_target items this trip) leaves
-			# on its own instead of looking for one more — see
-			# record_purchase()'s own comment for the full loop shape.
-			if _items_bought >= items_target:
-				_leave()
-				return Vector2.ZERO
-			_committed_item = _find_stocked_item()
-			if _committed_item == null:
-				return _browse_input(delta) # nothing stocked to buy right now — browse instead of standing frozen
-			_extend_lifetime_budget(_committed_item.global_position)
-		var to_item := _committed_item.global_position - global_position
-		if to_item.length() < PICKUP_RANGE:
+	if _checking_out:
+		if cart_items().is_empty():
+			_leave() # all rung up (record_purchase() counted each)
 			return Vector2.ZERO
-		return to_item.normalized()
-	# Carrying: head for a spot in the nearest cashier's queue (NPC
-	# cashier + queue line, playtest request) and just wait there —
-	# Cashier.gd's own watch completes the purchase once we're at the
-	# front, this script doesn't need to "announce" anything (see the file
-	# header). request_join_queue() is a plain direct call, not an RPC —
-	# Cashier.gd is host-authority and Customer.gd only ever runs this
-	# branch on the host too (see the is_multiplayer_authority() guard in
-	# _physics_process), so both sides are always the same process.
+		return _checkout_input()
+	if not _list_made:
+		# Nothing was stocked when this shopper walked in: browse, and draw
+		# the list the moment there's something to put on it.
+		if _browse_timer <= 0.0:
+			_take_list(get_tree().current_scene.make_shopping_list())
+		if not _list_made:
+			return _browse_input(delta)
+	if _committed_item and (not is_instance_valid(_committed_item) or _item_taken_by_someone_else(_committed_item) or not _is_still_stocked(_committed_item) or not _wanted(_committed_item)):
+		_committed_item = null
+	if _committed_item == null:
+		if shopping_list.is_empty():
+			if cart_items().is_empty():
+				_leave() # everything on the list was crossed off unbought
+				return Vector2.ZERO
+			_start_checkout()
+			return _checkout_input()
+		_committed_item = _find_wanted_item()
+		if _committed_item == null:
+			# Sold out of everything left on the list: give a restock a
+			# moment (browsing), then cross those items off.
+			if _list_wait == 0.0:
+				_lifetime_budget = max(_lifetime_budget, _lifetime + LIST_PATIENCE + LIFETIME_BASE_BUFFER)
+			_list_wait += delta
+			if _list_wait >= LIST_PATIENCE:
+				_list_wait = 0.0
+				_cross_off(shopping_list.duplicate(), "sold out")
+			return _browse_input(delta)
+		_list_wait = 0.0
+		_extend_lifetime_budget(_committed_item.global_position)
+	var to_item := _committed_item.global_position - global_position
+	if to_item.length() < PICKUP_RANGE:
+		return Vector2.ZERO
+	return _steer(_committed_item.global_position)
+
+## Carrying the cart to a spot in the shortest cashier queue (NPC cashier +
+## queue line, playtest request) and waiting there — Cashier.gd's own watch
+## rings each item up once this shopper is at the front. request_join_queue()
+## is a plain direct call, not an RPC: Cashier.gd is host-authority and this
+## only ever runs on the host too.
+func _checkout_input() -> Vector2:
 	if _committed_cashier == null or not is_instance_valid(_committed_cashier):
 		_committed_cashier = _find_nearest_cashier()
 		if _committed_cashier == null:
@@ -585,12 +734,73 @@ func _shopper_input(delta: float) -> Vector2:
 	var to_target := target_pos - global_position
 	if to_target.length() < CHECKOUT_STOP_RANGE:
 		return Vector2.ZERO
-	return to_target.normalized()
+	return _steer(target_pos)
+
+func _start_checkout() -> void:
+	_checking_out = true
+	_committed_item = null
+	_committed_cashier = null
+	# The ring-up itself: CHECKOUT_WAIT_SECONDS an item, on top of the walk
+	# (_checkout_input() adds that when it joins a queue).
+	_lifetime_budget = max(_lifetime_budget, _lifetime + LIFETIME_BASE_BUFFER + CashierScript.CHECKOUT_WAIT_SECONDS * cart_items().size())
+	print("[%s] checking out with %d item(s)" % [name, cart_items().size()])
+
+## Host: a freshly drawn list (Main.gd's make_shopping_list()). An empty one
+## changes nothing — this shopper keeps browsing and asks again.
+func _take_list(list: PackedStringArray) -> void:
+	if list.is_empty():
+		return
+	shopping_list = list
+	items_target = list.size()
+	_list_made = true
+	print("[%s] list=%s" % [name, ",".join(list)])
+
+## Host: crosses `sections` off the list unbought (one entry each).
+func _cross_off(sections: PackedStringArray, why: String) -> void:
+	if sections.is_empty():
+		return
+	var left := shopping_list.duplicate()
+	for sec in sections:
+		var i := left.find(sec)
+		if i >= 0:
+			left.remove_at(i)
+			skipped_sections.append(sec)
+	shopping_list = left
+	print("[%s] crossed off %s (%s)" % [name, ",".join(sections), why])
+
+## The section an item belongs to, by its color (the same rule Main.gd's
+## note_sale() and Shelf.gd's _color_matches() use).
+func _section_of(item: Node) -> String:
+	var visual := item.get_node_or_null("Polygon2D") as Polygon2D
+	if visual == null:
+		return ""
+	return get_tree().current_scene._section_of_color(visual.color)
+
+func _wanted(item: Node) -> bool:
+	return _section_of(item) in shopping_list
+
+## Host: the nearest item on an open section's shelf that's on the list and
+## nobody holds.
+func _find_wanted_item() -> Node2D:
+	var main = get_tree().current_scene
+	var best: Node2D = null
+	var best_dist := INF
+	for shelf_body in get_tree().get_nodes_in_group("shelf"):
+		if not _is_section_unlocked(shelf_body.global_position):
+			continue
+		if not main._section_name_at(shelf_body.global_position) in shopping_list:
+			continue
+		for occ in shelf_body.get_node("Shelf").filled_objects():
+			if occ.get_node("Carryable").carrier_id != 0 or not _wanted(occ):
+				continue
+			var d := global_position.distance_to(occ.global_position)
+			if d < best_dist:
+				best_dist = d
+				best = occ
+	return best
 
 func _shopper_maybe_interact() -> void:
-	if _interact_cooldown > 0.0:
-		return
-	if _find_carried_by_me() != null:
+	if _interact_cooldown > 0.0 or _checking_out:
 		return
 	if _committed_item == null or not is_instance_valid(_committed_item):
 		return
@@ -601,6 +811,240 @@ func _shopper_maybe_interact() -> void:
 		print("[%s] attempting pickup of %s" % [name, _committed_item.name])
 		c.try_pickup(carry_id, global_position)
 		_interact_cooldown = INTERACT_COOLDOWN
+		# On the host the pickup is decided (and broadcast) synchronously.
+		if c.carrier_id == carry_id:
+			var sec := _section_of(_committed_item)
+			var left := shopping_list.duplicate()
+			var i := left.find(sec)
+			if i >= 0:
+				left.remove_at(i)
+			shopping_list = left
+			picked_sections.append(sec)
+			_committed_item = null
+
+## Everything in this shopper's cart, first in first (carry_seq order — the
+## order the register rings it up in). Every peer (carrier_id is replicated).
+func cart_items() -> Array:
+	var out := []
+	for obj in get_tree().get_nodes_in_group("carryable"):
+		if obj.is_queued_for_deletion():
+			continue
+		if obj.get_node("Carryable").carrier_id == carry_id:
+			out.append(obj)
+	out.sort_custom(func(x, y): return x.get_node("Carryable").carry_seq < y.get_node("Carryable").carry_seq)
+	return out
+
+## Where Carryable.gd keeps an item this shopper holds: in the cart.
+func cart_point() -> Vector2:
+	if _cart == null:
+		return global_position
+	return global_position + _cart.position
+
+## Host: the direction to walk toward `goal`, by the open connections (see
+## ROUTE_LINKS): straight at it in the same or a neighbouring cell, else
+## through the doorway into the next cell on the way.
+func _steer(goal: Vector2) -> Vector2:
+	var to := _route_point(goal) - global_position
+	return to.normalized() if to.length() > 0.5 else Vector2.ZERO
+
+func _route_point(goal: Vector2) -> Vector2:
+	var main = get_tree().current_scene
+	var a: Vector2i = main._grid_cell_of(global_position)
+	var b: Vector2i = main._grid_cell_of(goal)
+	if a == b or not ROUTE_LINKS.has(a) or not ROUTE_LINKS.has(b) or b in ROUTE_LINKS[a]:
+		return goal
+	var nxt := _route_next(a, b)
+	if nxt == a:
+		return goal
+	# The doorway: across the shared edge, level with where this shopper
+	# already is (kept off the edge's ends), ROUTE_STEP_IN into the next cell.
+	var w: float = main.ROOM_WIDTH
+	var h: float = main.ROOM_HEIGHT
+	if nxt.x != a.x:
+		var edge_x: float = maxf(a.x, nxt.x) * w
+		var y := clampf(global_position.y, a.y * h + ROUTE_EDGE_MARGIN, (a.y + 1) * h - ROUTE_EDGE_MARGIN)
+		return Vector2(edge_x + ROUTE_STEP_IN * signf(nxt.x - a.x), y)
+	var edge_y: float = maxf(a.y, nxt.y) * h
+	var x := clampf(global_position.x, a.x * w + ROUTE_EDGE_MARGIN, (a.x + 1) * w - ROUTE_EDGE_MARGIN)
+	return Vector2(x, edge_y + ROUTE_STEP_IN * signf(nxt.y - a.y))
+
+## First step of the shortest open route a -> b (breadth-first over
+## ROUTE_LINKS); a itself if there's none.
+func _route_next(a: Vector2i, b: Vector2i) -> Vector2i:
+	var came := {a: a}
+	var frontier: Array = [a]
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_front()
+		if c == b:
+			break
+		for n in ROUTE_LINKS.get(c, []):
+			if not came.has(n):
+				came[n] = c
+				frontier.append(n)
+	if not came.has(b):
+		return a
+	var step := b
+	while came[step] != a:
+		step = came[step]
+	return step
+
+## --- OCT 2026 PHASE 3B: the cart and list bubble (every peer, cosmetic) -----
+
+static var _region_textures := {}
+## One texture per sheet region, shared by every customer.
+static func _region_texture(path: String, region: Rect2i) -> Texture2D:
+	var key := "%s|%s" % [path, region]
+	if not _region_textures.has(key):
+		var atlas := AtlasTexture.new()
+		atlas.atlas = load(path)
+		atlas.region = Rect2(region)
+		_region_textures[key] = atlas
+	return _region_textures[key]
+
+func _build_cart() -> void:
+	_cart = Node2D.new()
+	_cart.name = "Cart"
+	_cart_sprite = Sprite2D.new()
+	_cart_sprite.name = "CartArt"
+	_cart_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_cart.add_child(_cart_sprite)
+	_cart_items = Node2D.new()
+	_cart_items.name = "CartItems"
+	_cart.add_child(_cart_items)
+	add_child(_cart)
+	_set_cart_row(CharacterSpriteScript.ROW_DOWN)
+
+## Faces the cart the way the customer faces: side view to the left or
+## right, end-on above (behind the body) or below (in front of it).
+func _set_cart_row(r: int) -> void:
+	_cart_row = r
+	var side := r == CharacterSpriteScript.ROW_LEFT or r == CharacterSpriteScript.ROW_RIGHT
+	_cart_sprite.texture = _region_texture(CART_SHEET, CART_SIDE if side else CART_FRONT)
+	_cart_sprite.scale = Vector2.ONE * (CART_SIDE_SCALE if side else CART_FRONT_SCALE)
+	_cart_sprite.flip_h = r == CharacterSpriteScript.ROW_RIGHT
+	_cart.position = CART_OFFSETS[r]
+	var basket: Vector2 = CART_BASKET_SIDE if side else CART_BASKET_FRONT
+	if r == CharacterSpriteScript.ROW_RIGHT:
+		basket.x = -basket.x
+	_cart_items.position = basket * _cart_sprite.scale.x
+	# Behind the body going up, in front of it otherwise.
+	if body_sprite != null:
+		move_child(_cart, body_sprite.get_index() if r == CharacterSpriteScript.ROW_UP else get_child_count() - 1)
+
+func _update_cart(delta: float) -> void:
+	var r: int = body_sprite.row() if body_sprite != null else CharacterSpriteScript.ROW_DOWN
+	if r != _cart_row:
+		_set_cart_row(r)
+	_cart_refresh -= delta
+	if _cart_refresh > 0.0:
+		return
+	_cart_refresh = CART_REFRESH
+	var items := cart_items()
+	# The real items ride hidden in the cart; anything that left it (dropped
+	# when this shopper left) is shown again.
+	for obj in items:
+		obj.visible = false
+	for obj in _hidden_items:
+		if is_instance_valid(obj) and not obj in items:
+			obj.visible = true
+	_hidden_items = items
+	# The item on the register's belt (StoreArt.gd draws it there) is out of
+	# the basket.
+	if not items.is_empty() and _at_a_register():
+		items = items.slice(1)
+	var names := items.map(func(o): return o.name)
+	if names == _cart_names:
+		return
+	_cart_names = names
+	for ch in _cart_items.get_children():
+		ch.queue_free()
+	for i in items.size():
+		var spr := _item_copy(items[i])
+		spr.position = CART_HEAP[i % CART_HEAP.size()] + Vector2(0, -6) * floorf(i / float(CART_HEAP.size()))
+		_cart_items.add_child(spr)
+
+## This customer is in purchase range of an active register's Checkout spot
+## (where StoreArt.gd's conveyor takes the next item onto the belt).
+func _at_a_register() -> bool:
+	for cashier_body in get_tree().get_nodes_in_group("cashier"):
+		var c: Node = cashier_body.get_node("Cashier")
+		if c.active and global_position.distance_to(c.checkout.global_position) <= CashierScript.PURCHASE_RANGE:
+			return true
+	return false
+
+## A small copy of an item's own art (or, with none, its color).
+func _item_copy(item: Node2D) -> Sprite2D:
+	var spr := Sprite2D.new()
+	var art: Sprite2D = item.get_node_or_null("ProductArt")
+	if art != null:
+		spr.texture = art.texture
+		spr.region_enabled = art.region_enabled
+		spr.region_rect = art.region_rect
+		var size: Vector2 = art.region_rect.size if art.region_enabled else art.texture.get_size()
+		spr.scale = Vector2.ONE * (CART_ITEM_SIZE / maxf(size.x, size.y))
+	else:
+		var img := Image.create(1, 1, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		spr.texture = ImageTexture.create_from_image(img)
+		spr.modulate = (item.get_node("Polygon2D") as Polygon2D).color
+		spr.scale = Vector2.ONE * CART_ITEM_SIZE * 0.8
+	return spr
+
+func _build_bubble() -> void:
+	_bubble = Node2D.new()
+	_bubble.name = "ListBubble"
+	_bubble.position = Vector2(0, LIST_BUBBLE_Y)
+	_bubble.z_index = 5 # over neighbouring shelves and people
+	add_child(_bubble)
+	_rebuild_bubble()
+
+## A white speech bubble holding one icon per item still wanted (the
+## section's own product art), hidden once the list is done.
+func _rebuild_bubble() -> void:
+	_bubble_list = shopping_list.duplicate()
+	for ch in _bubble.get_children():
+		ch.queue_free()
+	_bubble.visible = not _bubble_list.is_empty()
+	if _bubble_list.is_empty():
+		return
+	var n := _bubble_list.size()
+	var step := LIST_ICON_SIZE + 2.0
+	var w := n * step + 4.0
+	var h := LIST_ICON_SIZE + 6.0
+	var bg := Polygon2D.new()
+	bg.name = "Bg"
+	var pts := PackedVector2Array()
+	var hw := w * 0.5
+	var hh := h * 0.5
+	for p in [Vector2(-hw + 3, -hh), Vector2(hw - 3, -hh), Vector2(hw, -hh + 3), Vector2(hw, hh - 3), Vector2(hw - 3, hh),
+			Vector2(3, hh), Vector2(0, hh + 4), Vector2(-3, hh), # the tail, pointing at the head
+			Vector2(-hw + 3, hh), Vector2(-hw, hh - 3), Vector2(-hw, -hh + 3)]:
+		pts.append(p)
+	bg.polygon = pts
+	bg.color = Color(1, 1, 1, 0.92)
+	_bubble.add_child(bg)
+	var edge := Line2D.new()
+	edge.points = pts
+	edge.closed = true
+	edge.width = 1.0
+	edge.default_color = Color(0.2, 0.25, 0.3, 0.9)
+	_bubble.add_child(edge)
+	for i in n:
+		var entry: Array = LIST_ICONS.get(_bubble_list[i], [])
+		if entry.is_empty():
+			continue
+		var icon := Sprite2D.new()
+		icon.texture = _region_texture(entry[0], entry[1])
+		var region: Rect2i = entry[1]
+		icon.scale = Vector2.ONE * (LIST_ICON_SIZE / float(maxi(region.size.x, region.size.y)))
+		icon.position = Vector2(-hw + 2.0 + step * (i + 0.5), 0)
+		_bubble.add_child(icon)
+
+func _exit_tree() -> void:
+	for obj in _hidden_items:
+		if is_instance_valid(obj):
+			obj.visible = true
+	_hidden_items = []
 
 ## Nothing's currently stocked to buy — wander instead of standing frozen,
 ## same "erratic every RETARGET_INTERVAL" shape as disruptive's
@@ -617,14 +1061,14 @@ func _browse_input(delta: float) -> Vector2:
 	var to_target := _browse_pos - global_position
 	if to_target.length() < 8.0:
 		return Vector2.ZERO
-	return to_target.normalized()
+	return _steer(_browse_pos)
 
 ## Biased toward shelves ("browsing" reads as walking up to look at
 ## shelves, not aimless wandering) with a chance of a plain nearby point so
 ## it doesn't look like it's beelining to a shelf every single retarget —
 ## same candidates-plus-random-fallback shape as _pick_disruptive_target()
 ## below, for the same reason: a shopper here isn't picking a stocked item
-## (that's _find_stocked_item's job, checked first in _shopper_input), just
+## (that's _find_wanted_item's job, checked first in _shopper_input), just
 ## somewhere plausible to walk toward while waiting for one to appear.
 ##
 ## FOUND BY TESTING (well, by the report that customers still weren't
@@ -731,7 +1175,7 @@ func _is_excluded_zone(world_pos: Vector2) -> bool:
 	return main.is_break_room_at_pos(world_pos) or main.is_storage_at_pos(world_pos)
 
 ## Week 6 Part 1 follow-up (playtest feedback): every target search below
-## (this one, _find_stocked_item, _find_nearest_cashier,
+## (this one, _find_wanted_item, _find_nearest_cashier,
 ## _pick_disruptive_target) used to consider EVERY shelf/cashier in the
 ## game regardless of section-lock state, picking whichever was
 ## geometrically nearest — a shopper standing near a boundary could end up
@@ -749,19 +1193,12 @@ func _is_excluded_zone(world_pos: Vector2) -> bool:
 func _is_section_unlocked(world_pos: Vector2) -> bool:
 	return get_tree().current_scene.is_unlocked_at_pos(world_pos)
 
-func _find_carried_by_me() -> Node2D:
-	for obj in get_tree().get_nodes_in_group("carryable"):
-		var c: Node = obj.get_node("Carryable")
-		if c.carrier_id == carry_id:
-			return obj
-	return null
-
 func _item_taken_by_someone_else(item: Node2D) -> bool:
 	var c: Node = item.get_node("Carryable")
 	return c.carrier_id != 0 and c.carrier_id != carry_id
 
 ## WEEK 8 — a shopper only ever COMMITS to a stocked item
-## (_find_stocked_item() below), but nothing used to re-check that while it
+## (_find_wanted_item(), above), but nothing used to re-check that while it
 ## walked over: an item knocked off its shelf mid-approach stayed the
 ## target, and the shopper would chase it across the floor and buy it
 ## anyway. That was a rare pre-existing gap (a disruptive customer's bump),
@@ -776,22 +1213,6 @@ func _is_still_stocked(item: Node2D) -> bool:
 		if shelf_body.get_node("Shelf").contains(item):
 			return true
 	return false
-
-func _find_stocked_item() -> Node2D:
-	var best: Node2D = null
-	var best_dist := INF
-	for shelf_body in get_tree().get_nodes_in_group("shelf"):
-		if not _is_section_unlocked(shelf_body.global_position):
-			continue
-		var shelf: Node = shelf_body.get_node("Shelf")
-		var occ: RigidBody2D = shelf.any_filled_object()
-		if occ == null:
-			continue
-		var d := global_position.distance_to(occ.global_position)
-		if d < best_dist:
-			best_dist = d
-			best = occ
-	return best
 
 ## Central-checkout consolidation: cashiers no longer live inside any of the
 ## SECTIONS rooms (they're all in one shared CentralCheckout area — see
