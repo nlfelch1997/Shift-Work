@@ -464,6 +464,8 @@ func _is_loose(obj: Node2D) -> bool:
 	var c: Node = obj.get_node("Carryable")
 	if c.carrier_id != 0 or c.shelved or obj.linear_velocity.length() > ITEM_REST_SPEED:
 		return false
+	if _in_forklift(obj.global_position, CLEARANCE):
+		return false # under (or right at) the forklift: later
 	for shelf_body in _shelves():
 		if shelf_body.get_node("Shelf").contains(obj):
 			return false
@@ -672,15 +674,28 @@ func _in_forklift(p: Vector2, margin: float) -> bool:
 ## FLEE_SPEED: anyone hops out of a forklift's way.
 func _forklift_step(delta: float) -> Vector2:
 	var fk := _forklift_live()
-	if fk == null or not _forklift_moving(fk):
+	if fk == null:
+		return Vector2.INF
+	# Standing in its body (it stopped with its forks over us — FOUND BY THE
+	# REGRESSION RUN, at the end of its lane): step out, moving or not.
+	var inside := _in_forklift(position, 6.0)
+	if not inside and not _forklift_moving(fk):
 		return Vector2.INF
 	var rel := position - fk.global_position
 	var heading := Vector2.RIGHT.rotated(fk.rotation) * (-1.0 if fk.reversing else 1.0)
 	var ahead := rel.dot(heading)
 	var side := rel.dot(heading.orthogonal())
 	var dir := Vector2.ZERO
-	if rel.length() < FORKLIFT_FLEE:
+	if rel.length() < FORKLIFT_FLEE or inside:
 		dir = rel.normalized() if rel.length() > 0.01 else Vector2.UP
+		if inside:
+			# Out the nearer long side (pinned against a wall, straight away
+			# from its centre can't get clear).
+			var lateral := heading.orthogonal() * (1.0 if rel.dot(heading.orthogonal()) >= 0.0 else -1.0)
+			var probe := position + lateral * 40.0
+			if probe.y < _room.position.y + BAND_Y.x or probe.y > _room.position.y + BAND_Y.y:
+				lateral = -lateral
+			dir = lateral
 	if ahead > -30.0 and ahead < FORKLIFT_PATH_AHEAD and absf(side) < FORKLIFT_HALF.y + FORKLIFT_PATH_SIDE and (fk.velocity.length() > 5.0 or fk.alert):
 		var s := signf(side)
 		if s == 0.0:
