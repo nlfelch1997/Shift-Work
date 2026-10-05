@@ -390,10 +390,21 @@ func _run_solo() -> void:
 
 	# S12 a floor display going over.
 	# One the forklift hasn't already knocked over during S11.
-	var disp: Node = main.displays.map(func(d): return d.get_node("Display")).filter(func(d): return not d.toppled)[0]
-	var g0 := count("glass_break")
-	disp.toppled = true
-	check(await heard_after("glass_break", g0), "S12 crash as a floor display topples")
+	# If the forklift toppled BOTH during S11, stand one back up first —
+	# indexing an empty filter() threw here, the coroutine died, and the run
+	# sat until the suite's 75-minute timeout instead of failing.
+	var displays: Array = main.displays.map(func(d): return d.get_node("Display"))
+	var upright: Array = displays.filter(func(d): return not d.toppled)
+	if upright.is_empty() and not displays.is_empty():
+		print("INFO  S12 the forklift toppled every floor display during S11; standing one back up")
+		displays[0].reset_to_home()
+		await wait(0.3)
+		upright = displays.filter(func(d): return not d.toppled)
+	check(not upright.is_empty(), "S12 an upright floor display to knock over (%d displays)" % displays.size())
+	if not upright.is_empty():
+		var g0 := count("glass_break")
+		upright[0].toppled = true
+		check(await heard_after("glass_break", g0), "S12 crash as a floor display topples")
 
 	# S13 cleanup: calm music, the mop at work, a chime per mess, clock-out.
 	var mess := Vector2(1440, 700)

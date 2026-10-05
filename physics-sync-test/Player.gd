@@ -113,6 +113,22 @@ var _coffee_cup: Label
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
+	# PLAYTEST 2 FIX ("pushing an object toward the bottom of the screen lets
+	# me ride it, super fast"): in the default GROUNDED mode "up" is screen-
+	# up, so anything directly BELOW the player counted as floor — and a
+	# moving floor is a platform whose velocity move_and_slide() adds to
+	# ours. A pushed item below became that platform: we rode it, pushed it
+	# harder, and player + item ran away together (~870px/s, more when
+	# carrying) to the bottom wall. Only downward pushes did it. Nothing is a
+	# platform in a top-down store, so none of it carries us, and nothing is
+	# a floor to snap down onto either (the 1px snap tugged us after an item
+	# being pushed away below). Not FLOATING mode: that slides along walls
+	# differently, and stuck the walking test crew in a door corner the
+	# grounded slide gets past.
+	floor_snap_length = 0.0
+	platform_floor_layers = 0
+	platform_wall_layers = 0
+	platform_on_leave = CharacterBody2D.PLATFORM_ON_LEAVE_DO_NOTHING
 	# MULTIPLAYER BUG FIX (found by tools/hazards_test.gd --test=net-orders,
 	# scenario N0): players pass through each other. Movement is client-
 	# authoritative — each process simulates only its OWN player; every other

@@ -27,4 +27,9 @@ TESTS+=(
 "shop-purchase|shopping|0|0|0|--server --day=7 --no-save --test=purchase|"
 "shop-traffic|shopping|0|0|0|--server --day=7 --no-save --test=traffic --seconds=300|"
 "shop-net|shopping|0|2|0|--server --players=3 --day=7 --no-save --test=net-shopping|"
+# OCT 2026 SECOND OUTSIDE PLAYTEST — tools/playtest2_test.gd. Real
+# wall-clock time: riding a pushed item, invisible walls at empty registers.
+"p2-ride|playtest2|0|0|0|--server --day=5 --no-save --test=ride|"
+"p2-cashier-walls|playtest2|0|0|0|--server --day=1 --no-save --test=cashier-walls|"
+"p2-net-ride|playtest2|0|2|0|--server --day=5 --players=3 --no-save --test=net-ride|"
 )

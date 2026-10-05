@@ -121,9 +121,18 @@ func _ready() -> void:
 ## Hiding the whole body cascades to its children (Polygon2D, the NPC
 ## visual — see Cashier.tscn), so an inactive station's cashier NPC and
 ## queue markers all disappear together with no extra code needed here.
+##
+## PLAYTEST 2 ("invisible walls where the cashiers will be"): hiding the body
+## never touched its StaticBody2D collision, so every not-yet-opened station
+## was a solid, invisible 60x40 block. The station's collision now goes with
+## it (deferred: a shape's disabled flag can't be flipped mid physics step,
+## and this is called from several places).
 func set_active(v: bool) -> void:
 	active = v
 	body.visible = v
+	for cs in body.get_children():
+		if cs is CollisionShape2D or cs is CollisionPolygon2D:
+			cs.set_deferred("disabled", not v)
 
 ## Called by Customer.gd's _shopper_input() once, the moment a shopper
 ## commits to this cashier. Idempotent (a customer already in line calling
