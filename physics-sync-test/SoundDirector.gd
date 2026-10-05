@@ -69,6 +69,7 @@ var _shelf_losses := {} # shelf -> [msec, ...]
 var _shelf_wrecked := {} # shelf -> bool
 var _display_toppled := {} # display -> bool
 var _mop_left := 0
+var _can_fills: Array = []
 var _litter_left := 0
 var _pans := {} # tool index -> pan count
 var _tool_timers := {} # tool index -> s to the next swish
@@ -271,7 +272,8 @@ func _watch_cleanup(quiet: bool, delta: float) -> void:
 		var t: Dictionary = tools[i]
 		var holder: int = t["holder"]
 		var p = main.players.get(holder) if holder != 0 else null
-		var working: bool = p != null and is_instance_valid(p) and p.using_tool and main.cleanup_active
+		# OCT 2026 PHASE 3D: the tools work all shift, not just at close.
+		var working: bool = p != null and is_instance_valid(p) and p.using_tool and main.shift_active and not main.is_day_report_active()
 		var left: float = _tool_timers.get(i, 0.0) - delta
 		if working:
 			if left <= 0.0:
@@ -283,10 +285,15 @@ func _watch_cleanup(quiet: bool, delta: float) -> void:
 		else:
 			left = 0.0
 		_tool_timers[i] = left
-		var pan: int = t["pan"]
-		if pan < _pans.get(i, pan) and holder != 0 and p != null and is_instance_valid(p) and not quiet:
-			Sfx.play_at("pan_dump", p.global_position)
-		_pans[i] = pan
+		_pans[i] = int(t["pan"])
+	# PHASE 3D: trash going into a can (by hand or out of a dustpan) — the
+	# rattle, at the can.
+	var fills: Array = cl.cans
+	if _can_fills.size() == fills.size() and not quiet:
+		for c in fills.size():
+			if int(fills[c]) > int(_can_fills[c]):
+				Sfx.play_at("pan_dump", cl.BINS[c]["pos"], -2.0 if int(fills[c]) - int(_can_fills[c]) > 1 else -6.0)
+	_can_fills = fills.duplicate()
 	var mop_left: int = cl.mop_left
 	var litter_left: int = cl.litter_left
 	if main.cleanup_active and not quiet:

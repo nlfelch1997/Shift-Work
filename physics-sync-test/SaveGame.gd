@@ -38,8 +38,13 @@ extends RefCounted
 ## OCT 2026 PHASE 3: version 3 adds "staff" (hired helpers and their upgrade
 ## levels). A version-2 save (Phase 2) loads as-is with nobody hired — the
 ## crew it describes had no way to hire anyone yet, so that's exactly true.
-const VERSION := 3
-const LEGACY_VERSION := 1 # the 7-day story's saves
+## OCT 2026 PHASE 3D: version 4 adds "upkeep" — the store rating and how full
+## each trash can is (cans aren't emptied overnight). A version 2/3 save loads
+## with the rating at Main.RATING_START (3 stars: the economy exactly as it
+## was) and every can empty.
+const VERSION := 4
+const LEGACY_VERSION := 1
+const RATING_DEFAULT := 3.0 # Main.RATING_START (not preloaded: Main preloads this file) # the 7-day story's saves
 const DEFAULT_PATH := "user://shiftwork_save.json"
 const MAX_DAY := 1000000
 
@@ -66,6 +71,11 @@ static func snapshot(main: Node) -> Dictionary:
 		},
 		# OCT 2026 PHASE 3: section -> {"speed": level, "carry": level}.
 		"staff": main.staff.staff.duplicate(true),
+		# OCT 2026 PHASE 3D.
+		"upkeep": {
+			"rating": snappedf(main.store_rating.rating, 0.001),
+			"cans": main.cleanup.cans.duplicate(),
+		},
 		"endless": {
 			"unlocked": main.story_complete,
 			"wallet": en.wallet,
@@ -146,6 +156,14 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 			"speed": int(clampf(_num(st.get("speed"), 0), 0, staff_script.SPEED_BY_LEVEL.size() - 1)),
 			"carry": int(clampf(_num(st.get("carry"), 0), 0, staff_script.CARRY_BY_LEVEL.size() - 1)),
 		}
+	# OCT 2026 PHASE 3D: missing (a v2/v3 save) or damaged -> 3 stars, empty cans.
+	var up: Dictionary = _dict(raw.get("upkeep"))
+	var cleanup_script := preload("res://Cleanup.gd")
+	var cans := []
+	var raw_cans = up.get("cans")
+	for i in cleanup_script.BINS.size():
+		var v = raw_cans[i] if raw_cans is Array and i < raw_cans.size() else 0
+		cans.append(int(clampf(_num(v, 0), 0, cleanup_script.CAN_CAPACITY)))
 	var ws: Dictionary = _dict(en.get("week_summary"))
 	var week_summary := {}
 	for k in ["sold", "pay", "writeups", "priority_sales", "clean_bonus"]:
@@ -161,6 +179,10 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 			"lifetime_sold": _count(shop.get("lifetime_sold")),
 		},
 		"staff": staff,
+		"upkeep": {
+			"rating": clampf(_num(up.get("rating"), RATING_DEFAULT), 1.0, 5.0),
+			"cans": cans,
+		},
 		"endless": {
 			"unlocked": bool(en.get("unlocked")) if en.get("unlocked") is bool else false,
 			"wallet": _count(en.get("wallet")),

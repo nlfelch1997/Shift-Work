@@ -6,8 +6,16 @@ extends Node2D
 ## one step at a time, exactly what the playtesters found confusing:
 ##   move -> pick up a delivery crate -> set it down on its unpack pad ->
 ##   carry stock and place it on a shelf (C) -> the registers (working spot)
-##   -> the manager's vision cone -> a forklift's beacon/BEEP -> flip the
-##   Store sign, which ends practice and starts Day 1 for real.
+##   -> the manager's vision cone -> a forklift's beacon/BEEP -> (OCT 2026
+##   PHASE 3D) trash into a can -> mop a puddle -> a can's bag into the
+##   dumpster -> throw a troublemaker out -> flip the Store sign (its card
+##   explains the store rating), which ends practice and starts Day 1.
+##
+## PHASE 3D PROPS: the practice store has no customers, so the host keeps
+## the upkeep steps stocked (tick_host()): a few pieces of litter and a sticky
+## puddle in the hub, something in the hub's can, and — when a player reaches
+## the troublemaker step — one disruptive customer walking in. The cans'
+## fills are put back the way the save had them when practice ends.
 ##
 ## WHEN IT RUNS: offered automatically only to a brand-new crew — the host
 ## clicked Host Game with no save file at all (a returning save never sees
@@ -63,7 +71,11 @@ const STEPS := [
 	{"id": "register", "title": "The registers", "text": "Customers pay at the registers. Standing at one counts as working.\n\nWalk up to a register."},
 	{"id": "manager", "title": "The manager", "text": "His cone is what he sees. Idle in it = WRITTEN UP (docks pay).\n\nStand still until his ? pops, then get busy: carry, keep moving, or work a register. (Free in practice.)"},
 	{"id": "forklift", "title": "Forklifts", "text": "Flashing beacon + BEEP = forklift. It does NOT stop for you.\n\nGo watch the one in Storage — from a safe distance."},
-	{"id": "open", "title": "Open the store", "text": "Red-ringed customers make trouble: {defend} shoves them. Trash on the floor: {interact}, +$1 a piece.\n\nWhen the crew's ready, flip the STORE SIGN ({interact}) to start Day 1."},
+	{"id": "trash", "title": "Trash goes in a can", "text": "Customers drop trash. Pick it up ({interact} — up to 3 in hand) and {interact} at a TRASH CAN to throw it away: +$1 a piece.\n\nA big mess? A broom sweeps a whole pile at once."},
+	{"id": "mop", "title": "Spills need a mop", "text": "Spilled drinks can't be picked up. Grab the MOP from the rack by the checkout ({interact}), face the puddle and HOLD {place}.\n\n{interact} puts the mop down."},
+	{"id": "dumpster", "title": "Empty the cans", "text": "A full can overflows. Empty-handed at a can, {interact} lifts its bag out — carry it to the DUMPSTER out back (Storage) and {interact} to tip it in."},
+	{"id": "bounce", "title": "Troublemakers", "text": "Red-ringed customers knock stock over. Grab one ({interact}) and walk them out the FRONT DOOR — or toss them ({throw}). {interact} lets go.\n\n({defend} still shoves.)"},
+	{"id": "open", "title": "Open the store", "text": "Trash, spills and full cans drag the STORE RATING down (top right). A better rating brings more customers and better prices.\n\nWhen the crew's ready, flip the STORE SIGN ({interact}) to start Day 1."},
 ]
 
 ## Host-written, replicated (own Sync, reliable ON_CHANGE).
@@ -71,6 +83,7 @@ var active := false
 ## Host only: where the save resumes once practice ends.
 var _resume := "story"
 var _saved_day := 1
+var _saved_cans: Array = [] # PHASE 3D: the cans as the save had them
 
 ## Local: this peer's own progress.
 var step := 0
@@ -171,6 +184,7 @@ func begin(resume: String) -> void:
 		return
 	_resume = resume
 	_saved_day = main.current_day
+	_saved_cans = main.cleanup.cans.duplicate()
 	main.current_day = 1
 	active = true
 	print("[Practice] Practice shift starting (then: %s, Day %d)" % [resume, _saved_day])
@@ -183,6 +197,48 @@ func tick_host() -> void:
 		return
 	main.prep_time_left = 1.0e6
 	main.shift_time_left = 1.0e6
+	_keep_props()
+
+## PHASE 3D — host: the upkeep steps always have something to practice on.
+const PROP_LITTER := [Vector2(1180, 650), Vector2(1215, 690), Vector2(1250, 640), Vector2(1160, 720)]
+const PROP_PUDDLE := Vector2(1640, 660)
+const PROP_CAN := 0 # the hub's
+var _prop_t := 0.0
+func _keep_props() -> void:
+	_prop_t -= get_process_delta_time()
+	if _prop_t > 0.0:
+		return
+	_prop_t = 1.0
+	var cl: Node = main.cleanup
+	if cl.litter.size() < 3:
+		for pos in PROP_LITTER:
+			if not cl.litter.any(func(l): return l["pos"].distance_to(pos) < 20.0):
+				cl.drop_litter(pos)
+				break
+	if cl.puddles.is_empty():
+		cl.drop_puddle(PROP_PUDDLE, 19.0)
+	if int(cl.cans[PROP_CAN]) < 3 and cl.bags.is_empty():
+		cl.set_can(PROP_CAN, 6)
+
+## Any peer on the troublemaker step: one walks in (if none is about).
+func _want_troublemaker() -> void:
+	if multiplayer.is_server():
+		_spawn_troublemaker()
+	else:
+		_request_troublemaker.rpc_id(1)
+
+@rpc("any_peer", "reliable")
+func _request_troublemaker() -> void:
+	if multiplayer.is_server():
+		_spawn_troublemaker()
+
+func _spawn_troublemaker() -> void:
+	if not active or not main.shift_active:
+		return
+	for c in get_tree().get_nodes_in_group("customer"):
+		if c.role == "disruptive" and not c.is_queued_for_deletion():
+			return
+	main._spawn_customer("disruptive")
 
 ## Host-only: the sign was flipped, or someone skipped. Resets the world like
 ## any new day and starts the real one.
@@ -194,6 +250,9 @@ func finish(why: String) -> void:
 	_announce_over.rpc(why)
 	main.current_day = _saved_day
 	main.shift_active = false
+	main.cleanup.set_cans(_saved_cans)
+	for c in get_tree().get_nodes_in_group("customer"):
+		c.force_leave()
 	if _resume == "story":
 		main._reconfigure_world()
 		main._start_shift()
@@ -355,6 +414,28 @@ func _check_step(p: Node2D, me: int, delta: float) -> void:
 				_near_t += delta
 				if _near_t >= FORKLIFT_LOOK_TIME:
 					_advance()
+		"trash":
+			if main.cleanup.stat(me, "binned") > 0:
+				_advance()
+		"mop":
+			if main.cleanup.stat(me, "mopped") > 0:
+				_advance()
+		"dumpster":
+			if main.cleanup.stat(me, "dumped") > 0:
+				_advance()
+		"bounce":
+			if main.cleanup.stat(me, "bounced") > 0:
+				_advance()
+			else:
+				_near_t -= delta
+				if _near_t <= 0.0:
+					_near_t = 2.0
+					var any := false
+					for c in get_tree().get_nodes_in_group("customer"):
+						if c.role == "disruptive":
+							any = true
+					if not any:
+						_want_troublemaker()
 		"open":
 			pass # the sign ends practice for everyone (Main.gd's open_store())
 
@@ -375,6 +456,7 @@ func _keys(me: int) -> Dictionary:
 		"interact": "E" if host else "Enter",
 		"place": "C" if host else "/",
 		"defend": "Space",
+		"throw": "F" if host else ".",
 	}
 
 func _show(p: Node2D, me: int) -> void:
@@ -452,9 +534,52 @@ func _target(p: Node2D, id: String) -> Vector2:
 			return main.manager.global_position
 		"forklift":
 			return main.delivery_forklift.global_position
+		"trash":
+			var cl: Node = main.cleanup
+			if cl.hand_count(p.get_multiplayer_authority()) > 0:
+				return _nearest_can(p.global_position, true)
+			return _nearest_litter(p.global_position)
+		"mop":
+			var cl: Node = main.cleanup
+			var held: int = cl.tool_of(p.get_multiplayer_authority())
+			if held >= 0 and cl.tools[held]["kind"] == "mop":
+				return cl.puddles[0]["pos"] if not cl.puddles.is_empty() else Vector2.INF
+			return cl.TOOL_SPOTS[2] # the hub rack's mop
+		"dumpster":
+			var cl: Node = main.cleanup
+			if cl.bag_of(p.get_multiplayer_authority()) >= 0:
+				return cl.DUMPSTER_POS
+			return _nearest_can(p.global_position, false)
+		"bounce":
+			if p.escorting():
+				return Vector2(1440, 1130) # out the front door
+			var best := Vector2.INF
+			for c in get_tree().get_nodes_in_group("customer"):
+				if c.role == "disruptive" and (best == Vector2.INF or p.global_position.distance_to(c.global_position) < p.global_position.distance_to(best)):
+					best = c.global_position
+			return best
 		"open":
 			return main.STORE_SIGN_POS
 	return Vector2.INF
+
+func _nearest_litter(from: Vector2) -> Vector2:
+	var best := Vector2.INF
+	for l in main.cleanup.litter:
+		if best == Vector2.INF or from.distance_to(l["pos"]) < from.distance_to(best):
+			best = l["pos"]
+	return best
+
+## An open can: with room (trash in hand) or with trash in it (bag to take).
+func _nearest_can(from: Vector2, want_room: bool) -> Vector2:
+	var cl: Node = main.cleanup
+	var best := Vector2.INF
+	for i in cl.BINS.size():
+		if not cl.can_open(i) or (want_room and cl.can_full(i)) or (not want_room and int(cl.cans[i]) <= 0):
+			continue
+		var pos: Vector2 = cl.BINS[i]["pos"]
+		if best == Vector2.INF or from.distance_to(pos) < from.distance_to(best):
+			best = pos
+	return best
 
 func _nearest_slot_for(from: Vector2, obj: Node) -> Vector2:
 	var best := Vector2.INF
