@@ -596,6 +596,11 @@ extends Node2D
 ## - LIFETIME EARNED (lifetime_earned): every positive Pay Today ever banked.
 ##   Spending never lowers it — it's what money-gated complications read, so
 ##   buying a section can never switch a hazard back off.
+## - OCT 2026 PHASE 3 — HIRED HELPERS (Staff.gd, Helper.gd): one per section
+##   after Dry Goods, hired at the break room's staff board out of the bank;
+##   their wages come out at clock-out beside the pay (_bank_shift_pay()), and
+##   like every other spend they never touch lifetime_earned. Their numbers
+##   and the measurements behind them are in Staff.gd's NUMBERS block.
 ## - SECTIONS ARE BOUGHT (sections_owned): the crew starts with Dry Goods and
 ##   buys the rest IN ORDER (Produce, Dairy/Frozen, Bakery — SECTIONS order),
 ##   each at its own price (SECTION_PRICES). Bought at the section's own gate:
@@ -785,6 +790,7 @@ const HubUIScript := preload("res://HubUI.gd")
 const SoundDirectorScript := preload("res://SoundDirector.gd")
 const JuiceScript := preload("res://Juice.gd")
 const BreakRoomScript := preload("res://BreakRoom.gd")
+const StaffScript := preload("res://Staff.gd")
 const SaveGameScript := preload("res://SaveGame.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
@@ -1356,11 +1362,13 @@ func _advance_complication_stage() -> int:
 	return 0
 
 ## Host-only, at clock-out: the shift's pay goes into the crew's bank. The one
-## place money comes in. (Phase 3: helper wages come out here too.)
-func _bank_shift_pay(pay: int) -> void:
-	money += pay
+## place money comes in — and, OCT 2026 PHASE 3, where the hired staff's wages
+## (Staff.gd) come out. Wages are spending, like a section's price: they never
+## lower lifetime_earned, so paying staff can't switch a hazard back off.
+func _bank_shift_pay(pay: int, wages := 0) -> void:
+	money += pay - wages
 	lifetime_earned += maxi(0, pay)
-	print("[Economy] Banked %s — bank %s, lifetime earned $%d" % [_format_money(pay), _format_money(money), lifetime_earned])
+	print("[Economy] Banked %s%s — bank %s, lifetime earned $%d" % [_format_money(pay), (", paid %s in wages" % _format_money(wages)) if wages != 0 else "", _format_money(money), lifetime_earned])
 
 ## What's next on the ladder, for the report and the Break Room: [headline,
 ## detail, imminent]. imminent = it starts next shift.
@@ -1568,6 +1576,8 @@ var _host_from_menu := false
 var _practice_requested := false
 ## WEEK 23 — the dressed break room and its coffee machine (BreakRoom.gd).
 var break_room: Node2D
+## OCT 2026 PHASE 3 — the hired staff (Staff.gd).
+var staff: Node2D
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -1708,6 +1718,13 @@ func _ready() -> void:
 	break_room.name = "BreakRoomProps"
 	add_child(break_room)
 	move_child(break_room, $Players.get_index())
+	# OCT 2026 PHASE 3 — hired helpers + the staff board (Staff.gd/Helper.gd).
+	# Explicit name (StaffSync and each helper's Sync must match on every
+	# peer); under Players in draw order, so carried stock draws over them.
+	staff = StaffScript.new()
+	staff.name = "Staff"
+	add_child(staff)
+	move_child(staff, $Players.get_index())
 	# WEEK 22 — every sound driven by game state (see SoundDirector.gd/Sfx.gd).
 	sound_director = SoundDirectorScript.new()
 	sound_director.name = "SoundDirector"
@@ -2237,6 +2254,8 @@ func _start_shift() -> void:
 	writeups_today = 0
 	writeups_by_peer = {}
 	break_room.reset_for_new_shift() # WEEK 23: a fresh pot, nobody's had a cup
+	staff.reset_for_new_shift() # OCT 2026 PHASE 3: who's on the books, empty back rooms
+	sold_by_section_today = {}
 	_clear_priority_order()
 	orders_called_today = 0
 	orders_filled_today = 0
@@ -2632,7 +2651,8 @@ func _end_shift() -> void:
 	else:
 		print("[Main] Day %d complete!  Sold today: %d  |  Lifetime sold: %d  |  Write-ups today: %d  |  Coffee: %d cup(s) -%s  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, break_room.coffee_cups_today, _format_money(break_room.dollars_today()), _format_money(_pay_today())])
 		# OCT 2026 PHASE 2: the day's pay goes into the crew's bank.
-		_bank_shift_pay(_pay_today())
+		# PHASE 3: and the staff's wages come out of it, at the same moment.
+		_bank_shift_pay(_pay_today(), staff.close_books())
 		completed_story_day = maxi(completed_story_day, current_day)
 		save_progress("Day %d complete" % current_day)
 
@@ -2730,6 +2750,7 @@ func _load_progress() -> String:
 	sections_owned = shop["sections_owned"]
 	complication_stage = shop["stage"]
 	sold_carryover = shop["lifetime_sold"]
+	staff.staff = d["staff"] # OCT 2026 PHASE 3 (none in a version-2 save)
 	var e: Dictionary = d["endless"]
 	story_complete = e["unlocked"]
 	endless.wallet = e["wallet"]
@@ -2940,6 +2961,13 @@ func _fill_shop_forecast() -> void:
 			lines.append("You can afford %s ($%d) — buy it at its gate during prep." % [nxt["name"], price])
 		else:
 			lines.append("Next section: %s — $%d (%s to go)" % [nxt["name"], price, _format_money(price - money)])
+	# OCT 2026 PHASE 3: an owned section nobody's staffing yet, that the bank
+	# could hire for — the first one in line.
+	for sec in staff.HELPER_SECTIONS:
+		if section_index(sec) < sections_owned and not staff.is_hired(sec):
+			if money >= int(staff.HIRE_FEE[sec]):
+				lines.append("You can hire a %s helper ($%d, then $%d a shift) — the staff board, break room." % [sec, staff.HIRE_FEE[sec], staff.WAGE[sec]])
+			break
 	report_shop_label.text = "\n".join(lines)
 	report_shop_label.add_theme_color_override("font_color", Color(1, 0.6, 0.25) if f[2] else Color(1, 0.85, 0.4))
 
@@ -3153,9 +3181,20 @@ func note_item_stocked(obj: Node, shelf_body: Node) -> void:
 	# whenever two physics steps landed in one frame under load).
 	_update_alert_layer(0.0)
 
+## Host: section name -> units sold this shift (note_sale()).
+var sold_by_section_today := {}
+
 ## Host-only, called by Cashier.gd as a purchase completes.
 func note_sale(item: Node) -> void:
-	if not multiplayer.is_server() or not item.has_meta("priority_order"):
+	if not multiplayer.is_server():
+		return
+	# OCT 2026 PHASE 3: sales by section (host diagnostic — the staff tests
+	# read what a staffed section actually sold).
+	var visual := item.get_node_or_null("Polygon2D")
+	if visual != null:
+		var sec := _section_of_color(visual.color)
+		sold_by_section_today[sec] = int(sold_by_section_today.get(sec, 0)) + 1
+	if not item.has_meta("priority_order"):
 		return
 	var id: int = item.get_meta("priority_order")
 	if _filled_order_ids.has(id):
@@ -3889,6 +3928,9 @@ func _process(delta: float) -> void:
 		report_pay_label.text = "Pay Today: %s  →  into the bank" % _format_money(_pay_today())
 		if break_room.coffee_cups_today > 0:
 			report_pay_label.text += "\n(coffee: %d cup(s), %s off — %s)" % [break_room.coffee_cups_today, _format_money(break_room.dollars_today()), break_room.drinkers_text()]
+		# OCT 2026 PHASE 3: the staff's wages, out of the bank beside the pay.
+		if staff.wages_today > 0 and not is_endless():
+			report_pay_label.text += "\nStaff wages: -%s (%s)  →  bank %s%s" % [_format_money(staff.wages_today), staff.wages_detail, "+" if _pay_today() - staff.wages_today >= 0 else "", _format_money(_pay_today() - staff.wages_today)]
 		report_order_label.visible = lv["orders"] > 0
 		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  ·  +%s trash picked up (%d)  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), _format_money(cleanup.litter_pay_today()), cleanup.litter_collected_today, ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]

@@ -667,6 +667,11 @@ func _try_interact() -> void:
 	if main.break_room.near_vending(global_position):
 		main.break_room.poke_vending()
 		return
+	# OCT 2026 PHASE 3: empty-handed at the staff board -> this player's staff
+	# panel opens (or closes); its buttons ask the host (Staff.gd).
+	if main.shift_active and main.staff.near_board(global_position) and not main.is_endless() and not main.tutorial.active:
+		main.staff.toggle_panel()
+		return
 	# OCT 2026 PHASE 2: empty-handed at a for-sale section's gate -> buy it
 	# (the host decides: prep only, next in line, enough in the bank). When it
 	# can't be bought right now, the press only says why if there's nothing

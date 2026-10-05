@@ -352,7 +352,7 @@ func _run_legacy() -> void:
 			var bak := _read_json(path + ".v1.bak")
 			check(int(bak.get("version", 0)) == 1 and int(bak.get("story", {}).get("completed_day", 0)) == 4, "L1: the old save is kept, untouched, at .v1.bak")
 			var now := _read_json(path)
-			check(int(now.get("version", 0)) == 2 and now.has("shop") and not now.has("story"), "L1: the save on disk is a fresh version 2 one already (keys %s)" % str(now.keys()))
+			check(int(now.get("version", 0)) == SG.VERSION and now.has("shop") and not now.has("story"), "L1: the save on disk is a fresh current-version (%d) one already (keys %s)" % [SG.VERSION, str(now.keys())])
 			check(not main.tutorial.active, "L1: a returning crew isn't pushed into the practice shift")
 			await wait(main.LEGACY_NOTICE_SECONDS + 0.5)
 			check(not main._finale_banner.visible, "L1: the message goes away by itself")

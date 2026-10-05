@@ -270,6 +270,12 @@ func start_delivery() -> void:
 	var cargo := []
 	for i in boxes_per_truck():
 		cargo.append(names[i] if i < names.size() else names[randi() % names.size()])
+	# OCT 2026 PHASE 3: a section with a helper on the floor gets its boxes in
+	# its own back room (Staff.gd) — only the rest come off at the dock.
+	var rolled := cargo.size()
+	cargo = main.staff.divert_boxes(cargo)
+	if cargo.size() != rolled:
+		print("[Delivery] %d box(es) went straight to staffed sections' back stock" % (rolled - cargo.size()))
 	truck_load = cargo
 	_truck_state = TRUCK_ARRIVING
 	_truck_timer = truck_interval()
@@ -440,14 +446,22 @@ func unpack(box) -> void: # untyped: may arrive (deferred) already freed
 	var section: String = box.get_meta("section")
 	_pad_settle.erase(box)
 	box.queue_free()
+	unpack_into_section(section, "%d x %s" % [UNITS_PER_BOX, section])
+
+## Host-only: one box's worth of stock spills round `section`'s pad. A box set
+## down on its pad comes here (unpack()), and so — OCT 2026 PHASE 3 — does a
+## staffed section's back-stock box its helper opens (Staff.gd).
+func unpack_into_section(section: String, event_text: String) -> void:
+	if not multiplayer.is_server():
+		return
 	boxes_unpacked_today += 1
 	var spots := []
 	for i in UNITS_PER_BOX:
 		var pos := _spill_spot(section, spots)
 		spots.append(pos)
 		main.spawn_product_at(section, pos)
-	_pad_event(section, "%d x %s" % [UNITS_PER_BOX, section], true)
-	print("[Delivery] Unpacked a %s box (%d today) -> %d loose on the floor by its pad" % [section, boxes_unpacked_today, UNITS_PER_BOX])
+	_pad_event(section, event_text, true)
+	print("[Delivery] Unpacked a %s box (%d today) -> %d loose on the floor by its pad (%s)" % [section, boxes_unpacked_today, UNITS_PER_BOX, event_text])
 
 ## Host-only: somewhere in the ring round the section's pad that isn't on top
 ## of other stock, a box, a player, a forklift, a display or a shelf slot (a
