@@ -113,6 +113,14 @@ var _coffee_cup: Label
 
 func _ready() -> void:
 	add_to_group("player") # so Carryable.gd can find whoever is carrying its object
+	# PLAYTEST 2 FIX ("pushing an object toward the bottom of the screen lets
+	# me ride it, super fast"): top-down, so no floor/wall distinction. In the
+	# default GROUNDED mode "up" is screen-up, so anything directly BELOW the
+	# player counted as floor — a pushed item below became a moving platform,
+	# move_and_slide() added its velocity to ours, we pushed it harder, and
+	# player + item ran away together (~870px/s) to the bottom wall. Only
+	# downward pushes did it. Same setting the forklift already uses.
+	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	# MULTIPLAYER BUG FIX (found by tools/hazards_test.gd --test=net-orders,
 	# scenario N0): players pass through each other. Movement is client-
 	# authoritative — each process simulates only its OWN player; every other
