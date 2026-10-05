@@ -106,6 +106,29 @@ var _claimed: Array = []
 func _slot_claimed(p: Vector2) -> bool:
 	return _claimed.any(func(q): return q.distance_to(p) < 4.0)
 
+## A perfect crew: every empty slot of the section gets a unit — loose stock
+## of that section off the floor first (nearest), a new one only when there's
+## none — so the floor doesn't fill up with stock nobody shelves (deliveries
+## keep arriving all shift).
+func crew_restock(sec: String) -> void:
+	var color: Color = main.SECTION_COLORS[sec]
+	var loose: Array = get_nodes_in_group("carryable").filter(func(o): return not o.is_in_group("delivery_box") and not o.is_queued_for_deletion() and o.get_node("Carryable").carrier_id == 0 and not o.get_node("Carryable").shelved and o.get_node("Polygon2D").color.is_equal_approx(color))
+	for sb in shelves_of(sec):
+		var shelf: Node = sb.get_node("Shelf")
+		if shelf.wrecked:
+			continue
+		for i in shelf.slots.size():
+			var occ = shelf._occupant[i]
+			if occ != null and is_instance_valid(occ) and not occ.is_queued_for_deletion():
+				continue
+			var at: Vector2 = shelf.slots[i].global_position
+			if loose.is_empty():
+				main.spawn_product_at(sec, at)
+			else:
+				var o: RigidBody2D = loose.pop_back()
+				move_body(o, at)
+	await wait(0.4)
+
 ## Takes every unit off a section's shelves (freed, like a sale).
 func empty_section(sec: String) -> void:
 	for sb in shelves_of(sec):
@@ -497,7 +520,7 @@ func _run_traffic() -> void:
 		if t >= refill_t:
 			refill_t = t + 2.0
 			for sec in ["Dry Goods", "Produce", "Dairy/Frozen", "Bakery"]:
-				await fill_section(sec)
+				await crew_restock(sec)
 		var live := shoppers()
 		max_customers = maxi(max_customers, get_nodes_in_group("customer").size())
 		for c in live:
@@ -511,9 +534,14 @@ func _run_traffic() -> void:
 			if c.global_position.distance_to(tr["pos"]) > 40.0 or not moving:
 				tr["pos"] = c.global_position
 				tr["since"] = t
-			elif t - float(tr["since"]) >= 20.0 and not tr["stuck"]:
+			elif t - float(tr["since"]) >= 20.0 and not tr["stuck"] and not _in_a_line(c):
 				tr["stuck"] = true
-				stuck.append("%s at %s (%s)" % [c.name, str(c.global_position.round()), main._section_name_at(c.global_position)])
+				if not c.has_method("cart_items"): # pre-3B code (measuring clean main)
+					stuck.append("%s at %s (%s) near=%s" % [c.name, str(c.global_position.round()), main._section_name_at(c.global_position), _near_bodies(c)])
+					track[c.name] = tr
+					continue
+				var goal: Vector2 = c._committed_stand if c._committed_item != null and is_instance_valid(c._committed_item) else c._browse_pos
+				stuck.append("%s at %s (%s) checking_out=%s goal=%s path=%s list=%s cart=%d near=%s" % [c.name, str(c.global_position.round()), main._section_name_at(c.global_position), str(c._checking_out), str(goal.round()), str(Array(c._path).map(func(p): return p.round())), ",".join(c.shopping_list), c.cart_items().size(), _near_bodies(c)])
 			track[c.name] = tr
 	var by := {}
 	var total := 0
@@ -534,6 +562,32 @@ func _run_traffic() -> void:
 	check(stuck.size() <= maxi(1, seen.size() / 50), "T4: shoppers with carts don't get stuck (%d of %d stalled 20s+)" % [stuck.size(), seen.size()])
 	check(max_cart >= 3, "T5: carts carry several items at once (max %d)" % max_cart)
 	finish()
+
+## What's touching a stalled shopper (its last slide collisions, and anything
+## within 45px), for the TRAFFIC line.
+func _near_bodies(c: Node) -> String:
+	var out := []
+	for i in c.get_slide_collision_count():
+		var col: Object = c.get_slide_collision(i).get_collider()
+		if col is Node:
+			out.append("hit:" + String(col.name))
+	for g in ["carryable", "customer", "player", "shelf", "cashier"]:
+		for n in get_nodes_in_group(g):
+			if n != c and n.global_position.distance_to(c.global_position) < 45.0:
+				out.append("%s:%s" % [g, n.name])
+	if main.forklift.global_position.distance_to(c.global_position) < 90.0:
+		out.append("forklift")
+	return ",".join(out)
+
+## Waiting in a checkout line (queued at a register, near its line): a cart
+## being rung up 3s an item keeps a line still for a while, which isn't stuck.
+func _in_a_line(c: Node) -> bool:
+	if not c.has_method("cart_items") or not c._checking_out or c._committed_cashier == null or not is_instance_valid(c._committed_cashier):
+		return false
+	var cash: Node = c._committed_cashier.get_node("Cashier")
+	# Behind someone in the line (wherever the crowd has left it standing),
+	# or at its own spot in it.
+	return cash._queue_by_distance().find(c.carry_id) > 0 or c.global_position.distance_to(cash.queue_slot_position(c.carry_id)) < 80.0
 
 ## =============================================================================
 ## CO-OP — host + 2 clients

@@ -179,10 +179,8 @@ func _queue_by_distance() -> Array:
 ## _queue_by_distance() above) or not found (not our problem to resolve
 ## here — Customer.gd only ever calls this after joining), otherwise the
 ## queue slot matching its current position in that distance ordering.
-## Overflow (more customers queued than physical slots) stacks everyone
-## past the last slot there rather than inventing more positions — a rare
-## edge case at this session's population caps, not worth extra layout
-## logic for.
+## Overflow (more customers queued than physical slots) carries the line on
+## past the last slot at the same spacing (Phase 3B — see below).
 func queue_slot_position(carry_id: int) -> Vector2:
 	var ordered := _queue_by_distance()
 	var idx := ordered.find(carry_id)
@@ -191,7 +189,13 @@ func queue_slot_position(carry_id: int) -> Vector2:
 	var slot_idx: int = idx - 1
 	if slot_idx < queue_slots.size():
 		return queue_slots[slot_idx].global_position
-	return queue_slots[queue_slots.size() - 1].global_position
+	# OCT 2026 PHASE 3B: a cart takes longer to ring up, so lines run longer —
+	# the line carries on past the last marker at the same spacing, rather
+	# than everyone past it standing on the one spot (shoppers pass through
+	# each other now, so they'd stack exactly).
+	var last: Vector2 = queue_slots[queue_slots.size() - 1].global_position
+	var step: Vector2 = last - queue_slots[queue_slots.size() - 2].global_position if queue_slots.size() >= 2 else Vector2(40, 0)
+	return last + step * (slot_idx - queue_slots.size() + 1)
 
 func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority() or not active:

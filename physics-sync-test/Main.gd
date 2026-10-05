@@ -2843,6 +2843,8 @@ func _advance_to_next_day() -> void:
 ## at once — the host does it the moment the day/shift changes; every peer
 ## also does it from _process()'s config-key poll.
 func _reconfigure_world() -> void:
+	if _customer_nav != null:
+		_customer_nav.invalidate() # a gate may have opened (Phase 3B shopper paths)
 	_configure_gates()
 	_configure_cashiers()
 	_configure_hazards()
@@ -3711,6 +3713,14 @@ func make_shopping_list() -> PackedStringArray:
 				taken[sec] = n + 1
 				added = true
 	return out
+
+## OCT 2026 PHASE 3B — host: a shopper's walk from `from` to `to` around the
+## store's walls, gates, shelves, registers and displays (CustomerNav.gd).
+var _customer_nav: RefCounted = null
+func customer_path(from: Vector2, to: Vector2) -> PackedVector2Array:
+	if _customer_nav == null:
+		_customer_nav = preload("res://CustomerNav.gd").new(self)
+	return _customer_nav.path(from, to)
 
 ## Host: open section name -> units on its shelves now (only sections with
 ## at least one). A shelf only takes its own section's stock (Shelf.gd's

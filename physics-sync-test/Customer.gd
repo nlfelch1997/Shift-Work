@@ -220,29 +220,20 @@ const LIST_ICONS := {
 	"Bakery": ["res://assets/supermarket/2.png", Rect2i(722, 244, 44, 45)],
 }
 const LIST_ICON_SIZE := 13.0
-## OCT 2026 PHASE 3B — CELL ROUTING (FOUND BY THE PURCHASE TEST). Shoppers
-## walk straight at their target (there's no navigation mesh), which was fine
-## while "nearest item" kept them in the hub's own spokes. A list sends them
-## to Bakery, which hangs off Dry Goods: the straight line from the door cuts
-## through Produce into the sealed Bakery/Produce wall (Main.gd's GRID MAP),
-## and a shopper leaned on it until it timed out — likely part of why Bakery
-## sold so little before. The open connections a customer may walk, from the
-## same map (Break Room and Storage are off limits, see
-## _keep_outside_excluded_zones()): Sidewalk-hub, hub-Dry Goods, hub-Produce,
-## hub-Dairy/Frozen, Dry Goods-Bakery. Within one cell, or into a cell that
-## shares an open edge, the walk stays the plain straight line it always was.
-const ROUTE_LINKS := {
-	Vector2i(1, 2): [Vector2i(1, 1)],
-	Vector2i(1, 1): [Vector2i(1, 2), Vector2i(1, 0), Vector2i(2, 1), Vector2i(0, 1)],
-	Vector2i(1, 0): [Vector2i(1, 1), Vector2i(2, 0)],
-	Vector2i(2, 0): [Vector2i(1, 0)],
-	Vector2i(2, 1): [Vector2i(1, 1)],
-	Vector2i(0, 1): [Vector2i(1, 1)],
-}
-## A doorway waypoint sits this far into the next cell (so reaching it means
-## having crossed), and at least this far from the edge's corners.
-const ROUTE_STEP_IN := 60.0
-const ROUTE_EDGE_MARGIN := 160.0
+## OCT 2026 PHASE 3B — SHOPPER PATHS. A list sends a shopper anywhere in the
+## store, so it no longer walks in a straight line at its target: it follows a
+## path round the walls, shelves and registers (Main.gd's customer_path(),
+## CustomerNav.gd — see that file for what the straight lines ran into),
+## re-planned when its goal moves, when it stalls, and every REPLAN_EVERY s.
+const REPLAN_EVERY := 3.0
+const WAYPOINT_REACHED := 14.0
+## OCT 2026 PHASE 3B (FOUND BY THE TRAFFIC TEST, and present on main too):
+## walking straight at a shelved item, a shopper coming at the far slot of a
+## shelf from the side (Produce's bottom shelf, entered from the hub) met the
+## shelf's END and stood there, the item just outside PICKUP_RANGE. It walks
+## to the slot's stand point instead — this far out in front of the shelf,
+## the stand-off Helper.gd and the solo bot use — and picks up from there.
+const SLOT_STAND := 29.0
 const LIST_BUBBLE_Y := -44.0 # above the head (a person's art tops out ~-24)
 
 @export var role := "shopper" # "shopper" or "disruptive"
@@ -278,6 +269,10 @@ var _knockback_velocity := Vector2.ZERO
 # --- shopper state ---
 var _committed_item: Node2D = null
 var _committed_cashier: Node = null
+var _committed_stand := Vector2.ZERO # where to stand to take _committed_item (see SLOT_STAND)
+var _path := PackedVector2Array() # waypoints toward _path_goal (see REPLAN_EVERY)
+var _path_goal := Vector2.INF
+var _replan_t := 0.0
 var _browse_timer := 0.0
 var _browse_pos := Vector2.ZERO
 ## How many purchases THIS shopper has completed so far this trip —
@@ -347,6 +342,16 @@ func _ready() -> void:
 	# disruptive customer's whole job is knocking it off, so it still collides.
 	if role == "disruptive":
 		collision_mask |= CarryableScript.LAYER_SHELF_STOCK
+	# OCT 2026 PHASE 3B: shoppers pass through one another (as helpers and the
+	# manager pass through people). A list sends shoppers both ways through
+	# every aisle and doorway, and two pushing carts into each other jammed
+	# there until one timed out (tools/shopping_test.gd's traffic test). They
+	# still collide with players, disruptive customers, stock and the store.
+	# Host only: a peer's copy of a customer is moved by position, not physics.
+	if role == "shopper" and multiplayer.is_server():
+		for other in get_tree().get_nodes_in_group("customer"):
+			if other != self and other.role == "shopper":
+				add_collision_exception_with(other)
 	_stall_check_pos = position # seed with spawn position, not ZERO — a ZERO default would register a false "moved a huge distance" on the very first check
 	# items_target included here (Week 7 multi-item playtest gap): the log
 	# previously had no way to distinguish "this shopper was only ever
@@ -521,6 +526,7 @@ func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 					_detour_episodes_on_side = 0
 				_detour_dir = dir.orthogonal() * _detour_side
 				_detour_timer = DETOUR_DURATION
+				_replan_t = 0.0 # a shopper's path re-plans from wherever the detour leaves it
 				_detour_episodes_on_side += 1
 				_stall_count = 0
 		else:
@@ -709,9 +715,9 @@ func _shopper_input(delta: float) -> Vector2:
 		_list_wait = 0.0
 		_extend_lifetime_budget(_committed_item.global_position)
 	var to_item := _committed_item.global_position - global_position
-	if to_item.length() < PICKUP_RANGE:
+	if to_item.length() < PICKUP_RANGE and global_position.distance_to(_committed_stand) < SLOT_STAND:
 		return Vector2.ZERO
-	return _steer(_committed_item.global_position)
+	return _steer(_committed_stand)
 
 ## Carrying the cart to a spot in the shortest cashier queue (NPC cashier +
 ## queue line, playtest request) and waiting there — Cashier.gd's own watch
@@ -787,6 +793,7 @@ func _find_wanted_item() -> Node2D:
 			continue
 		if not main._section_name_at(shelf_body.global_position) in shopping_list:
 			continue
+		var outward: Vector2 = -shelf_body.global_transform.y.normalized()
 		for occ in shelf_body.get_node("Shelf").filled_objects():
 			if occ.get_node("Carryable").carrier_id != 0 or not _wanted(occ):
 				continue
@@ -794,6 +801,7 @@ func _find_wanted_item() -> Node2D:
 			if d < best_dist:
 				best_dist = d
 				best = occ
+				_committed_stand = occ.global_position + outward * SLOT_STAND
 	return best
 
 func _shopper_maybe_interact() -> void:
@@ -837,53 +845,18 @@ func cart_point() -> Vector2:
 		return global_position
 	return global_position + _cart.position
 
-## Host: the direction to walk toward `goal`, by the open connections (see
-## ROUTE_LINKS): straight at it in the same or a neighbouring cell, else
-## through the doorway into the next cell on the way.
+## Host: the direction to walk toward `goal` along this shopper's path
+## (re-planned when the goal moves, after a stall, or every REPLAN_EVERY s).
 func _steer(goal: Vector2) -> Vector2:
-	var to := _route_point(goal) - global_position
+	_replan_t -= get_physics_process_delta_time()
+	if _path_goal == Vector2.INF or goal.distance_to(_path_goal) > 20.0 or _replan_t <= 0.0:
+		_path = get_tree().current_scene.customer_path(global_position, goal)
+		_path_goal = goal
+		_replan_t = REPLAN_EVERY
+	while _path.size() > 1 and global_position.distance_to(_path[0]) < WAYPOINT_REACHED:
+		_path.remove_at(0)
+	var to: Vector2 = (_path[0] if not _path.is_empty() else goal) - global_position
 	return to.normalized() if to.length() > 0.5 else Vector2.ZERO
-
-func _route_point(goal: Vector2) -> Vector2:
-	var main = get_tree().current_scene
-	var a: Vector2i = main._grid_cell_of(global_position)
-	var b: Vector2i = main._grid_cell_of(goal)
-	if a == b or not ROUTE_LINKS.has(a) or not ROUTE_LINKS.has(b) or b in ROUTE_LINKS[a]:
-		return goal
-	var nxt := _route_next(a, b)
-	if nxt == a:
-		return goal
-	# The doorway: across the shared edge, level with where this shopper
-	# already is (kept off the edge's ends), ROUTE_STEP_IN into the next cell.
-	var w: float = main.ROOM_WIDTH
-	var h: float = main.ROOM_HEIGHT
-	if nxt.x != a.x:
-		var edge_x: float = maxf(a.x, nxt.x) * w
-		var y := clampf(global_position.y, a.y * h + ROUTE_EDGE_MARGIN, (a.y + 1) * h - ROUTE_EDGE_MARGIN)
-		return Vector2(edge_x + ROUTE_STEP_IN * signf(nxt.x - a.x), y)
-	var edge_y: float = maxf(a.y, nxt.y) * h
-	var x := clampf(global_position.x, a.x * w + ROUTE_EDGE_MARGIN, (a.x + 1) * w - ROUTE_EDGE_MARGIN)
-	return Vector2(x, edge_y + ROUTE_STEP_IN * signf(nxt.y - a.y))
-
-## First step of the shortest open route a -> b (breadth-first over
-## ROUTE_LINKS); a itself if there's none.
-func _route_next(a: Vector2i, b: Vector2i) -> Vector2i:
-	var came := {a: a}
-	var frontier: Array = [a]
-	while not frontier.is_empty():
-		var c: Vector2i = frontier.pop_front()
-		if c == b:
-			break
-		for n in ROUTE_LINKS.get(c, []):
-			if not came.has(n):
-				came[n] = c
-				frontier.append(n)
-	if not came.has(b):
-		return a
-	var step := b
-	while came[step] != a:
-		step = came[step]
-	return step
 
 ## --- OCT 2026 PHASE 3B: the cart and list bubble (every peer, cosmetic) -----
 
