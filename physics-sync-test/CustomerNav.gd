@@ -41,6 +41,12 @@ const LOOSE_RADIUS := 16.0 # a 28px product lying anywhere (a box is bigger, but
 var main: Node
 var _astar := AStarGrid2D.new()
 var _built_at := -INF
+## Host diagnostics (tools/shopping_test.gd prints them): what it costs.
+var builds := 0
+var build_us := 0
+var paths := 0
+var path_us := 0
+var path_us_max := 0
 
 func _init(main_node: Node) -> void:
 	main = main_node
@@ -56,10 +62,22 @@ func _init(main_node: Node) -> void:
 ## Waypoints from `from` to `to` (the last one is `to` itself). Just [to] when
 ## there's no grid route (the caller then walks straight, as before).
 func path(from: Vector2, to: Vector2) -> PackedVector2Array:
-	var now := Time.get_ticks_msec() / 1000.0
+	var t0 := Time.get_ticks_usec()
+	var now := t0 / 1000000.0
 	if now - _built_at >= REBUILD_EVERY:
 		_build()
 		_built_at = now
+		builds += 1
+		build_us += Time.get_ticks_usec() - t0
+	var t1 := Time.get_ticks_usec()
+	var out := _path(from, to)
+	var took := Time.get_ticks_usec() - t1
+	paths += 1
+	path_us += took
+	path_us_max = maxi(path_us_max, took)
+	return out
+
+func _path(from: Vector2, to: Vector2) -> PackedVector2Array:
 	var a := _open_cell_near(_to_cell(from))
 	var b := _open_cell_near(_to_cell(to))
 	if a == Vector2i(-1, -1) or b == Vector2i(-1, -1):
@@ -164,16 +182,21 @@ func _open_cell_near(c: Vector2i) -> Vector2i:
 			return best
 	return Vector2i(-1, -1)
 
-## Drops every waypoint the one before it can see past (Helper.gd's _smooth()).
+## Straightens the grid path: from each anchor, walk forward while the next
+## point is still in plain sight, and keep the last one that was. Linear in
+## the path's length (Helper.gd's version tries every later point from every
+## anchor, which is fine in one room but quadratic on a store-wide path —
+## found as frame spikes in the soak).
 func _smooth(from: Vector2, pts: PackedVector2Array) -> PackedVector2Array:
 	var out := PackedVector2Array()
+	var anchor := from
 	var i := 0
 	while i < pts.size():
-		var j := pts.size() - 1
-		while j > i and not _clear_line(from, pts[j]):
-			j -= 1
+		var j := i
+		while j + 1 < pts.size() and _clear_line(anchor, pts[j + 1]):
+			j += 1
 		out.append(pts[j])
-		from = pts[j]
+		anchor = pts[j]
 		i = j + 1
 	return out
 

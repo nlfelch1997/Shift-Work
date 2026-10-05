@@ -467,7 +467,15 @@ extends Node2D
 ##   STORE DENSITY (tiered) — Main.gd
 ##     CUSTOMER_CAP_BY_TIER               [5, 9, 13, 17]
 ##     CASHIER_COUNT_BY_TIER              [2, 3, 4, 5]
-##     ITEMS_TARGET_BY_TIER               [1, 2, 2, 3]  items per shopper trip
+##     ITEMS_TARGET_BY_TIER               [1, 2, 2, 3]  (no longer read — Phase 3B lists below)
+##
+##   SHOPPING LISTS + CARTS (OCT 2026 PHASE 3B) — Main.gd / Customer.gd (FLAGGED)
+##     SHOPPING_LIST_BY_TIER              [[1,2],[2,3],[2,3],[2,4]]  list length, random in [min,max]
+##     SHOPPING_LIST_MAX_PER_SECTION      2  (and never more than that section's stocked units)
+##     Customer.gd LIST_PATIENCE          10 s  wait for a sold-out item before crossing it off
+##     Customer.gd REPLAN_EVERY           3 s   shopper path re-plan (CustomerNav.gd grid, 20 px)
+##     Customer.gd SLOT_STAND             29 px  stand-off in front of a slot to take an item
+##     Cashier.gd CHECKOUT_WAIT_SECONDS   3 s an item (unchanged — a cart rings up item by item)
 ##     STACK_ROWS_BY_TIER                 [1, 1, 2, 2]  shelf rows (Shelf.gd set_stack_rows())
 ##     PRODUCT_DENSITY_BY_TIER            [1.0, 1.0, 1.5, 1.5]  x per-section product cap
 ##     PRODUCT_PER_EXTRA_PLAYER            3

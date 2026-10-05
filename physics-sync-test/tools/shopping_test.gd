@@ -552,7 +552,11 @@ func _run_traffic() -> void:
 	var lens := {}
 	for l in list_lens:
 		lens[l] = lens.get(l, 0) + 1
-	print("TRAFFIC seconds=%d helpers=%s | sold %d: %s | shoppers seen %d, list lengths %s, max cart %d, max crowd %d | rams %d | stuck %d %s" % [int(secs), str(spec.keys()), total, str(by), seen.size(), str(lens), max_cart, max_customers, main.forklift.rams_today, stuck.size(), str(stuck)])
+	var nav = main.get("_customer_nav")
+	var nav_line := "no nav (pre-3B code)"
+	if nav != null:
+		nav_line = "nav: %d rebuilds avg %.2f ms, %d paths avg %.2f ms max %.2f ms" % [nav.builds, nav.build_us / 1000.0 / maxf(1.0, nav.builds), nav.paths, nav.path_us / 1000.0 / maxf(1.0, nav.paths), nav.path_us_max / 1000.0]
+	print("TRAFFIC seconds=%d helpers=%s | sold %d: %s | shoppers seen %d, list lengths %s, max cart %d, max crowd %d | rams %d | %s | stuck %d %s" % [int(secs), str(spec.keys()), total, str(by), seen.size(), str(lens), max_cart, max_customers, main.forklift.rams_today, nav_line, stuck.size(), str(stuck)])
 	check(total == sold_now() - total0, "T0: per-section sales add up to the registers' total (%d)" % total)
 	check(total >= 40, "T1: the store sold steadily (%d in %ds)" % [total, int(secs)])
 	for s in ["Dry Goods", "Produce", "Dairy/Frozen", "Bakery"]:
