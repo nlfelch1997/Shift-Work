@@ -391,25 +391,35 @@ func _run_net_client() -> void:
 		var start := lane_start(dir_name, lane)
 		# Out of the way while the item is laid out: this client's copy of it
 		# glides in a straight line to its new spot, and if that line crossed
-		# this player, the brush would push the host's copy off its mark.
-		player().teleport_to(Vector2(1300, 1500))
-		await wait(0.5)
+		# this player, the brush would push the host's copy off its mark. Laid
+		# out again (a fresh item) if something still knocked it off: that's
+		# the setup missing, not what's under test.
 		var at := start + dir * 32.0
-		_net_write("place_%d_%d" % [me, n], {"x": at.x, "y": at.y})
-		var r := await _net_read("placed_%d_%d" % [me, n], 30.0)
-		var obj: RigidBody2D = main.find_child(r.get("name", "?"), true, false) as RigidBody2D
-		check(obj != null, "NC%d host laid out an item to push %s" % [me, dir_name])
-		if obj == null:
+		var obj: RigidBody2D = null
+		var off := INF
+		for attempt in 3:
+			player().teleport_to(Vector2(1300, 1500))
+			await wait(0.5)
+			_net_write("place_%d_%d" % [me, n], {"x": at.x, "y": at.y})
+			var r := await _net_read("placed_%d_%d" % [me, n], 30.0)
+			obj = main.find_child(r.get("name", "?"), true, false) as RigidBody2D
+			if obj == null:
+				n += 1
+				continue
+			await wait_until(func(): return obj.global_position.distance_to(at) < 2.0, 3.0)
+			player().teleport_to(start)
+			await physics_frame
+			_net_write("moved_%d_%d" % [me, n], {"x": start.x, "y": start.y})
+			await _net_read("snapped_%d_%d" % [me, n], 30.0)
 			n += 1
+			await wait(0.3)
+			off = obj.global_position.distance_to(at)
+			if off < 6.0:
+				break
+			print("INFO  NC%d %s: item knocked %.0fpx off its mark before the push; laying out another" % [me, dir_name, off])
+		check(obj != null and off < 6.0, "NC%d host laid out an item to push %s, on its mark (%.0fpx off)" % [me, dir_name, off])
+		if obj == null or off >= 6.0:
 			continue
-		await wait_until(func(): return obj.global_position.distance_to(at) < 2.0, 3.0)
-		player().teleport_to(start)
-		await physics_frame
-		_net_write("moved_%d_%d" % [me, n], {"x": start.x, "y": start.y})
-		await _net_read("snapped_%d_%d" % [me, n], 30.0)
-		n += 1
-		await wait(0.3)
-		check(obj.global_position.distance_to(at) < 6.0, "NC%d ...the item is where it was laid out (%.0fpx off)" % [me, obj.global_position.distance_to(at)])
 		var o0 := obj.global_position
 		var peaks: Array = await hold(dir, 1.2, obj)
 		check(obj.global_position.distance_to(o0) > 60.0, "NC%d product pushed %s: the object was actually pushed (%.0fpx)" % [me, dir_name, obj.global_position.distance_to(o0)])
