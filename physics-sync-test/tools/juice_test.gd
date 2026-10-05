@@ -160,6 +160,14 @@ func visuals_scale(body: Node) -> Vector2:
 			return c.scale
 	return Vector2.ONE
 
+## Every visual child's scale, by name, rounded (what pop_body touches).
+func rest_scales(body: Node) -> Dictionary:
+	var out := {}
+	for c in body.get_children():
+		if c is Node2D and not (c is CollisionShape2D or c is CollisionPolygon2D):
+			out[String(c.name)] = (c.scale * 1000.0).round() / 1000.0
+	return out
+
 ## Settled, then nothing new fires for `seconds` (an effect re-triggering every
 ## frame would show up here).
 func quiet_check(label: String, kinds: Array, seconds := 1.5) -> void:
@@ -186,6 +194,12 @@ func _run_solo() -> void:
 	player().teleport_to(Vector2(1440, 300))
 	await wait(0.3)
 	var obj := free_product()
+	for o in get_nodes_in_group("carryable"): # J1b wants one with product art (Meat/Deli stay plain squares)
+		if o.has_node("ProductArt") and not o.is_in_group("delivery_box") and o.get_node("Carryable").carrier_id == 0 and not main.shelves.any(func(s): return s.get_node("Shelf").contains(o)):
+			obj = o
+			break
+	var rest := rest_scales(obj)
+	check(obj.has_node("ProductArt"), "J1b test product %s has product art (rest scales %s)" % [obj.name, str(rest)])
 	move_body(obj, player().global_position + Vector2(42, 0))
 	await wait(0.2)
 	var c0 := count("carry_pickup")
@@ -197,10 +211,18 @@ func _run_solo() -> void:
 	await wait(0.4)
 	check(visuals_scale(obj).is_equal_approx(Vector2.ONE), "J1 ...and settled back to 1 (%s)" % str(visuals_scale(obj)))
 	check(count("carry_pickup") == c0 + 1, "J1 exactly one pickup pop (%d)" % (count("carry_pickup") - c0))
+	check(rest_scales(obj) == rest, "J1b after the pickup pop every visual is back at its OWN scale, not 1.0 (%s, was %s)" % [str(rest_scales(obj)), str(rest)])
 	var d0 := count("carry_drop")
 	obj.get_node("Carryable").try_drop(1)
 	check(await fired_after("carry_drop", d0), "J1 squash on set-down")
 	await wait(0.3)
+	check(rest_scales(obj) == rest, "J1b after the drop squash: own scales again (%s)" % str(rest_scales(obj)))
+	# Pops that interrupt each other mid-squash still settle at the rest scale.
+	for k in 3:
+		juice.carry(obj, "pickup" if k % 2 == 0 else "drop")
+		await wait(0.05)
+	await wait(0.4)
+	check(rest_scales(obj) == rest, "J1b three back-to-back pops interrupting each other: own scales again (%s)" % str(rest_scales(obj)))
 	obj.get_node("Carryable").try_pickup(1, player().global_position)
 	await wait(0.2)
 	var t0 := count("carry_throw")
@@ -208,6 +230,10 @@ func _run_solo() -> void:
 	check(await fired_after("carry_throw", t0), "J1 stretch on throw")
 	await wait(1.0)
 	check(visuals_scale(obj).is_equal_approx(Vector2.ONE), "J1 thrown item back to scale 1 (%s)" % str(visuals_scale(obj)))
+	check(rest_scales(obj) == rest, "J1b thrown item: own scales again (%s)" % str(rest_scales(obj)))
+	var art: Sprite2D = obj.get_node("ProductArt")
+	var px: float = maxf(art.get_rect().size.x * art.scale.x, art.get_rect().size.y * art.scale.y)
+	check(absf(px - main.get_node("StoreArt").PRODUCT_SIZE) < 0.5, "J1b the product still draws %.1fpx on its long side (PRODUCT_SIZE %.0f)" % [px, main.get_node("StoreArt").PRODUCT_SIZE])
 
 	# J2 open the store; a product settling onto a shelf slot.
 	main.open_store(1)

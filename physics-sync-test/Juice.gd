@@ -290,12 +290,21 @@ func pop_body(body: Node, from: Vector2, seconds := 0.22) -> void:
 			visuals.append(c)
 	if visuals.is_empty():
 		return
+	# Each visual pops relative to its OWN rest scale (a product's art sits at
+	# ~0.2x to read 30px wide; settling it at 1.0 grew it to 37-47px for good).
+	# The rest scale is remembered the first time, so a pop that interrupts
+	# another pop mid-squash doesn't take the squashed scale as its new rest.
+	var bases: Array = []
+	for v in visuals:
+		if not v.has_meta("juice_rest_scale"):
+			v.set_meta("juice_rest_scale", v.scale)
+		bases.append(v.get_meta("juice_rest_scale"))
 	var tw := body.create_tween()
 	body.set_meta("juice_tween", tw)
 	var apply := func(k: Vector2) -> void:
-		for v in visuals:
-			if is_instance_valid(v):
-				v.scale = k
+		for i in visuals.size():
+			if is_instance_valid(visuals[i]):
+				visuals[i].scale = bases[i] * k
 	tw.tween_method(apply, from, Vector2.ONE, seconds).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 ## A scale punch on a UI Control, from its centre.
