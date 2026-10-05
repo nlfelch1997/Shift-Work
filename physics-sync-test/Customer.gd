@@ -332,6 +332,15 @@ var _detour_episodes_on_side := 0 # consecutive episodes spent on _detour_side w
 
 func _ready() -> void:
 	add_to_group("customer")
+	# OCT 2026 PHASE 3D (the Phase 3C push-ride bug, Player.gd's _ready()):
+	# customers are grounded-mode bodies too, so an item a disruptive customer
+	# pushed DOWN the screen became a moving floor it rode at up to ~1000px/s.
+	# Same fix: nothing is a platform or a floor in a top-down store.
+	# tools/upkeep_test.gd --test=customer-ride.
+	floor_snap_length = 0.0
+	platform_floor_layers = 0
+	platform_wall_layers = 0
+	platform_on_leave = CharacterBody2D.PLATFORM_ON_LEAVE_DO_NOTHING
 	reset_physics_interpolation()
 	set_physics_process(true)
 	target_position = position
