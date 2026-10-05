@@ -79,6 +79,9 @@ var total_sold: int = 0
 ## time; entries for a customer who leaves range or stops being closest
 ## just go stale and sit here harmlessly, negligible at this session's scale.
 var _waiting: Dictionary = {}
+## OCT 2026 PHASE 3B — carry_id currently being rung up (0 = nobody); see
+## the sticky-service note in _physics_process(). Host only.
+var _serving := 0
 
 const CharacterSpriteScript := preload("res://CharacterSprite.gd")
 
@@ -179,10 +182,8 @@ func _queue_by_distance() -> Array:
 ## _queue_by_distance() above) or not found (not our problem to resolve
 ## here — Customer.gd only ever calls this after joining), otherwise the
 ## queue slot matching its current position in that distance ordering.
-## Overflow (more customers queued than physical slots) stacks everyone
-## past the last slot there rather than inventing more positions — a rare
-## edge case at this session's population caps, not worth extra layout
-## logic for.
+## Overflow (more customers queued than physical slots) carries the line on
+## past the last slot at the same spacing (Phase 3B — see below).
 func queue_slot_position(carry_id: int) -> Vector2:
 	var ordered := _queue_by_distance()
 	var idx := ordered.find(carry_id)
@@ -191,7 +192,13 @@ func queue_slot_position(carry_id: int) -> Vector2:
 	var slot_idx: int = idx - 1
 	if slot_idx < queue_slots.size():
 		return queue_slots[slot_idx].global_position
-	return queue_slots[queue_slots.size() - 1].global_position
+	# OCT 2026 PHASE 3B: a cart takes longer to ring up, so lines run longer —
+	# the line carries on past the last marker at the same spacing, rather
+	# than everyone past it standing on the one spot (shoppers pass through
+	# each other now, so they'd stack exactly).
+	var last: Vector2 = queue_slots[queue_slots.size() - 1].global_position
+	var step: Vector2 = last - queue_slots[queue_slots.size() - 2].global_position if queue_slots.size() >= 2 else Vector2(40, 0)
+	return last + step * (slot_idx - queue_slots.size() + 1)
 
 func _physics_process(delta: float) -> void:
 	if not Net.is_active() or not is_multiplayer_authority() or not active:
@@ -215,10 +222,21 @@ func _physics_process(delta: float) -> void:
 	# (erase), not pop_front(): the closest customer isn't guaranteed to
 	# still be at array index 0 any more.
 	var front_id: int = _queue_by_distance()[0]
+	# OCT 2026 PHASE 3B — STICKY SERVICE: whoever the register started ringing
+	# up stays served until its cart is empty or it leaves range. Shoppers
+	# pass through each other now (Customer.gd), and one walking to its spot
+	# further down the line crosses the register — for a moment the closest,
+	# which used to pause the real customer's count (found by hazards_test
+	# polish: a sale 3.9s after its item hit the belt, not 3.0s).
+	if _serving != 0 and _serving in _queue:
+		var held := _customer_by_carry_id(_serving)
+		if held != null and held.global_position.distance_to(checkout.global_position) <= PURCHASE_RANGE and next_item_of(_serving) != null:
+			front_id = _serving
 	var customer := _customer_by_carry_id(front_id)
 	if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
 		return # nobody in line has reached the register yet
-	var item := _carried_by(front_id)
+	_serving = front_id
+	var item := next_item_of(front_id)
 	if item == null:
 		_queue.erase(front_id)
 		return
@@ -226,7 +244,12 @@ func _physics_process(delta: float) -> void:
 	if elapsed >= CHECKOUT_WAIT_SECONDS:
 		_waiting.erase(front_id)
 		_complete_purchase(item, front_id)
-		_queue.erase(front_id)
+		# OCT 2026 PHASE 3B — a cart is rung up one item at a time, each the
+		# same CHECKOUT_WAIT_SECONDS a single item always took: a shopper
+		# stays at the front until the cart is empty (the item just sold is
+		# already queued for deletion, so it no longer counts).
+		if next_item_of(front_id) == null:
+			_queue.erase(front_id)
 	else:
 		_waiting[front_id] = elapsed
 
@@ -236,12 +259,25 @@ func _customer_by_carry_id(carry_id: int) -> Node:
 			return c
 	return null
 
-func _carried_by(carry_id: int) -> Node2D:
-	for obj in get_tree().get_nodes_in_group("carryable"):
+## The item carry_id is ringing up next: the first one into its cart (lowest
+## carry_seq — the same order on every peer, see Carryable.gd), so StoreArt's
+## conveyor (every peer) slides the same item the host is about to sell.
+## Static: StoreArt asks without a Cashier of its own. Skips anything already
+## queued for deletion (sold this tick).
+static func next_item_of_in(tree: SceneTree, carry_id: int) -> Node2D:
+	var best: Node2D = null
+	var best_seq := 0
+	for obj in tree.get_nodes_in_group("carryable"):
+		if obj.is_queued_for_deletion():
+			continue
 		var c: Node = obj.get_node("Carryable")
-		if c.carrier_id == carry_id:
-			return obj
-	return null
+		if c.carrier_id == carry_id and (best == null or c.carry_seq < best_seq):
+			best = obj
+			best_seq = c.carry_seq
+	return best
+
+func next_item_of(carry_id: int) -> Node2D:
+	return next_item_of_in(get_tree(), carry_id)
 
 ## carry_id (added this session, for the queue rework) is who was just
 ## served — the caller (_physics_process above) already removes it from

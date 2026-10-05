@@ -457,6 +457,11 @@ func any_filled_object() -> RigidBody2D:
 			return o
 	return null
 
+## OCT 2026 PHASE 3B — every item stocked here now (host-only data, like
+## any_filled_object()): what a shopper with a list chooses from.
+func filled_objects() -> Array:
+	return _occupant.filter(func(o): return o != null and is_instance_valid(o))
+
 func filled_count() -> int:
 	var n := 0
 	for f in filled:

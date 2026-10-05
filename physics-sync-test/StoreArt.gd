@@ -491,22 +491,43 @@ func _belt_point(lane_x: float) -> Vector2:
 func _run_conveyors(delta: float) -> void:
 	if _lanes.is_empty():
 		return
-	var carried := {} # carrier id -> item
+	# carrier id -> the item it rings up next (OCT 2026 PHASE 3B: a cart holds
+	# several — the first one in, the same pick Cashier.next_item_of() makes).
+	var carried := {}
+	var seqs := {}
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		var c: Node = obj.get_node_or_null("Carryable")
-		if c and c.carrier_id != 0:
+		if c and c.carrier_id != 0 and not obj.is_queued_for_deletion() and (not seqs.has(c.carrier_id) or c.carry_seq < seqs[c.carrier_id]):
 			carried[c.carrier_id] = obj
+			seqs[c.carrier_id] = c.carry_seq
 	var customers := get_tree().get_nodes_in_group("customer")
 	for lane in _lanes:
 		var body: Node2D = lane["body"]
 		var item: Node2D = null
 		if body.visible:
 			var checkout: Vector2 = body.get_node("Checkout").global_position
+			# The CLOSEST carrying customer in range — the one the register
+			# serves (Cashier.gd's _queue_by_distance()). OCT 2026 PHASE 3B:
+			# shoppers pass through each other now, so two can stand in range
+			# at once, and "the first one found" could slide the wrong item.
+			# Sticky, like the register itself (Cashier.gd's _serving): the
+			# customer already on this belt stays on it while in range with
+			# something left to ring up, whoever walks past.
+			var best_d := INF
+			var held_cid = lane.get("cid", null)
 			for cust in customers:
 				var cid = cust.get("carry_id")
-				if cid != null and carried.has(cid) and cust.global_position.distance_to(checkout) <= lane["cashier"].PURCHASE_RANGE:
-					item = carried[cid]
-					break
+				var d: float = cust.global_position.distance_to(checkout)
+				if cid != null and carried.has(cid) and d <= lane["cashier"].PURCHASE_RANGE:
+					if cid == held_cid:
+						item = carried[cid]
+						break
+					if d < best_d:
+						best_d = d
+						item = carried[cid]
+			lane["cid"] = null
+			if item != null:
+				lane["cid"] = item.get_node("Carryable").carrier_id
 		var prev = lane["item"]
 		if item != prev:
 			if prev != null and is_instance_valid(prev):

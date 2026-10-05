@@ -194,10 +194,16 @@ func _physics_process(_delta: float) -> void:
 				# of what kind of node carries it (see the header comment
 				# on why Carryable.gd doesn't know shelves exist either);
 				# a carrier with no facing_angle just falls back to 0.0.
-				var facing: float = carrier.get("facing_angle")
-				if facing == null:
-					facing = 0.0
-				body.position = carrier.global_position + carry_offset(facing) + Vector2(0.0, -STACK_STEP * _stack_index())
+				# OCT 2026 PHASE 3B: a carrier with a cart (a shopper —
+				# Customer.gd's cart_point()) keeps everything it holds in
+				# the cart, drawn there by the cart itself, so no stack.
+				if carrier.has_method("cart_point"):
+					body.position = carrier.cart_point()
+				else:
+					var facing: float = carrier.get("facing_angle")
+					if facing == null:
+						facing = 0.0
+					body.position = carrier.global_position + carry_offset(facing) + Vector2(0.0, -STACK_STEP * _stack_index())
 				body.rotation = 0.0
 			# FREEZE_MODE_KINEMATIC infers a velocity from how far the body's
 			# position moved this tick (see the longer note on _rpc_set_carrier)
@@ -373,8 +379,8 @@ func _stack_index() -> int:
 
 ## WEEK 21 — host: may this PLAYER take one more item? Their capacity (1, or
 ## more with the Back Brace), and a delivery box is always a one-item load —
-## no stacking a box, or onto one. Customers (negative ids) always hold one
-## at most by their own AI.
+## no stacking a box, or onto one. Customers and helpers (negative ids) are
+## limited by their own AI (a shopper's cart holds its list).
 func _player_has_room(requester_id: int) -> bool:
 	if requester_id <= 0:
 		return true
