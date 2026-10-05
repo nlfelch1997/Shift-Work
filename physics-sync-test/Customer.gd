@@ -933,13 +933,27 @@ func _update_cart(delta: float) -> void:
 		spr.position = CART_HEAP[i % CART_HEAP.size()] + Vector2(0, -6) * floorf(i / float(CART_HEAP.size()))
 		_cart_items.add_child(spr)
 
-## This customer is in purchase range of an active register's Checkout spot
-## (where StoreArt.gd's conveyor takes the next item onto the belt).
+## This customer is the one being rung up at a register: the closest
+## customer in purchase range of its Checkout spot (StoreArt.gd's conveyor
+## then shows the next item on the belt, out of the basket).
 func _at_a_register() -> bool:
 	for cashier_body in get_tree().get_nodes_in_group("cashier"):
 		var c: Node = cashier_body.get_node("Cashier")
-		if c.active and global_position.distance_to(c.checkout.global_position) <= CashierScript.PURCHASE_RANGE:
-			return true
+		var at: Vector2 = c.checkout.global_position
+		var mine := global_position.distance_to(at)
+		if not c.active or mine > CashierScript.PURCHASE_RANGE:
+			continue
+		# The register sticks with whoever it started on (StoreArt.gd's lane
+		# "cid", every peer): that's who's being rung up.
+		var art: Node = get_tree().current_scene.get_node_or_null("StoreArt")
+		var lanes: Array = art._lanes if art != null else []
+		for lane in lanes:
+			if lane["cashier"] == c and lane.get("cid", null) != null:
+				return lane["cid"] == carry_id
+		for other in get_tree().get_nodes_in_group("customer"):
+			if other != self and other.global_position.distance_to(at) < mine and other.has_method("cart_items") and not other.cart_items().is_empty():
+				return false
+		return true
 	return false
 
 ## A small copy of an item's own art (or, with none, its color).

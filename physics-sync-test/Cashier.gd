@@ -79,6 +79,9 @@ var total_sold: int = 0
 ## time; entries for a customer who leaves range or stops being closest
 ## just go stale and sit here harmlessly, negligible at this session's scale.
 var _waiting: Dictionary = {}
+## OCT 2026 PHASE 3B — carry_id currently being rung up (0 = nobody); see
+## the sticky-service note in _physics_process(). Host only.
+var _serving := 0
 
 const CharacterSpriteScript := preload("res://CharacterSprite.gd")
 
@@ -219,9 +222,20 @@ func _physics_process(delta: float) -> void:
 	# (erase), not pop_front(): the closest customer isn't guaranteed to
 	# still be at array index 0 any more.
 	var front_id: int = _queue_by_distance()[0]
+	# OCT 2026 PHASE 3B — STICKY SERVICE: whoever the register started ringing
+	# up stays served until its cart is empty or it leaves range. Shoppers
+	# pass through each other now (Customer.gd), and one walking to its spot
+	# further down the line crosses the register — for a moment the closest,
+	# which used to pause the real customer's count (found by hazards_test
+	# polish: a sale 3.9s after its item hit the belt, not 3.0s).
+	if _serving != 0 and _serving in _queue:
+		var held := _customer_by_carry_id(_serving)
+		if held != null and held.global_position.distance_to(checkout.global_position) <= PURCHASE_RANGE and next_item_of(_serving) != null:
+			front_id = _serving
 	var customer := _customer_by_carry_id(front_id)
 	if customer.global_position.distance_to(checkout.global_position) > PURCHASE_RANGE:
 		return # nobody in line has reached the register yet
+	_serving = front_id
 	var item := next_item_of(front_id)
 	if item == null:
 		_queue.erase(front_id)
