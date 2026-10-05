@@ -64,8 +64,15 @@ func shelves_of(sec: String) -> Array:
 func stocked_in(sec: String) -> int:
 	var n := 0
 	for sb in shelves_of(sec):
-		n += sb.get_node("Shelf").filled_objects().size()
+		n += _filled(sb.get_node("Shelf")).size()
 	return n
+
+## Shelf.filled_objects(), or the same read on a pre-3B Shelf.gd (so TRAFFIC
+## can measure clean main for the before/after comparison).
+func _filled(shelf: Node) -> Array:
+	if shelf.has_method("filled_objects"):
+		return shelf.filled_objects()
+	return shelf._occupant.filter(func(o): return o != null and is_instance_valid(o))
 
 func slots_in(sec: String) -> int:
 	var n := 0
@@ -102,7 +109,7 @@ func _slot_claimed(p: Vector2) -> bool:
 ## Takes every unit off a section's shelves (freed, like a sale).
 func empty_section(sec: String) -> void:
 	for sb in shelves_of(sec):
-		for o in sb.get_node("Shelf").filled_objects():
+		for o in _filled(sb.get_node("Shelf")):
 			o.queue_free()
 	await wait_until(func(): return stocked_in(sec) == 0, 3.0)
 	await wait(0.2) # the shelves notice the empty slots
@@ -472,15 +479,15 @@ func _run_traffic() -> void:
 	var max_cart := 0
 	var frame_ms := []
 	var last := _wall()
+	var start_w := _wall()
 	while t < secs:
 		await wait(0.5)
-		t += 0.5
+		t = _wall() - start_w # wall clock: refills below can take a while
 		var now_w := _wall()
 		frame_ms.append((now_w - last) * 1000.0)
 		last = now_w
-		refill_t -= 0.5
-		if refill_t <= 0.0:
-			refill_t = 2.0
+		if t >= refill_t:
+			refill_t = t + 2.0
 			for sec in ["Dry Goods", "Produce", "Dairy/Frozen", "Bakery"]:
 				await fill_section(sec)
 		var live := shoppers()
@@ -489,7 +496,8 @@ func _run_traffic() -> void:
 			if not seen.has(c.name):
 				seen[c.name] = true
 				list_lens.append(c.items_target)
-			max_cart = maxi(max_cart, c.cart_items().size())
+			if c.has_method("cart_items"):
+				max_cart = maxi(max_cart, c.cart_items().size())
 			var moving: bool = c.velocity.length() > 1.0
 			var tr: Dictionary = track.get(c.name, {"pos": c.global_position, "since": t, "stuck": false})
 			if c.global_position.distance_to(tr["pos"]) > 40.0 or not moving:
@@ -610,6 +618,7 @@ func _run_net_shop_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
 	act = "client_"
+	_record_lists()
 	var n := 0
 	while true:
 		n += 1
@@ -641,21 +650,35 @@ func _run_net_shop_client() -> void:
 				ok = ok and hidden.is_empty()
 				ans = {"ok": ok, "why": "" if ok else " — sold %d vs %d, hidden loose items %d" % [main._total_sold(), int(step["sold"]), hidden.size()]}
 			"crowd":
+				# Lists shrink as the crowd shops, so "the same" means: every
+				# list state the host had at its snapshot is one this client
+				# showed too (its history, recorded every frame), for every
+				# customer it has — and it has (nearly) all of them.
 				var theirs: Dictionary = step["lists"]
 				var same := func() -> bool:
-					var mine := _all_lists()
 					for k in theirs:
-						if mine.has(k) and _canon(mine[k]) != _canon(theirs[k]):
+						if _list_seen.has(k) and not _canon(theirs[k]) in _list_seen[k]:
 							return false
-					var common := theirs.keys().filter(func(k): return mine.has(k)).size()
-					return common >= theirs.size() - 2
+					return theirs.keys().filter(func(k): return _list_seen.has(k)).size() >= theirs.size() - 2
 				var ok := await wait_until(same, 6.0)
-				ans = {"ok": ok, "why": "" if ok else " — mine %s vs host %s" % [str(_all_lists()), str(theirs)]}
+				var bad := theirs.keys().filter(func(k): return _list_seen.has(k) and not _canon(theirs[k]) in _list_seen[k])
+				ans = {"ok": ok, "why": "" if ok else " — never showed %s" % str(bad.map(func(k): return "%s=%s (saw %s)" % [k, theirs[k], _list_seen[k].keys()]))}
 			"done":
 				_net_write("ec_%d_%d.json" % [n, me], {})
 				finish()
 				return
 		_net_write("ec_%d_%d.json" % [n, me], ans)
+
+## Client: customer name -> {list state (canon JSON): true} it has shown.
+var _list_seen := {}
+func _record_lists() -> void:
+	while true:
+		var now := _all_lists()
+		for k in now:
+			var seen: Dictionary = _list_seen.get(k, {})
+			seen[_canon(now[k])] = true
+			_list_seen[k] = seen
+		await physics_frame
 
 ## =============================================================================
 ## SHOTS
