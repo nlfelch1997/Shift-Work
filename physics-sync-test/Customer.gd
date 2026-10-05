@@ -205,7 +205,7 @@ const CART_SIDE_SCALE := 0.62 # ~29x35 px beside a ~37 px person
 const CART_FRONT_SCALE := 0.5 # ~18x35 px
 ## Cart centre relative to the customer, per CharacterSprite row (up, left,
 ## down, right). Wheels on the feet line (FEET_AT y=13) beside the body.
-const CART_OFFSETS := [Vector2(0, -10), Vector2(-25, -4), Vector2(0, 24), Vector2(25, -4)]
+const CART_OFFSETS := [Vector2(0, -10), Vector2(-22, -4), Vector2(0, 22), Vector2(22, -4)]
 const CART_ITEM_SIZE := 13.0 # px, the copy of each carried item in the basket
 const CART_REFRESH := 0.1 # s between re-reads of what's in the cart
 ## Where the basket's heap sits, in cart-sprite pixels from its centre (side
