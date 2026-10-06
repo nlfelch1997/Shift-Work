@@ -1178,7 +1178,7 @@ func _build_dumpster() -> void:
 	label.size = Vector2(80, 20)
 	_dumpster.add_child(label)
 	var tag := _small_label("DUMPSTER — bags go here", 10, Color(1, 1, 1))
-	tag.position = Vector2(-80, -64)
+	tag.position = Vector2(-80, 34)
 	tag.size = Vector2(160, 16)
 	_dumpster.add_child(tag)
 	add_child(_dumpster)
@@ -1476,6 +1476,28 @@ func _process(_delta: float) -> void:
 			_markers[n] = ring
 		_markers[n].position = obj.global_position
 	_update_hint(me, cleanup)
+	# PHASE 3D: hauling a troublemaker — a chevron at my feet toward the door.
+	var hauling: bool = main.players.has(me) and main.players[me].escorting()
+	if hauling or _drew_door_arrow:
+		queue_redraw()
+	_drew_door_arrow = hauling
+
+const FRONT_DOOR := Vector2(1440.0, 1100.0)
+var _drew_door_arrow := false
+func _draw() -> void:
+	var me := multiplayer.get_unique_id() if Net.is_active() else 0
+	if not main.players.has(me) or not main.players[me].escorting():
+		return
+	var p: Node2D = main.players[me]
+	var to := FRONT_DOOR - p.global_position
+	if to.length() < 120.0:
+		return
+	var dir := to.normalized()
+	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.01)
+	var tip := p.global_position + dir * (100.0 + 6.0 * pulse) # past the one being hauled
+	var side := dir.orthogonal() * 11.0
+	draw_colored_polygon(PackedVector2Array([tip, tip - dir * 16.0 + side, tip - dir * 10.0, tip - dir * 16.0 - side]), Color(1, 0.4, 0.3, 0.7 + 0.3 * pulse))
+	draw_string(ThemeDB.fallback_font, tip + dir * 6.0 + Vector2(-40, -6), "FRONT DOOR", HORIZONTAL_ALIGNMENT_CENTER, 80, 11, Color(1, 0.45, 0.35))
 
 ## The contextual hint over my own player's head — the same action_for() an
 ## E press would send, so it always tells the truth.

@@ -584,9 +584,11 @@ func _process(delta: float) -> void:
 	if not Net.is_active():
 		return
 	_sync_escort_exception()
-	# PHASE 3D: hauled out — flailing (cosmetic, every peer).
+	# PHASE 3D: hauled out — flailing and complaining (cosmetic, every peer),
+	# so it reads in a clip.
 	if body_sprite != null:
 		body_sprite.rotation = sin(Time.get_ticks_msec() * 0.025) * 0.35 if escorted_by != 0 else 0.0
+	_update_shout()
 	if _cart != null:
 		_update_cart(delta)
 	if _bubble != null and shopping_list != _bubble_list:
@@ -753,6 +755,34 @@ func _escort_physics(delta: float) -> void:
 	$Polygon2D.rotation = facing_angle
 	target_position = position
 	main.check_bounce(self, escorted_by)
+
+const SHOUTS := ["HEY!", "LET GO!", "I KNOW THE MANAGER!", "MY RIGHTS!", "UNHAND ME!", "I'M A CUSTOMER!"]
+var _shout: Label
+func _update_shout() -> void:
+	if escorted_by == 0:
+		if _shout != null:
+			_shout.visible = false
+		return
+	if _shout == null:
+		_shout = Label.new()
+		_shout.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_shout.size = Vector2(200, 20)
+		_shout.position = Vector2(-100, -58)
+		_shout.z_index = 30
+		_shout.add_theme_font_size_override("font_size", 14)
+		_shout.add_theme_color_override("font_color", Color(1, 0.35, 0.25))
+		_shout.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		_shout.add_theme_constant_override("outline_size", 4)
+		add_child(_shout)
+	_shout.visible = true
+	# A new line every 1.2s, the same on every peer (the clock and the name).
+	var k := int(Time.get_ticks_msec() / 1200) + name.hash()
+	_shout.text = SHOUTS[absi(k) % SHOUTS.size()]
+	# Above their head — or under their feet when the hauler's above them
+	# (hauled down the screen), so it never sits on the hauler.
+	var hp = get_tree().current_scene.players.get(escorted_by)
+	var below: bool = hp != null and is_instance_valid(hp) and hp.global_position.y < global_position.y - 12.0
+	_shout.position = Vector2(-100, 18) if below else Vector2(-100, -58)
 
 ## Every peer: no collisions between the hauler and the hauled while it lasts.
 func _sync_escort_exception() -> void:

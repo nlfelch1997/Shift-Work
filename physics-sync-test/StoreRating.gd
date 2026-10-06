@@ -156,6 +156,7 @@ func _build_hud() -> void:
 	_panel.offset_left = -232.0
 	_panel.offset_right = -10.0
 	_panel.offset_top = 10.0
+	_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN # widens leftward, never off-screen
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.06, 0.06, 0.08, 0.72)

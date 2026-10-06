@@ -905,8 +905,79 @@ func _run_save() -> void:
 			check(float(up.get("rating", 0)) >= 1.0 and float(up.get("rating", 0)) <= 5.0 and (up.get("cans", []) as Array).size() == 5, "S4: written back out clean (%s)" % str(up))
 	finish()
 
+func _shot(name: String) -> void:
+	await process_frame
+	await process_frame
+	await process_frame
+	DirAccess.make_dir_recursive_absolute("user://upkeep_shots")
+	var path := "user://upkeep_shots/%s.png" % name
+	root.get_texture().get_image().save_png(path)
+	print("SHOT  " + ProjectSettings.globalize_path(path))
+
 func _run_shots() -> void:
-	print("FAIL  not written yet")
+	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
+	root.size = Vector2i(1280, 720)
+	park_world()
+	main.open_store(1)
+	main.test_hold_customers = true
+	main.debug_label.visible = false
+	await wait(0.5)
+	clear_floor()
+	rt().set_rating(4.2)
+	# 1: two cans — one normal (4/10), one overflowing — and trash in hand.
+	cl().set_cans([cl().CAN_CAPACITY, 4, 0, 4, 0])
+	for k in 5:
+		cl().drop_litter(Vector2(1180 + k * 26, 700 + (k % 2) * 18))
+	await at(Vector2(1180, 700))
+	await press_e(0.1)
+	await press_e(0.1)
+	await at(Vector2(1040, 650), 0.0)
+	await wait(1.2)
+	await _shot("01_cans_normal_and_full_trash_in_hand")
+	# 2: the dumpster, a bag on its way in.
+	cl().hands = {}
+	await at(cl().BINS[0]["pos"] + Vector2(0, 30))
+	await press_e(0.2)
+	await at(cl().DUMPSTER_POS + Vector2(-20, -80), PI * 0.5)
+	await wait(0.6)
+	await _shot("02_dumpster_with_a_bag")
+	cl().bags = []
+	# 3: a puddle being mopped (mid-shift), the rating falling.
+	cl().drop_puddle(Vector2(1500, 760), 20.0)
+	for k in 14:
+		cl().drop_litter(Vector2(1300 + (k % 7) * 50, 650 + (k / 7) * 160))
+	rt().set_rating(3.6)
+	cl().tools = cl()._fresh_tools()
+	await at(cl().TOOL_SPOTS[2] + Vector2(0, 26))
+	await press_e(0.2)
+	await at(Vector2(1500 - cl().MOP_HEAD_OFFSET, 760), 0.0)
+	press("host_place")
+	await wait(0.6)
+	await _shot("03_mopping_a_puddle_rating_falling")
+	press("host_place", 0.0)
+	await wait(0.2)
+	cl().tools = cl()._fresh_tools()
+	clear_floor()
+	# 4: a troublemaker hauled to the front door.
+	var red := await pinned_customer("disruptive", Vector2(1440, 800))
+	_pin_ai(red)
+	await at(Vector2(1440, 764), PI * 0.5)
+	await press_e(0.2)
+	steer(Vector2.DOWN)
+	await wait(0.7)
+	steer(Vector2.ZERO)
+	await _shot("04_throwing_out_a_troublemaker")
+	steer(Vector2.DOWN)
+	await wait_until(func(): return main.bounced_today > 0, 5.0)
+	steer(Vector2.ZERO)
+	await wait(0.15)
+	await _shot("05_bounced")
+	# 6: a clean store climbing, the counter up.
+	cl().set_cans([0, 2, 0, 1, 0])
+	rt().set_rating(4.6)
+	await at(Vector2(1440, 700))
+	await wait(1.0)
+	await _shot("06_hud_rating_rising_and_today")
 	finish()
 
 
