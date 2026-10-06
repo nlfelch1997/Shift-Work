@@ -907,6 +907,14 @@ func _counts() -> Dictionary:
 	c["staffed_sold"] = 0
 	for sec in st().HELPER_SECTIONS:
 		c["staffed_sold"] += int(main.sold_by_section_today.get(sec, 0))
+	# OCT 2026 PHASE 3D: what's lying about (the soak crew never cleans).
+	if main.get("store_rating") != null:
+		c["litter"] = main.cleanup.litter.size()
+		c["puddles"] = main.cleanup.puddles.size()
+		c["full_cans"] = main.cleanup.full_cans()
+		c["bags"] = main.cleanup.bags.size()
+		c["rating"] = snappedf(main.store_rating.rating, 0.01)
+		c["cap"] = main.customer_cap()
 	return c
 
 func _run_staff_soak() -> void:
