@@ -2462,7 +2462,7 @@ func _run_net_ambience_host() -> void:
 	check(main.players.size() == want, "net: %d players connected (%s)" % [main.players.size(), str(names.values())])
 	var day: int = main.current_day
 	check(day >= 6 and amb().active, "net: Day %d, lights/spills active" % day)
-	check(main.is_finale() == (day >= main.LEGACY_WEEK_DAYS) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "E0 host: top tier %s on every system" % ("ON" if main.is_finale() else "off"))
+	check(main.is_finale() == (day >= 7) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "E0 host: top tier %s on every system" % ("ON" if main.is_finale() else "off"))
 	park_everything()
 	await wait(2.0)
 	var ids: Array = main.players.keys()
@@ -2670,7 +2670,7 @@ func _run_net_ambience_client() -> void:
 	var day: int = main.current_day
 	check(day >= 6 and amb().active, "%s: Day %d (replicated), lights/spills active" % [who, day])
 	await wait(0.5)
-	check(main.is_finale() == (day >= main.LEGACY_WEEK_DAYS) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "%s: E0 top tier %s on every system, on my side" % [who, "ON" if main.is_finale() else "off"])
+	check(main.is_finale() == (day >= 7) and fk().finale == main.is_finale() and mgr().finale == main.is_finale() and amb().finale == main.is_finale(), "%s: E0 top tier %s on every system, on my side" % [who, "ON" if main.is_finale() else "off"])
 	# OCT 2026 PHASE 2: a debug Day 6/7 start announces its newest
 	# complication (lights+spills / the top tier) — the banner that replaced
 	# the one-time FINAL SHIFT one.
