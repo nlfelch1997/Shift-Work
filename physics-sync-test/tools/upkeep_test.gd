@@ -909,11 +909,180 @@ func _run_shots() -> void:
 	print("FAIL  not written yet")
 	finish()
 
-func _run_net_client() -> void:
-	print("FAIL  not written yet")
-	finish()
+
+## --- CO-OP ------------------------------------------------------------------------
+## The host stages each round (props, positions) and writes "go_<round>" with
+## a wall-clock moment; each client gets into place, then presses at that
+## exact moment — a real race through the real RPCs. Afterwards every peer
+## writes what it sees, and the host checks they agree.
+
+func _now_s() -> float:
+	return Time.get_unix_time_from_system()
+
+func _client_ids() -> Array:
+	var ids: Array = main.players.keys().filter(func(i): return i != 1)
+	ids.sort()
+	return ids
+
+func _view() -> Dictionary:
+	return {"cans": cl().cans.duplicate(), "bags": cl().bags.size(), "bag_n": cl().bags.map(func(b): return int(b["n"])), "rating": snappedf(rt().rating, 0.01), "pay": main._pay_today(), "today": rt().today_text, "hands": cl().hands.keys().map(func(k): return "%d:%d" % [k, cl().hands[k]]), "escorts": get_nodes_in_group("customer").filter(func(c): return c.escorted_by != 0).map(func(c): return int(c.escorted_by)), "bounced": main.bounced_today, "litter": cl().litter.size()}
 
 func _run_net_host() -> void:
-	print("FAIL  not written yet")
+	var want := 3
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--players="):
+			want = int(a.substr(10))
+	await wait_until(func(): return main.shift_active and main.players.size() >= want, 60.0)
+	check(main.players.size() >= want, "NET crew connected (%d/%d)" % [main.players.size(), want])
+	park_world()
+	clear_hub_stock()
+	clear_floor()
+	cl().set_cans([0, 0, 0, 0, 0])
+	main.open_store(1)
+	main.test_hold_customers = true
+	await wait(1.0)
+	var ids := _client_ids()
+	var c1: int = ids[0]
+	var c2: int = ids[1]
+	player().teleport_to(Vector2(480, 270))
+	# ROUND 1: both clients take the hub can's bag at the same instant.
+	cl().set_can(0, 6)
+	await wait(0.3)
+	_net_write("go_1", {"t": _now_s() + 2.5})
+	await wait(4.5)
+	var holders: Array = cl().bags.map(func(b): return int(b["holder"]))
+	check(cl().bags.size() == 1 and int(cl().bags[0]["n"]) == 6 and int(cl().cans[0]) == 0 and (holders[0] in [c1, c2] if not holders.is_empty() else false), "NR1 race: two players took the same can's bag at once -> exactly one bag, 6 pieces, held by %s; can empty" % (str(holders)))
+	await _compare_views("NR1", ids)
+	# The holder sets it down; clean slate.
+	cl().bags = []
+	await wait(0.3)
+	# ROUND 2: both bin 2 pieces into a can with room for 2.
+	cl().set_can(0, cl().CAN_CAPACITY - 2)
+	var nh := {}
+	nh[c1] = 2
+	nh[c2] = 2
+	cl().hands = nh
+	await wait(0.3)
+	var binned0: int = cl().trash_binned_today
+	_net_write("go_2", {"t": _now_s() + 2.5})
+	await wait(4.5)
+	var left: int = cl().hand_count(c1) + cl().hand_count(c2)
+	check(int(cl().cans[0]) == cl().CAN_CAPACITY and cl().trash_binned_today - binned0 == 2 and left == 2, "NR2 race: two binned 2 each into a can with room for 2 -> can full (%d), 2 paid, 2 still in hands" % cl().cans[0])
+	await _compare_views("NR2", ids)
+	cl().hands = {}
+	cl().set_can(0, 0)
+	# ROUND 3: both grab the same troublemaker.
+	var red := await pinned_customer("disruptive", Vector2(1440, 760))
+	_pin_ai(red)
+	_net_write("red", {"name": String(red.name)})
+	_net_write("go_3", {"t": _now_s() + 3.0})
+	await wait(5.0)
+	var haulers := get_nodes_in_group("customer").filter(func(c): return c.escorted_by != 0).map(func(c): return int(c.escorted_by))
+	check(haulers.size() == 1 and haulers[0] in [c1, c2], "NR3 race: two players grabbed the same troublemaker -> exactly one hauls them (%s)" % str(haulers))
+	await _compare_views("NR3", ids)
+	# ROUND 4: the hauler walks them out; everyone sees the bounce and the pay.
+	var hauler: int = haulers[0] if not haulers.is_empty() else c1
+	var pay0: int = main._pay_today()
+	_net_write("go_4", {"hauler": hauler})
+	var out := await wait_until(func(): return main.bounced_today >= 1, 30.0)
+	check(out and main._pay_today() == pay0 + main.BOUNCE_PAY and cl().stat(hauler, "bounced") == 1, "NR4: a client walked the troublemaker out the door: BOUNCED, +$%d on the crew's pay" % main.BOUNCE_PAY)
+	await wait(1.0)
+	await _compare_views("NR4", ids)
+	# ROUND 5: forged requests from a client — the host says no to each.
+	var shopper := await pinned_customer("shopper", Vector2(1300, 760))
+	var bait: int = cl().drop_litter(Vector2(1200, 640))
+	cl().bags = [{"id": 900, "holder": c1, "pos": Vector2.ZERO, "n": 5, "can": 0}]
+	await wait(0.4)
+	_net_write("go_5", {"shopper": String(shopper.name)})
+	await _net_read("done_5_%d" % c1, 30.0)
+	await wait(1.0)
+	check(cl().bag_of(c1) >= 0, "NF1: forged 'bag_dump' from across the store: refused (still holding the bag)")
+	check(shopper.escorted_by == 0, "NF2: forged grab on a shopper: refused")
+	check(cl().litter.any(func(l): return l["id"] == bait) and cl().hand_count(c1) == 0, "NF3: forged 'pick_trash' far from any litter: refused")
+	check(cl().trash_binned_today == binned0 + 2, "NF4: forged 'bin_trash' with empty hands: refused (nothing binned)")
+	check(int(cl().cans[0]) == 0, "NF5: forged 'bag_take' at an empty can far away: refused")
+	shopper.force_leave()
+	cl().bags = []
+	cl().litter = []
+	await wait(0.5)
+	# ROUND 6: the rating and the counter — the store gets dirty, every peer
+	# sees the same stars and the same TODAY.
+	for k in 15:
+		cl().drop_litter(Vector2(1000 + k * 40, 700))
+	await wait(4.0)
+	await _compare_views("NR6", ids)
+	_net_write("all_done", {"ok": true})
+	await wait(2.0)
 	finish()
 
+## Every client writes its view; the host checks each against its own.
+var _view_round := 0
+func _compare_views(tag: String, ids: Array) -> void:
+	_view_round += 1
+	await wait(0.6)
+	_net_write("view_req_%d" % _view_round, {"tag": tag})
+	var mine := _view()
+	for id in ids:
+		var v := await _net_read("view_%d_%d" % [_view_round, id], 20.0)
+		var same: bool = not v.is_empty() and str(v.get("cans")) == str(mine["cans"].map(func(x): return float(x))) and int(v.get("bags", -1)) == mine["bags"] and absf(float(v.get("rating", -1)) - mine["rating"]) < 0.03 and int(v.get("pay", -9999)) == mine["pay"] and String(v.get("today", "")) == mine["today"] and int(v.get("bounced", -1)) == mine["bounced"] and int(v.get("litter", -1)) == mine["litter"]
+		check(same, "%s: client %d sees what the host sees (cans %s, bags %d, rating %.2f, %s, litter %d)%s" % [tag, id, str(mine["cans"]), mine["bags"], mine["rating"], mine["today"], mine["litter"], "" if same else "  — client saw %s" % str(v)])
+
+func _run_net_client() -> void:
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()) and main.shift_active, 60.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	var ids := _client_ids()
+	var slot: int = ids.find(me)
+	var t0 := Time.get_ticks_msec()
+	var round := 1
+	var view_round := 1
+	while Time.get_ticks_msec() - t0 < 300000:
+		if FileAccess.file_exists(NET_DIR + "view_req_%d" % view_round):
+			await wait(0.3)
+			_net_write("view_%d_%d" % [view_round, me], _view())
+			view_round += 1
+			continue
+		if FileAccess.file_exists(NET_DIR + "all_done"):
+			break
+		if not FileAccess.file_exists(NET_DIR + "go_%d" % round):
+			await wait(0.1)
+			continue
+		var go := await _net_read("go_%d" % round, 5.0)
+		match round:
+			1, 2:
+				var can: Vector2 = cl().BINS[0]["pos"]
+				await at(can + (Vector2(-30, 30) if slot == 0 else Vector2(30, 30)))
+				await _press_at(float(go.get("t", 0)))
+			3:
+				var info := await _net_read("red", 5.0)
+				var red: Node2D = main.customers_root.get_node_or_null(NodePath(info.get("name", "")))
+				var from := Vector2(1440, 760) + (Vector2(-45, 0) if slot == 0 else Vector2(45, 0))
+				await at(from)
+				await _press_at(float(go.get("t", 0)))
+				print("INFO  client %d pressed E on %s: escorting %s" % [me, info.get("name", "?"), player().escorting()])
+			4:
+				if int(go.get("hauler", 0)) == me:
+					var ok := await walk_to(Vector2(1440, 1060), 14.0, 20.0)
+					steer(Vector2.DOWN)
+					await wait_until(func(): return not player().escorting(), 8.0)
+					steer(Vector2.ZERO)
+					print("INFO  client %d hauled them to the door: %s" % [me, ok])
+			5:
+				if slot == 0:
+					# Forgeries, straight at the host's RPCs.
+					await at(Vector2(700, 500))
+					cl()._request.rpc_id(1, "bag_dump")
+					main._request_grab.rpc_id(1, String(go.get("shopper", "")))
+					cl()._request.rpc_id(1, "pick_trash")
+					cl()._request.rpc_id(1, "bin_trash")
+					cl()._request.rpc_id(1, "bag_take")
+					await wait(0.5)
+					_net_write("done_5_%d" % me, {"ok": true})
+		round += 1
+	finish()
+
+## Presses E at wall-clock moment `t` (both clients press together).
+func _press_at(t: float) -> void:
+	while _now_s() < t:
+		await process_frame
+	await press_e(0.3)
