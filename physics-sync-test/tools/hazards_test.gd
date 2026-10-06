@@ -4813,7 +4813,11 @@ func _po_static_checks(who: String) -> Dictionary:
 	var c := cl()
 	# --- PO1: the station.
 	var sp: Vector2 = c.STATION_POS
-	check(main._grid_cell_of(sp) == main.BREAK_ROOM_GRID_POS and c.TOOL_SPOTS.all(func(s): return main._grid_cell_of(s) == main.BREAK_ROOM_GRID_POS), "%sPO1: tool station + all %d tool spots in the Break Room (station %s)" % [who, c.TOOL_SPOTS.size(), str(sp)])
+	# OCT 2026 PHASE 3D: the station's tools in the Break Room; one mop and one
+	# broom on the hub rack (tools are out all day now).
+	var room_spots: Array = c.TOOL_SPOTS.filter(func(s): return main._grid_cell_of(s) == main.BREAK_ROOM_GRID_POS)
+	var hub_spots: Array = c.TOOL_SPOTS.filter(func(s): return main._grid_cell_of(s) == main.ENTRANCE_GRID_POS)
+	check(main._grid_cell_of(sp) == main.BREAK_ROOM_GRID_POS and room_spots.size() == 4 and hub_spots.size() == 2, "%sPO1: tool station + its 4 tool spots in the Break Room, 2 on the hub rack (station %s)" % [who, str(sp)])
 	var nearest: float = c.TOOL_SPOTS.map(func(s): return s.distance_to(main.TIME_CLOCK_POS)).min()
 	check(sp.distance_to(main.TIME_CLOCK_POS) < 250.0, "%sPO1: station is next to the time clock (%.0fpx)" % [who, sp.distance_to(main.TIME_CLOCK_POS)])
 	check(nearest > c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE, "%sPO1: no spot in reach of both a tool and the clock (nearest spot %.0fpx > %.0f)" % [who, nearest, c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE])

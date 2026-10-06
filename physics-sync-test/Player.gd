@@ -965,6 +965,8 @@ func loose_stock_in_reach() -> bool:
 ## OCT 2026 PHASE 3D: am I hauling a customer out (Customer.gd's replicated
 ## escorted_by)? Every peer.
 func escorting() -> bool:
+	if not is_inside_tree():
+		return false # leaving (a disconnect, the scene closing)
 	var me := get_multiplayer_authority()
 	for c in get_tree().get_nodes_in_group("customer"):
 		if int(c.escorted_by) == me:

@@ -1487,7 +1487,7 @@ func _process(_delta: float) -> void:
 		_markers[n].position = obj.global_position
 	_update_hint(me, cleanup)
 	# PHASE 3D: hauling a troublemaker — a chevron at my feet toward the door.
-	var hauling: bool = main.players.has(me) and main.players[me].escorting()
+	var hauling: bool = _my_player(me) != null and _my_player(me).escorting()
 	if hauling or _drew_door_arrow:
 		queue_redraw()
 	_drew_door_arrow = hauling
@@ -1496,9 +1496,9 @@ const FRONT_DOOR := Vector2(1440.0, 1100.0)
 var _drew_door_arrow := false
 func _draw() -> void:
 	var me := multiplayer.get_unique_id() if Net.is_active() else 0
-	if not main.players.has(me) or not main.players[me].escorting():
+	var p: Node2D = _my_player(me)
+	if p == null or not p.escorting():
 		return
-	var p: Node2D = main.players[me]
 	var to := FRONT_DOOR - p.global_position
 	if to.length() < 120.0:
 		return
@@ -1515,9 +1515,9 @@ var hint_text := "" # tests read it
 func _update_hint(me: int, cleanup: bool) -> void:
 	_hint.visible = false
 	hint_text = ""
-	if not main.players.has(me) or main.is_day_report_active() or not main.shift_active:
+	var p: Node2D = _my_player(me)
+	if p == null or main.is_day_report_active() or not main.shift_active:
 		return
-	var p: Node2D = main.players[me]
 	if cleanup and main.near_time_clock(p.global_position) and not holds_anything(me):
 		return # E clocks out there (Main.gd's own hint)
 	if p.carried_count(me) > 0 or p.escorting():
@@ -1562,6 +1562,11 @@ func _update_hint(me: int, cleanup: bool) -> void:
 	_hint.size = Vector2(maxf(260.0, text.length() * 7.5), 22)
 	_hint.position = p.global_position + Vector2(-_hint.size.x * 0.5, -62)
 	_hint.visible = true
+
+## This peer's own player, if it's (still) there.
+func _my_player(me: int) -> Node2D:
+	var p = main.players.get(me)
+	return p if p != null and is_instance_valid(p) and p.is_inside_tree() else null
 
 func _place_key(me: int) -> String:
 	return "C" if me == 1 else "/"

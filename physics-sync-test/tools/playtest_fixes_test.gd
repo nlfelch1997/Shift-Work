@@ -1064,6 +1064,11 @@ func _run_practice(net := false) -> void:
 	var tb := 0.0
 	while red != null and is_instance_valid(red) and red.escorted_by != 1 and tb < 40.0:
 		await _walk_to(red.global_position, 3.0, 40.0)
+		if tb > 14.0:
+			# The walking bot keeps losing a customer who keeps moving: stand
+			# right by them (this checks the grab, not the chase).
+			player().teleport_to(red.global_position + Vector2(0, -36))
+			await wait(0.1)
 		await tap("host_interact")
 		await wait(0.3)
 		tb += 3.5

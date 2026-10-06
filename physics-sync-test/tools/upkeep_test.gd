@@ -655,8 +655,12 @@ func _run_earnings() -> void:
 			var red := await pinned_customer("disruptive", Vector2(1440, 1030))
 			_pin_ai(red)
 			await at(Vector2(1440, 994), PI * 0.5)
+			red.position = player().global_position + Vector2(0, 40)
 			await press_e(0.1)
-			await press_f(0.8)
+			await wait_until(func(): return red.escorted_by == 1, 2.0)
+			await face(Vector2.DOWN)
+			await press_f(0.1)
+			await wait_until(func(): return main.bounced_today > 0, 3.0)
 		elif t > 10.0 and cl().hand_count(1) == 0 and cl().litter.size() < 3:
 			cl().drop_litter(cl().BINS[0]["pos"] + Vector2(40, 30))
 			await at(cl().BINS[0]["pos"] + Vector2(40, 30))

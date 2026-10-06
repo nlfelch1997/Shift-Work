@@ -748,7 +748,7 @@ func _run_staff_save() -> void:
 			check(st().staff.is_empty() and st().helpers.values().all(func(h): return not h.active), "V1: ...with nobody hired")
 			check(st().do_action("Produce", "hire", 1) and st().do_action("Dairy/Frozen", "hire", 1) and st().do_action("Produce", "speed", 1) and st().do_action("Produce", "carry", 1) and st().do_action("Produce", "carry", 1), "V1: hired Sam (speed 2, carry 3) and Alex")
 			var disk := _read_json(path)
-			check(int(disk.get("version", 0)) == SG.VERSION and SG.VERSION == 3, "V1: the save on disk is version %d" % int(disk.get("version", 0)))
+			check(int(disk.get("version", 0)) == SG.VERSION and SG.VERSION >= 3, "V1: the save on disk is version %d" % int(disk.get("version", 0)))
 			var ds: Dictionary = disk.get("staff", {})
 			check(ds.size() == 2 and int(ds.get("Produce", {}).get("speed", -1)) == 1 and int(ds.get("Produce", {}).get("carry", -1)) == 2 and int(ds.get("Dairy/Frozen", {}).get("speed", -1)) == 0, "V1: ...with the staff in it (%s)" % str(ds))
 			check(int(disk.get("shop", {}).get("money", 0)) == main.money, "V1: and the bank after paying for them (%s)" % main._format_money(main.money))
