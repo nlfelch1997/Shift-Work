@@ -532,9 +532,14 @@ extends Node2D
 ##     WARN_SECONDS / _FIRST              6 / 10 s heads-up banner
 ##     unlocks (sections owned, lifetime $): rush 2/$0, inspection 2/$600,
 ##            leak 2/$1000, catering 3/$0, delivery 3/$2000
-##     bonuses (solo, x1.5 per extra player... see CREW_BONUS_SCALE):
+##     bonuses (solo; +50% per extra player, CREW_BONUS_SCALE):
 ##            rush $50, inspection $40, leak $40, catering $60, delivery $60
-##     the rest (goals, windows, counts) in Events.gd's NUMBERS block
+##     rush: sell 4 (+3/extra player) in 45 s; +3 shoppers; its section on every list while stocked
+##     catering: 2 (+1/extra) into each of up to 3 sections, 60/55/50/45 s by crew size
+##     delivery: a box for 2 sections solo / every section in a crew (+1/extra), 65 s
+##     inspection: mess <= one star's worth when the inspector arrives (35 s); pass bumps the rating +0.3
+##     leak: 3 (+1/extra) mop-only leaks over the open sections, 55 s
+##     the rest in Events.gd's NUMBERS block
 ##   BREAK ROOM SHOP (OCT 2026 PHASE 4) — Shop.gd; FLAGGED
 ##     upgrade prices                     the old Bucks prices x 10, in $ (whole shop $5,600)
 ##     LOCKER_SPOT / LOCKER_RANGE         (95,405) break room lockers / 70 px; prep only
@@ -2909,6 +2914,10 @@ func _fill_shop_forecast() -> void:
 			if money >= int(staff.HIRE_FEE[sec]):
 				lines.append("You can hire a %s helper ($%d, then $%d a shift) — the staff board, break room." % [sec, staff.HIRE_FEE[sec], staff.WAGE[sec]])
 			break
+	# OCT 2026 PHASE 4: random events just became possible and this crew
+	# hasn't met one yet — say so before the first one lands.
+	if events.seen.is_empty() and not events.unlocked_keys().is_empty() and events_on:
+		lines.append("Random events can happen now — something may come up mid-shift, for a bonus.")
 	report_shop_label.text = "\n".join(lines)
 	report_shop_label.add_theme_color_override("font_color", Color(1, 0.6, 0.25) if f[2] else Color(1, 0.85, 0.4))
 

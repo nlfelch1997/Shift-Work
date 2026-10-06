@@ -186,6 +186,8 @@ func _run_gating() -> void:
 	check(ev()._skip_shift and ev()._countdown < 0.0, "G3: ...so it gets no event, though Lunch Rush is unlocked")
 	main.shift_time_left = 0.05
 	await wait_until(func(): return main.is_day_report_active(), 10.0)
+	await wait(0.3)
+	check(main.report_shop_label.text.contains("Random events can happen now"), "G3: the report says events can happen now (before the first one): '%s'" % main.report_shop_label.text.replace("\n", " | "))
 	# --- G4 the next shift: the crew's FIRST event is guaranteed, and it
 	# explains itself (a longer warning, the RANDOM EVENT line).
 	main._on_continue_pressed()

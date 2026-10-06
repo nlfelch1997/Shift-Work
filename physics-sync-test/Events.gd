@@ -19,13 +19,17 @@ extends Node2D
 ##
 ## THE POINT (the pivot doc): an event demands VARIETY — it can't be handled
 ## by camping one section. Every one sends the crew somewhere else:
-## - LUNCH RUSH: shoppers flood ONE section — the open one with the fewest of
-##   the crew in it right now. Sell RUSH_GOAL from it in time.
+## - LUNCH RUSH: shoppers want ONE section — the open one with the fewest of
+##   the crew in it right now: a few extra shoppers come in, and every new
+##   list has it on while its shelves have stock. Sell RUSH_GOAL from it in
+##   time.
 ## - CATERING ORDER: a bulk order across 2-3 sections at once — stock N into
 ##   each (the priority orders' own tagging, several sections at a time).
-## - SURPRISE DELIVERY: a truck with a box for EVERY open section — get each
-##   one unpacked on its own section's pad. (A staffed section's box goes to
-##   its helper's back room, as always — that one's done for you.)
+## - SURPRISE DELIVERY: extra boxes for section after section (every open
+##   section for a crew, two for a solo player) on the next truck in — or,
+##   if one's already at the dock, first off it — each to be unpacked on its
+##   own section's pad. (A staffed section's box goes to its helper's back
+##   room, as always — that one's done for you.)
 ## - SURPRISE INSPECTION: an inspector is coming — the store-wide mess
 ##   (StoreRating.gd's mess points: trash, spills, full cans, in every open
 ##   section) must be under the bar when they arrive. Pass: a bonus and a
@@ -119,7 +123,7 @@ const EVENT_ORDER := ["rush", "inspection", "leak", "catering", "delivery"]
 
 ## Lunch Rush: units to sell from the section (+ per extra player), and the
 ## extra crowd it draws (+ per extra player) on top of the store's cap.
-const RUSH_GOAL := 5
+const RUSH_GOAL := 4 # solo 1-of-2 at 5 in the feasibility sim (the rush is, by design, where the crew isn't)
 const RUSH_GOAL_PER_EXTRA := 3
 const RUSH_EXTRA_CUSTOMERS := 3
 const RUSH_EXTRA_PER_EXTRA := 1
@@ -177,10 +181,13 @@ var log_today: Array = []
 var result_text := ""
 var result_ok := false
 var result_left := 0.0
+## Event keys this crew has ever had (saved; host-written, replicated so every
+## peer's report can say events are new).
+var seen: Dictionary = {}
 
 ## --- Host-only ---
 ## Off: Main.events_on (--events=off, the income baseline; test harnesses).
-var seen: Dictionary = {} # event keys this crew has ever had (saved)
+
 var completed_total := 0 # saved: events completed, ever
 var fired_today := 0
 var _countdown := -1.0 # s of store-open time to the next warning (-1: none due)
@@ -207,7 +214,7 @@ func _ready() -> void:
 	z_index = 110 # over the floor, the crowd and the lights' darkness (the E prompts are 120)
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
-	for prop in [".:phase", ".:key", ".:time_left", ".:event_id", ".:data", ".:bonus_today", ".:bonus_week", ".:log_today", ".:result_text", ".:result_ok", ".:result_left"]:
+	for prop in [".:phase", ".:key", ".:time_left", ".:event_id", ".:data", ".:bonus_today", ".:bonus_week", ".:log_today", ".:result_text", ".:result_ok", ".:result_left", ".:seen"]:
 		var path := NodePath(prop)
 		config.add_property(path)
 		config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -635,7 +642,7 @@ func _finish(ok: bool, why: String) -> void:
 		result_text = "%s missed — %s, no bonus" % [ev_name, why]
 	result_ok = ok
 	result_left = RESULT_SECONDS if (was_active or ok) else 0.0
-	print("[Events] %s %s%s — bonus $%d (today $%d)" % [ev_name, "COMPLETE" if ok else "missed", ("" if why == "" else " (%s)" % why), bonus, bonus_today])
+	print("[Events] %s %s%s — bonus $%d (today $%d) — at the end: %s" % [ev_name, "COMPLETE" if ok else "missed", ("" if why == "" else " (%s)" % why), bonus, bonus_today, str(data)])
 	_last_key = k
 	_clear()
 	if was_active or ok:
