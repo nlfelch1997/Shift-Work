@@ -448,7 +448,7 @@ extends Node2D
 ##
 ##   STORE UPKEEP (OCT 2026 PHASE 3D) — Cleanup.gd (FLAGGED)
 ##     HAND_MAX                            3 pieces of trash in hand (hands full: no stock)
-##     CAN_CAPACITY                        10 pieces a can; full = overflowing (rated down)
+##     CAN_CAPACITY                        15 pieces a can; full = overflowing (rated down)
 ##     BAG_SPEED_MULT                      0.85 x walking with a bin bag
 ##     DUMPSTER_POS / DUMPSTER_RANGE       (2030,1530) Storage SW corner / 95 px; never fills
 ##     PUDDLE_CHANCE / PUDDLE_MAX          15% of drops are drink puddles / 6 at once (mop only)

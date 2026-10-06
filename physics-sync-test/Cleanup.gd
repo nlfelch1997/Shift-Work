@@ -118,7 +118,7 @@ const PAN_CAPACITY := 8
 const BIN_RANGE := 70.0
 ## --- Phase 3D: hands, cans, bags, the dumpster ---
 const HAND_MAX := 3 # pieces of trash in one hand-held load
-const CAN_CAPACITY := 10 # pieces a trash can holds; full = overflowing
+const CAN_CAPACITY := 15 # pieces a trash can holds; full = overflowing. Was 10: the solo upkeep bot made ~3 dumpster runs a busy Day 3 shift (Phase 3D income notes)
 const BAG_RANGE := 60.0 # E reach for a bag set down on the floor
 const BAG_SPEED_MULT := 0.85 # walking with a full bin bag (Player.gd's speed())
 const DUMPSTER_POS := Vector2(2030.0, 1530.0)
