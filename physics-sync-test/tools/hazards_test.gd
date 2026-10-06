@@ -4247,7 +4247,11 @@ func _run_cleanup() -> void:
 	await walk_to(cl().TOOL_SPOTS[0], 4.0)
 	await tap(act + "interact")
 	await wait(0.4)
-	check(cl().tool_of(me) < 0, "CL1: a tool can't be taken while the store is open")
+	# OCT 2026 PHASE 3D: the tools are out all day now (they were cleanup-only).
+	check(cl().tool_of(me) >= 0, "CL1: a tool can be taken while the store is open (Phase 3D)")
+	await tap(act + "interact") # and put back
+	await wait(0.4)
+	check(cl().tool_of(me) < 0, "CL1: ...and put back down")
 	await wait_until(func(): return cl().litter.size() >= 3, 40.0)
 	check(cl().litter.size() >= 3, "CL1: customers dropped litter during the shift: %d on the floor at %.0fs left" % [cl().litter.size(), main.shift_time_left])
 	var in_store: bool = cl().litter.all(func(l): return cl()._litter_zone_ok(l["pos"]))
@@ -4410,7 +4414,7 @@ func _run_cleanup() -> void:
 	check(cl().clean_bonus_today == want_bonus, "CL5: bonus %s = %d%% of gross %s x (mop %d%% + litter %d%%)/2" % [main._format_money(cl().clean_bonus_today), int(cl().CLEAN_BONUS_MAX * 100), main._format_money(gross), roundi(cl().mop_fraction() * 100), roundi(cl().litter_fraction() * 100)])
 	# (Not mop_left_before: walking to the clock can bump stock off a shelf —
 	# that's new mess, and it counts.)
-	check(cl().mop_left == cl()._mop_messes().size() and cl().mop_left >= mop_left_before and cl().litter_left == litter_left, "CL5: tally matches the floor at clock-out: spills & knockovers left %d (was %d before the walk to the clock), litter left %d" % [cl().mop_left, mop_left_before, cl().litter_left])
+	check(cl().mop_left == cl()._mop_messes(true).size() and cl().mop_left >= mop_left_before and cl().litter_left == litter_left, "CL5: tally matches the floor at clock-out: spills & knockovers left %d (was %d before the walk to the clock), litter left %d" % [cl().mop_left, mop_left_before, cl().litter_left])
 	# Oct 2026: + $1 a piece of litter picked up (Cleanup.gd's LITTER_PAY_PER_PIECE), its own line.
 	check(main._pay_today() == gross + cl().clean_bonus_today + cl().litter_pay_today() - main.writeups_today * main.WRITEUP_PENALTY, "CL5: Pay Today includes the bonus (and the trash pay, %s): %s" % [main._format_money(cl().litter_pay_today()), main.report_pay_label.text])
 	await wait(0.2)
@@ -4623,19 +4627,51 @@ func _brain_until_empty(broom_first: bool, watch_clock := false) -> Dictionary:
 	steer(Vector2.ZERO)
 	return st
 
+## OCT 2026 PHASE 3D: into the nearest can WITH ROOM (a full can won't take
+## it — E there would put the broom down). If every open can is full, empty
+## one first, as a player would: broom down, the can's bag out to the
+## dumpster, back for the broom.
 func _empty_pan() -> void:
 	var p := player()
-	var bin_pos := Vector2.ZERO
+	var best := -1
 	var bd := INF
 	for i in cl().BINS.size():
-		if cl()._bin_open(i):
+		if cl()._bin_open(i) and not cl().can_full(i):
 			var d := route_len(p.global_position, cl().BINS[i]["pos"])
 			if d < bd:
 				bd = d
-				bin_pos = cl().BINS[i]["pos"]
-	await walk_to(bin_pos + Vector2(0, 30), 12.0, 30.0)
+				best = i
+	if best < 0:
+		await _dump_a_can()
+		return
+	await walk_to(cl().BINS[best]["pos"] + Vector2(0, 30), 12.0, 30.0)
 	await tap(act + "interact")
 	await wait_until(func(): return cl().tool_of(me) >= 0 and int(cl().tools[cl().tool_of(me)]["pan"]) == 0, 2.0)
+
+## OCT 2026 PHASE 3D: hands free (a tool goes down here), the nearest full
+## can's bag out, into the dumpster.
+func _dump_a_can() -> bool:
+	if cl().tool_of(me) >= 0:
+		await tap(act + "interact")
+		await wait_until(func(): return cl().tool_of(me) < 0, 2.0)
+	var p := player()
+	var best := -1
+	var bd := INF
+	for i in cl().BINS.size():
+		if cl()._bin_open(i) and int(cl().cans[i]) > 0:
+			var d := route_len(p.global_position, cl().BINS[i]["pos"]) - (1000.0 if cl().can_full(i) else 0.0)
+			if d < bd:
+				bd = d
+				best = i
+	if best < 0:
+		return false
+	await walk_to(cl().BINS[best]["pos"] + Vector2(0, 30), 12.0, 30.0)
+	await tap(act + "interact")
+	if not await wait_until(func(): return cl().bag_of(me) >= 0, 2.0):
+		return false
+	await walk_to(cl().DUMPSTER_POS + Vector2(0, -75), 16.0, 40.0)
+	await tap(act + "interact")
+	return await wait_until(func(): return cl().bag_of(me) < 0, 2.0)
 
 ## JSON hands numbers back as floats: compare 4 and 4.0 (and arrays of them)
 ## as the same value.

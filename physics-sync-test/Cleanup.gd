@@ -486,7 +486,8 @@ func tick_cleanup(delta: float) -> void:
 ## Every mop-category mess on the floor right now:
 ## [{"key", "kind", "pos", "r", "time", "ref"}]. Knocked stock only counts
 ## during cleanup — mid-shift it's just loose stock to put back.
-func _mop_messes() -> Array:
+func _mop_messes(include_knocked: Variant = null) -> Array:
+	var knocked: bool = main.cleanup_active if include_knocked == null else include_knocked
 	var out := []
 	for s in main.ambience.spills:
 		out.append({"key": "s%d" % s["id"], "kind": "spill", "pos": s["pos"], "r": s["r"], "time": MOP_TIME_SPILL_BASE + MOP_TIME_SPILL_PER_PX * s["r"], "ref": s["id"]})
@@ -496,7 +497,7 @@ func _mop_messes() -> Array:
 		var d: Node = main.displays[i]
 		if d.get_node("Display").toppled:
 			out.append({"key": "d%d" % i, "kind": "display", "pos": d.global_position, "r": 24.0, "time": MOP_TIME_DISPLAY, "ref": d})
-	if main.cleanup_active:
+	if knocked:
 		for obj in _knocked_products():
 			out.append({"key": "p" + String(obj.name), "kind": "stock", "pos": obj.global_position, "r": 14.0, "time": MOP_TIME_STOCK, "ref": obj})
 	return out
