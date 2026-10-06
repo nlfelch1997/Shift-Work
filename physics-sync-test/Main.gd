@@ -2516,6 +2516,7 @@ func start_cleanup() -> void:
 		return
 	cleanup_active = true
 	events.on_store_close() # PHASE 4: nothing runs on a closed store
+	staff.on_store_close() # PHASE 4B: the janitor puts away what's in hand (before the mess is counted)
 	_despawn_all_customers()
 	# An order still open lapses (no bonus, no penalty), as it did at the
 	# old end of shift.
@@ -2847,6 +2848,8 @@ func _advance_to_next_day() -> void:
 func _reconfigure_world() -> void:
 	if _customer_nav != null:
 		_customer_nav.invalidate() # a gate may have opened (Phase 3B shopper paths)
+	if _janitor_nav != null:
+		_janitor_nav.invalidate() # (and the janitor's, Phase 4B)
 	_configure_gates()
 	_configure_cashiers()
 	_configure_hazards()
@@ -2917,6 +2920,9 @@ func _fill_shop_forecast() -> void:
 			if money >= int(staff.HIRE_FEE[sec]):
 				lines.append("You can hire a %s helper ($%d, then $%d a shift) — the staff board, break room." % [sec, staff.HIRE_FEE[sec], staff.WAGE[sec]])
 			break
+	# OCT 2026 PHASE 4B: the janitor, once the shop qualifies and can pay.
+	if sections_owned >= staff.JANITOR_MIN_SECTIONS and not staff.is_hired(staff.JANITOR) and money >= staff.JANITOR_HIRE_FEE:
+		lines.append("You can hire a janitor ($%d, then $%d a shift) to keep the store clean — the staff board." % [staff.JANITOR_HIRE_FEE, staff.JANITOR_WAGE])
 	# OCT 2026 PHASE 4: random events just became possible and this crew
 	# hasn't met one yet — say so before the first one lands.
 	if events.seen.is_empty() and not events.unlocked_keys().is_empty() and events_on:
@@ -3797,6 +3803,25 @@ func customer_path(from: Vector2, to: Vector2) -> PackedVector2Array:
 	if _customer_nav == null:
 		_customer_nav = preload("res://CustomerNav.gd").new(self)
 	return _customer_nav.path(from, to)
+
+## OCT 2026 PHASE 4B — host: the janitor's walks (Janitor.gd), on the same grid
+## in its own instance: Storage open (the dumpster), the delivery forklift's
+## floor solid (CustomerNav.for_janitor).
+var _janitor_nav: RefCounted = null
+func _jnav() -> RefCounted:
+	if _janitor_nav == null:
+		_janitor_nav = preload("res://CustomerNav.gd").new(self)
+		_janitor_nav.for_janitor = true
+	return _janitor_nav
+
+func janitor_nav_path(from: Vector2, to: Vector2) -> PackedVector2Array:
+	return _jnav().path(from, to)
+
+func janitor_nav_reachable(from: Vector2, to: Vector2) -> bool:
+	return _jnav().reachable(from, to)
+
+func janitor_nav_open(p: Vector2) -> bool:
+	return _jnav().is_open(p)
 
 ## Host: open section name -> units on its shelves now (only sections with
 ## at least one). A shelf only takes its own section's stock (Shelf.gd's
