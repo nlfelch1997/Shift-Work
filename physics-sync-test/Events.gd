@@ -105,14 +105,14 @@ const EVENTS := {
 	"inspection": {"name": "Surprise Inspection", "sections": 2, "earned": 600, "weight": 2, "bonus": 40, "seconds": 35.0,
 		"line": "An inspector is on the way — clean up the WHOLE store!",
 		"how": "Trash, spills and full cans in every open section: get the mess under the bar."},
-	"leak": {"name": "Leaky Roof", "sections": 2, "earned": 1000, "weight": 2, "bonus": 40, "seconds": 50.0,
+	"leak": {"name": "Leaky Roof", "sections": 2, "earned": 1000, "weight": 2, "bonus": 40, "seconds": 55.0,
 		"line": "The roof's leaking all over the store — grab a mop!",
 		"how": "Mop up every leak before time's up."},
 	"catering": {"name": "Catering Order", "sections": 3, "earned": 0, "weight": 3, "bonus": 60, "seconds": 0.0,
 		"line": "A big order across the store — stock every section on the list!",
 		"how": "Stock what's listed in each section before time's up."},
-	"delivery": {"name": "Surprise Delivery", "sections": 3, "earned": 2000, "weight": 2, "bonus": 60, "seconds": 70.0,
-		"line": "An extra truck with a box for EVERY section — unpack them all!",
+	"delivery": {"name": "Surprise Delivery", "sections": 3, "earned": 2000, "weight": 2, "bonus": 60, "seconds": 65.0,
+		"line": "An extra load with a box for section after section — unpack them all!",
 		"how": "Get one box unpacked on each section's pad."},
 }
 const EVENT_ORDER := ["rush", "inspection", "leak", "catering", "delivery"]
@@ -130,8 +130,12 @@ const CATERING_SECTIONS := 3
 const CATERING_PER_SECTION := 2
 const CATERING_PER_EXTRA := 1
 const CATERING_WINDOW_BY_PLAYERS := [60.0, 55.0, 50.0, 45.0]
-## Surprise Delivery: one box per open section, + this many per extra player
-## to random ones.
+## Surprise Delivery: one box per open section — at most DELIVERY_SOLO_SECTIONS
+## of them for a solo crew (the solo feasibility sim, top tier: four boxes
+## never fit; three got 2/3 in 65s with the third in hand — two different
+## sections still sends a solo player across the store) — + this many per
+## extra player to random ones.
+const DELIVERY_SOLO_SECTIONS := 2
 const DELIVERY_EXTRA_PER_EXTRA := 1
 ## Surprise Inspection: pass when the store's mess points are at most this
 ## many stars' worth (StoreRating.mess_per_star(): 6 + 3 per section past the
@@ -139,8 +143,10 @@ const DELIVERY_EXTRA_PER_EXTRA := 1
 const INSPECTION_PASS_STARS := 1.0
 const INSPECTION_RATING_BUMP := 0.3
 ## Leaky Roof: leaks (+ per extra player), dropped one every LEAK_DROP_GAP,
-## round-robin over the open sections so they're spread out.
-const LEAK_COUNT := 4
+## round-robin over the open sections so they're spread out. Solo 3 (was 4:
+## the solo feasibility sim, top tier, mopped 1 of 4 in 50s — a mop to fetch
+## and four rooms to cross; 3 in 55s leaves room for the walk).
+const LEAK_COUNT := 3
 const LEAK_PER_EXTRA := 1
 const LEAK_DROP_GAP := 2.5
 const LEAK_RADIUS := 20.0
@@ -451,13 +457,18 @@ func _plan(k: String) -> Dictionary:
 				have[sec] = 0
 			return {"needs": needs, "have": have}
 		"delivery":
-			if open.size() < 2 or not main.delivery.truck_away():
+			if open.size() < 2 or not main.delivery.can_take_event_load():
 				return {}
+			var secs := open.duplicate()
+			secs.shuffle()
+			if crew() == 1:
+				secs = secs.slice(0, DELIVERY_SOLO_SECTIONS)
 			var needs := {}
 			for sec in open:
-				needs[sec] = 1
+				if sec in secs:
+					needs[sec] = 1
 			for i in DELIVERY_EXTRA_PER_EXTRA * (crew() - 1):
-				var sec: String = open[randi() % open.size()]
+				var sec: String = secs[randi() % secs.size()]
 				needs[sec] = int(needs[sec]) + 1
 			var have := {}
 			for sec in needs:

@@ -272,12 +272,13 @@ func _run_each() -> void:
 	finish()
 
 func _end_clean(tag: String) -> void:
-	await physics_frame
+	await process_frame
+	await process_frame
 	var markers_off := true
 	for sec in ev()._markers:
 		if _marker(sec).visible:
 			markers_off = false
-	check(not ev().busy() and ev().key == "" and ev().data.is_empty() and markers_off and ev().extra_customers() == 0 and not ev().blocks_orders(45.0) and not ev().holds_truck(), "%s: a clean end — idle, no markers, no extra crowd, orders and trucks free" % tag)
+	check(not ev().busy() and ev().key == "" and ev().data.is_empty() and markers_off and ev().extra_customers() == 0 and not ev().blocks_orders(45.0) and not ev().holds_truck(), "%s: a clean end — idle, no markers, no extra crowd, orders and trucks free (phase %d, markers off %s, countdown %.1f)" % [tag, ev().phase, markers_off, ev()._countdown])
 
 func _each_rush() -> void:
 	# Warning: the cue, and the call-outs stand aside.
@@ -316,7 +317,7 @@ func _each_rush() -> void:
 	for i in 30:
 		if not main.make_shopping_list().has(sec):
 			all_have = false
-	check(all_have, "R2: one unit on %s's shelves -> every new shopping list has it (30/30)" % sec)
+	check(all_have and ev().adjust_list(PackedStringArray(["Dry Goods"] if sec != "Dry Goods" else ["Produce"])).has(sec), "R2: one unit on %s's shelves -> every new shopping list has it (30/30)" % sec)
 	check(_marker(sec).visible and _marker(sec).text.begins_with("RUSH HERE!"), "R2: the marker: '%s'" % _marker(sec).text.replace("\n", " "))
 	await wait(0.1)
 	check(main._order_label.visible and main._order_label.text.begins_with("LUNCH RUSH — sell from %s: 0/%d" % [sec, goal]), "R2: the live row: '%s'" % main._order_label.text)
@@ -334,11 +335,8 @@ func _each_rush() -> void:
 	await wait(0.1)
 	check(main._order_label.visible and main._order_label.text == ev().result_text, "R3: the result on the row")
 	await _end_clean("R3")
-	var some_without := false
-	for i in 30:
-		if not main.make_shopping_list().has(sec):
-			some_without = true
-	check(some_without, "R3: lists are back to normal afterwards")
+	var other_list := PackedStringArray([other])
+	check(ev().adjust_list(other_list) == other_list, "R3: lists are back to normal afterwards (nothing added)")
 	# The miss: time runs out.
 	check(await force("rush"), "R4: another Lunch Rush")
 	var b1: int = ev().bonus_today
@@ -403,16 +401,19 @@ func _each_delivery() -> void:
 	check(main.delivery.truck_away() and main.delivery.deliveries_today == deliveries0 and ev().holds_truck(), "D1: the regular truck waits for it")
 	await wait_until(func(): return ev().active(), 10.0)
 	var needs: Dictionary = ev().data["needs"]
-	check(needs.keys().size() == section_names().size() and needs.values().all(func(n): return int(n) == 1), "D2: one box per open section: %s" % str(needs))
-	check(int(ev().data["have"].get("Produce", 0)) == 1, "D2: Produce's box went to its helper's back room — counted (%s)" % str(ev().data["have"]))
+	check(needs.keys().size() == mini(ev().DELIVERY_SOLO_SECTIONS, section_names().size()) and needs.values().all(func(n): return int(n) == 1), "D2: solo: one box each for %d sections: %s" % [ev().DELIVERY_SOLO_SECTIONS, str(needs)])
+	check(not needs.has("Produce") or int(ev().data["have"].get("Produce", 0)) == 1, "D2: Produce's box (if it's on the list) went to its helper's back room — counted (%s)" % str(ev().data["have"]))
 	check(main.delivery.deliveries_today == deliveries0 + 1 and not main.delivery.truck_away(), "D2: the event's truck is coming in")
-	check(not _marker("Produce").visible and _marker("Dry Goods").visible and _marker("Dry Goods").text == "BOX NEEDED", "D2: markers on the sections still owed a box ('%s')" % _marker("Dry Goods").text)
+	var owed: Array = needs.keys().filter(func(s): return s != "Produce")
+	check(not _marker("Produce").visible and _marker(owed[0]).visible and _marker(owed[0]).text == "BOX NEEDED", "D2: markers on the sections still owed a box ('%s')" % _marker(owed[0]).text)
 	# Unpack every owed box (as the crew would on its pad).
 	var want_secs: Array = needs.keys().filter(func(s): return s != "Produce")
-	check(boxes().is_empty(), "D2: receiving is empty as the event's truck pulls in")
+	var old_boxes: Array = boxes().map(func(b): return b.name)
 	var t := 0.0
 	while ev().active() and t < 60.0:
 		for b in boxes():
+			if b.name in old_boxes:
+				continue # an earlier truck's: only the event's own are unpacked here
 			if b.get_node("Carryable").carrier_id == 0 and b.get_meta("section") in want_secs and int(ev().data["have"].get(b.get_meta("section"), 0)) < 1:
 				main.delivery.unpack(b)
 		await wait(0.5)
@@ -428,6 +429,16 @@ func _each_delivery() -> void:
 	await time_out()
 	check(not ev().log_today[-1][1], "D4: time's up -> missed")
 	await _end_clean("D4")
+	# A truck already at the dock: the event's boxes go on it, first in line.
+	main.delivery._truck_timer = 0.0
+	await wait_until(func(): return not main.delivery.truck_away(), 30.0)
+	var load0: Array = main.delivery.truck_load.duplicate()
+	check(await force("delivery"), "D5: a Surprise Delivery with a truck at the dock")
+	var n: int = ev().data["needs"].values().reduce(func(a, b): return a + int(b), 0)
+	var tl: Array = main.delivery.truck_load
+	check(tl.size() >= n and tl.slice(0, n).all(func(sec): return ev().data["needs"].has(sec)), "D5: its %d box(es) went on that truck, first off (load %s, was %s)" % [n, str(tl), str(load0)])
+	await time_out()
+	await _end_clean("D5")
 
 func _each_inspection() -> void:
 	main.cleanup.litter = []

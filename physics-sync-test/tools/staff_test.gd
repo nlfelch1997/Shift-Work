@@ -200,6 +200,12 @@ func _upkeep_pass() -> bool:
 	var t0 := _wall()
 	_upkeep_passes += 1
 	steer(Vector2.ZERO)
+	# PHASE 4: a Leaky Roof running -> the ringed leaks, nearest first, and
+	# nothing else (a player follows the markers; the rest can wait).
+	if event_aware and main.events.active() and main.events.key == "leak":
+		await _mop_leaks()
+		_upkeep_s += _wall() - t0
+		return true
 	# Full cans first: their bags out back.
 	var guard := 0
 	while cl.full_cans() > 0 and guard < 3 and main.store_open and not main.cleanup_active:
@@ -262,6 +268,29 @@ func _event_upkeep() -> bool:
 	if "--upkeep" in OS.get_cmdline_user_args():
 		return await _upkeep_pass()
 	return false
+
+func _mop_leaks() -> void:
+	var cl: Node = main.cleanup
+	if not await get_tool("mop"):
+		return
+	var guard := 0
+	while main.events.active() and main.events.key == "leak" and guard < 12:
+		guard += 1
+		var ids: Array = main.events.data.get("leaks", [])
+		var live: Array = cl.puddles.filter(func(pd): return int(pd["id"]) in ids)
+		if live.is_empty():
+			if int(main.events.data.get("to_drop", 0)) <= 0:
+				break
+			await wait(0.5) # the next one's coming down
+			continue
+		live.sort_custom(func(a, b): return route_len(player().global_position, a["pos"]) < route_len(player().global_position, b["pos"]))
+		var m := {"pos": live[0]["pos"], "r": float(live[0]["r"])}
+		if await face_target(m["pos"], mop_stand(m)):
+			press(act + "place")
+			await wait_until(func(): return not mop_messes_view().any(func(q): return q["pos"].distance_to(m["pos"]) < 12.0), 5.0)
+			press(act + "place", 0.0)
+	if cl.tool_of(me) >= 0:
+		await tap(act + "interact")
 
 func _run_income() -> void:
 	_hire_spec = _parse_hire()

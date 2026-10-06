@@ -284,21 +284,34 @@ func start_delivery() -> void:
 	deliveries_today += 1
 	print("[Delivery] Truck #%d arriving with %d box(es): %s" % [deliveries_today, cargo.size(), str(cargo)])
 
-## OCT 2026 PHASE 4 — host-only, from Events.gd's Surprise Delivery: the
-## truck comes in NOW with exactly `cargo` (one box per open section, +
-## extras). Staffed sections' boxes still go to their helpers' back rooms,
-## the same rule as every truck. Only from AWAY (the event checks it, and the
-## regular truck holds while the event is announced). Returns whether it came.
+## OCT 2026 PHASE 4 — host-only, from Events.gd's Surprise Delivery: a box
+## per section in `cargo`, on the next truck in. Truck away: it comes in NOW
+## with exactly that load. Truck already backing in or at the dock: the extra
+## boxes go on it FIRST in line (the forklift takes them off before the rest)
+## — FOUND BY THE SOLO FEASIBILITY SIM: at the top tier a truck is usually at
+## the dock as the store opens, and waiting for it to leave let the event's
+## clock run out. Not while it's pulling out. Staffed sections' boxes still go
+## to their helpers' back rooms, the same rule as every truck. Returns whether
+## the boxes are on their way.
 func start_event_delivery(cargo: Array) -> bool:
-	if not multiplayer.is_server() or _truck_state != TRUCK_AWAY:
+	if not multiplayer.is_server() or _truck_state == TRUCK_LEAVING:
 		return false
 	var rest: Array = main.staff.divert_boxes(cargo)
-	truck_load = rest
-	_truck_state = TRUCK_ARRIVING
-	_truck_timer = truck_interval()
-	deliveries_today += 1
-	print("[Delivery] SURPRISE truck #%d arriving with %d box(es): %s" % [deliveries_today, rest.size(), str(rest)])
+	if _truck_state == TRUCK_AWAY:
+		truck_load = rest
+		_truck_state = TRUCK_ARRIVING
+		_truck_timer = truck_interval()
+		deliveries_today += 1
+		print("[Delivery] SURPRISE truck #%d arriving with %d box(es): %s" % [deliveries_today, rest.size(), str(rest)])
+	else:
+		truck_load = rest + truck_load
+		print("[Delivery] SURPRISE: %d extra box(es) first off the truck at the dock: %s" % [rest.size(), str(rest)])
 	return true
+
+## Whether a Surprise Delivery's boxes can come now (any time but a truck
+## pulling out).
+func can_take_event_load() -> bool:
+	return _truck_state != TRUCK_LEAVING
 
 func truck_away() -> bool:
 	return _truck_state == TRUCK_AWAY
