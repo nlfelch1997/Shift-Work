@@ -39,7 +39,7 @@ extends "res://tools/staff_test.gd"
 ## janitor on staff the roof drops LEAK_PER_JANITOR more leaks; they mop them
 ## at LEAK_MOP_TIME each, counted for the event like anyone's mop, and alone
 ## don't finish the roof; janitor + crew do. An inspection with a janitor on
-## staff has the tighter bar and the janitor walking the inspector round (off
+## staff has its own bar knob and the janitor walking the inspector round (off
 ## the floor, tag says so): the crew cleans, passes, and Pat goes back to work:
 ##   godot --headless --path . --script res://tools/janitor_test.gd -- --server --day=7 --shift-seconds=1200 --no-save --events=on --test=jan-events
 ## SMOKE (the janitor on the floor for a few minutes of a real crowd; prints
@@ -884,7 +884,7 @@ func _run_jan_events() -> void:
 	await wait_until(func(): return ev.busy() and ev.key == "inspection", 20.0)
 	await wait(0.5)
 	check(ev.data.get("escort", false) and ev.janitor_escorting(), "E3: the inspection knows the janitor's on staff (escort)")
-	check(is_equal_approx(float(ev.data["pass_at"]), snappedf(main.store_rating.mess_per_star() * ev.INSPECTION_PASS_STARS_JANITOR, 0.1)), "E3: the tighter bar: %.1f (INSPECTION_PASS_STARS_JANITOR %.2f)" % [float(ev.data["pass_at"]), ev.INSPECTION_PASS_STARS_JANITOR])
+	check(is_equal_approx(float(ev.data["pass_at"]), snappedf(main.store_rating.mess_per_star() * ev.INSPECTION_PASS_STARS_JANITOR, 0.1)), "E3: the bar with a janitor: %.1f (INSPECTION_PASS_STARS_JANITOR %.2f)" % [float(ev.data["pass_at"]), ev.INSPECTION_PASS_STARS_JANITOR])
 	check(ev._how_text().begins_with("Pat is showing the inspector round"), "E3: the banner says so: '%s'" % ev._how_text())
 	var picked0: int = jan().litter_picked_today
 	var litter0: int = cl.litter.size()

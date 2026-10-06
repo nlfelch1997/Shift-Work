@@ -620,6 +620,8 @@ extends Node2D
 ##   their wages come out at clock-out beside the pay (_bank_shift_pay()), and
 ##   like every other spend they never touch lifetime_earned. Their numbers
 ##   and the measurements behind them are in Staff.gd's NUMBERS block.
+##   OCT 2026 PHASE 4B: + one store-wide JANITOR (Janitor.gd), hired on the
+##   same board under the same rules (Staff.gd's JANITOR block).
 ## - SECTIONS ARE BOUGHT (sections_owned): the crew starts with Dry Goods and
 ##   buys the rest IN ORDER (Produce, Dairy/Frozen, Bakery — SECTIONS order),
 ##   each at its own price (SECTION_PRICES). Bought at the section's own gate:

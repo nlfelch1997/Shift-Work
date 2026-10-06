@@ -149,16 +149,26 @@ const INSPECTION_RATING_BUMP := 0.3
 ## OCT 2026 PHASE 4B — with a JANITOR on staff (Janitor.gd), measured: a
 ## janitor alone (nobody else cleaning) passed 12 of 12 inspections at the
 ## normal bar, Day 5 and Day 7 — they keep the store clean before the
-## inspector arrives, so no bar on its own changes that. So with a janitor:
-## (1) the janitor walks the inspector round for the whole visit — off the
-## floor (Janitor.gd reads `escort`), so the crew holds the floor against the
-## shoppers' fresh litter itself; and (2) the inspector expects a tidier store
-## from a shop that pays for cleaning: this many stars' worth of mess. The
-## janitor's earlier work still counts (a clean start), the last 35 s are the
-## crew's. FLAGGED, tunable (the Phase 4B report has the measurements).
-const INSPECTION_PASS_STARS_JANITOR := 0.25
-## ...and a Leaky Roof drops this many extra leaks (the janitor mops leaks
-## slowly — Janitor.LEAK_MOP_TIME — so the crew still has the deciding mop).
+## inspector arrives, so no bar on its own changes that. So with a janitor on
+## staff the janitor walks the inspector round for the whole visit (from the
+## warning on) — off the floor (Janitor.gd reads janitor_escorting()), so the
+## crew holds the floor against the shoppers' fresh litter itself; the
+## janitor's earlier work still counts (a cleaner start). Measured with that
+## (6-round janitor-alone sims, 4-round solo-bot feasibility sims):
+##   janitor alone: 0/6 (Day 5), 0/6 (Day 7)
+##   solo bot + janitor, bar x0.75: 3/4 Day 5 (bot alone 2/4), 0/4 Day 7
+##     (bot alone 2/3); bar x0.25: 0/3 Day 7 (one stage-4 spill is 3 points)
+## — a tighter bar made hiring a janitor a PENALTY at the top tier, so the
+## bar stays the normal one (x1.0, below); the escort is the scaling. The knob
+## is kept, FLAGGED, for Phase 5.
+const INSPECTION_PASS_STARS_JANITOR := 1.0
+## PHASE 4B: a Leaky Roof with a janitor on staff drops this many extra
+## leaks. The janitor mops leaks, slowly (Janitor.LEAK_MOP_TIME 6 s each).
+## Measured, janitor alone, 3 leaks: 0/6 at Day 7 at base speed — but 3/6
+## (Day 7) and 4/6 (Day 5) once they've had the speed upgrade: near free. With
+## this one extra leak: 1/6 and 1/6 upgraded, while the solo bot + janitor
+## still won 3/3 (as the bot alone does on 3): the crew mops the deciding
+## leak or two. FLAGGED, tunable.
 const LEAK_PER_JANITOR := 1
 ## Leaky Roof: leaks (+ per extra player), dropped one every LEAK_DROP_GAP,
 ## round-robin over the open sections so they're spread out. Solo 3 (was 4:

@@ -58,6 +58,15 @@ extends "res://Helper.gd"
 ## and another is chosen. A target the grid can't reach (path empty) is
 ## skipped the same way. `stuck_skips` counts them (the tests read it).
 ##
+## EVENTS (Events.gd, measured — see its LEAK_PER_JANITOR and
+## INSPECTION_PASS_STARS_JANITOR notes): a LEAKY ROOF's leaks are wet mess
+## like any puddle, mopped slowly (LEAK_MOP_TIME), and the roof drops one
+## extra leak when a janitor's on staff — alone they rarely finish it, with
+## the crew they do. A SURPRISE INSPECTION takes them off the floor: they walk
+## the inspector round for the visit (status "with the inspector"), so the
+## store they kept clean is the crew's head start and the visit itself is the
+## crew's to hold.
+##
 ## AUTHORITY: the host thinks and moves it; every peer smooths toward the
 ## replicated target_position and draws what's in their hands from `hand`,
 ## `bag_n` and `work` (replicated).

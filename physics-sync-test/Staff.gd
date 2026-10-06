@@ -118,9 +118,38 @@ const CARRY_COSTS := [100, 200]
 ## cans, puddles and the first events — Inspection, Leaky Roof — show up),
 ## separate from affording the fee, each with its own refusal.
 ## NUMBERS — FLAGGED, tunable placeholders, MEASURED with the income harness
-## (tools/staff_test.gd --test=income --hire=Janitor:0 ...; the full table is
-## in the Phase 4B report and tools/staff_test.gd's JANITOR INCOME header):
-## see JANITOR_* below for what each was set from.
+## (tools/staff_test.gd --test=income [--shifts=4] [--upkeep] --hire=...,
+## Janitor:0; the solo bot, --fixed-fps 60 bot sims, Oct 2026). Mean net pay
+## a shift (pay - wages) and where the rating ends up:
+##
+##   Day 3 preset (2 sections), 4 shifts in a row x 2 runs (the rating carries
+##   over from shift to shift — this is the honest comparison):
+##     solo, never cleans mid-shift      $554   rating mostly 1-3 stars
+##     solo, cleans mid-shift (--upkeep) $312   ~4.4
+##     solo + janitor                    $560   ~4.6
+##     solo + Produce helper             $980   1.0 (pinned there)
+##     solo + Produce helper + janitor  $1373   ~4.7
+##   Day 5 / Day 7 presets, one shift each from 3 stars, 3 runs:
+##     solo                       $263 / $245      solo + janitor   $242 / $201
+##     solo + helpers             $447 / $522      + janitor        $418 / $404
+##     (rating at close: ~3.2 -> 4.2 / ~3.0 -> 4.0 with the janitor)
+##
+## What that says: the janitor ENDS the Phase 3D trade-off — a solo crew no
+## longer has to pick between money (never clean: $554) and a good rating
+## (clean it yourself: $312): with a janitor it gets both ($560 at ~4.6
+## stars). With a section helper stocking, the extra customers a good rating
+## brings turn into sales: +$393 a shift net, the best hire on the board after
+## the helper itself. On ONE shift from 3 stars at Day 5/7 it's break-even to
+## -$100 (a fresh 3-star store has nothing to lose yet; and at Day 7 the
+## bigger crowd sold LESS with the same stock — see the Phase 4B report,
+## flagged for Phase 5's rating/crowd balance).
+## So: the WAGE is set at the solo break-even ($50: solo + janitor = solo
+## without, a little under a section helper's), the FEE ($200) at about a
+## shift of what it adds with a helper on staff — hiring is a real decision
+## for a solo crew (you buy the rating, not money) and a clear win once
+## helpers stock. ONE upgrade (speed): it measured nothing on income (one
+## 4-shift run, $488 vs $560 — noise), but it decides the Leaky Roof (Events.gd's
+## LEAK_PER_JANITOR note); a second wasn't justified by any number.
 ## ============================================================================
 const JANITOR := "Janitor"
 const JANITOR_NAME := "Pat"
