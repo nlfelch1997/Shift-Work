@@ -47,7 +47,7 @@ func _ready() -> void:
 	collision = body.get_node("CollisionShape2D")
 
 ## Open (invisible, passable) or closed (sealed, with closed_text on its sign).
-## WEEK 21 — endless shifts: by the taken posting. Phase 2: by ownership.
+## Phase 2: by ownership (PHASE 4 retired Week 21's endless postings).
 func configure_open(open: bool, closed_text: String) -> void:
 	# Unlocked = fully invisible, not just passable — the brief asked for
 	# one continuous open floor with no visible seam once a section is open.

@@ -40,6 +40,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	main.opening_stock_fraction = 1.0
 	if not _mode in ["earnings", "net-upkeep"]:
 		main.cleanup_ceiling_override = 0.0
@@ -896,7 +899,7 @@ func _run_save() -> void:
 			cl().set_cans([3, 10, 0, 7, 0])
 			main.save_progress("upkeep test")
 			var d := _disk()
-			check(int(d.get("version", 0)) == 4 and SG.VERSION == 4, "S1: the save on disk is version %d" % int(d.get("version", 0)))
+			check(int(d.get("version", 0)) == SG.VERSION and SG.VERSION >= 4, "S1: the save on disk is version %d (current; 4 added the upkeep block)" % int(d.get("version", 0)))
 			var up: Dictionary = d.get("upkeep", {})
 			check(is_equal_approx(float(up.get("rating", 0)), 4.25) and (up.get("cans", []) as Array).map(func(v): return int(v)) == [3, 10, 0, 7, 0], "S1: with the rating and the cans in it (%s)" % str(up))
 		2:

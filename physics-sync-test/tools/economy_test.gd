@@ -52,6 +52,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	careless = true
 	main.cleanup_ceiling_override = 5.0 if _mode == "soak" else 0.0
 	var client := "--client" in args

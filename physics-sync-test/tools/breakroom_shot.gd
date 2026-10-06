@@ -9,6 +9,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	_run.call_deferred()
 func _run() -> void:
 	while not (main.shift_active and main.players.has(1)):

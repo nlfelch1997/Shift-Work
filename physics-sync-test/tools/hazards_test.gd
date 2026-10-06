@@ -70,6 +70,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	# OCT 2026 PHASE 2: these tests were written for the 7-day story — a
 	# Day N -> N+1 rollover hands the crew old Day N+1's sections and earnings
 	# (Main.gd's test_follow_old_calendar), so each day keeps its old meaning.
@@ -83,18 +86,15 @@ func _initialize() -> void:
 	for a in args:
 		if a.begins_with("--test="):
 			mode = a.substr(7)
-	# Day 7's report finishes the old week into Endless Mode (debug --endless
-	# route) — the only way into the untouched Endless code until Phase 4.
-	main.legacy_endless_route = mode in ["endless", "net-endless", "endless-board"]
 	# WEEK 16: the store now opens empty (every unit arrives by truck). The
 	# tests written before that are about other systems and were written
 	# against a floor that opens stocked — they keep it. The solo sim and the
 	# delivery/prep tests play the real thing.
-	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync", "hazard-pause", "net-hazard-pause", "coop-sim", "box-cycle", "route-len", "endless", "net-endless", "endless-board"]:
+	if not mode in ["solo", "delivery", "net-delivery", "prep", "net-prep", "net-boxsync", "hazard-pause", "net-hazard-pause", "coop-sim", "box-cycle", "route-len"]:
 		main.opening_stock_fraction = 1.0
 	# WEEK 19: the tests written before the cleanup phase expect the report
 	# the moment the clock runs out — clock out at once for them.
-	if not mode in ["solo", "coop-sim", "cleanup", "net-cleanup", "polish", "net-polish", "endless", "net-endless", "endless-board"]:
+	if not mode in ["solo", "coop-sim", "cleanup", "net-cleanup", "polish", "net-polish"]:
 		main.cleanup_ceiling_override = 0.0
 	# WEEK 17: sweep hook for the priority-order window (solo sim tuning).
 	for a in args:
@@ -170,15 +170,6 @@ func _initialize() -> void:
 				_run_net_orders_client.call_deferred()
 			else:
 				_run_net_orders_host.call_deferred()
-		"endless-board":
-			_run_endless_board.call_deferred()
-		"endless":
-			_run_endless.call_deferred()
-		"net-endless":
-			if "--client" in args:
-				_run_net_endless_client.call_deferred()
-			else:
-				_run_net_endless_host.call_deferred()
 
 func check(cond: bool, what: String) -> void:
 	print(("PASS  " if cond else "FAIL  ") + what)
@@ -601,7 +592,47 @@ func slot_color_ok(shelf_body: Node, obj: Node) -> bool:
 ## open, matching, reachable slot.
 ## WEEK 11: while a priority order is open, a human goes for the called
 ## section's stock first (falls back to anything if none is reachable).
+## OCT 2026 PHASE 4: an event-aware brain (--event-brain on the sims) goes
+## for what a running random event asks for first — the Lunch Rush section's
+## stock, the Catering Order's sections, the Surprise Delivery's boxes — the
+## way it already goes for an open priority order. Off by default: the old
+## sims play exactly as they did.
+var event_aware := "--event-brain" in OS.get_cmdline_user_args()
+
+## The sections an active event wants stocked/unpacked right now.
+func _event_focus() -> Array:
+	if not event_aware or not main.events.active():
+		return []
+	var d: Dictionary = main.events.data
+	match main.events.key:
+		"rush":
+			return [d.get("section", "")]
+		"catering", "delivery":
+			var out := []
+			for sec in d.get("needs", {}):
+				if int(d["have"].get(sec, 0)) < int(d["needs"][sec]):
+					out.append(sec)
+			return out
+	return []
+
+## A box the active event wants carried (a Surprise Delivery's, or — Rush/
+## Catering — its section's when none of its stock is loose).
+func _event_box(p: Node2D) -> Node2D:
+	for sec in _event_focus():
+		if main.events.key != "delivery" and _pick_product(p, main.SECTION_COLORS[sec]) != null:
+			continue
+		var b := _pick_box(p, sec)
+		if b != null:
+			return b
+	return null
+
 func pick_product(p: Node2D) -> Node2D:
+	for sec in _event_focus():
+		if main.events.key == "delivery":
+			break
+		var for_event := _pick_product(p, main.SECTION_COLORS[sec])
+		if for_event != null:
+			return for_event
 	if main.order_section != "":
 		var for_order := _pick_product(p, main.SECTION_COLORS[main.order_section])
 		if for_order != null:
@@ -884,6 +915,13 @@ func _play_shift(stop: Callable = func(): return not main.shift_active or main.c
 					var ob := _pick_box(p, main.order_section)
 					if ob != null:
 						obj = ob
+				# PHASE 4: the same for what a running event asks for.
+				if event_aware and not _event_focus().is_empty():
+					var focus_colors: Array = _event_focus().map(func(sec): return main.SECTION_COLORS[sec])
+					if obj == null or main.events.key == "delivery" or not focus_colors.any(func(c): return obj.get_node("Polygon2D").color.is_equal_approx(c)):
+						var eb := _event_box(p)
+						if eb != null:
+							obj = eb
 			if obj != null and obj.is_in_group("delivery_box"):
 				# Come at it from the north and stop short (walking into it shoves it).
 				var pre: Vector2 = obj.global_position + Vector2(0, -110)
@@ -2904,7 +2942,7 @@ func _run_finale() -> void:
 	main._on_continue_pressed()
 	await wait_until(func(): return main.shift_active and main.current_day == 8, 5.0)
 	var again := await wait_until(func(): return main._finale_banner.visible, 1.5)
-	check(main.shift_active and main.current_day == 8 and not again and main.endless.screen == main.endless.SCREEN_NONE, "F3: Day 8 starts — no WEEK COMPLETE, no second banner")
+	check(main.shift_active and main.current_day == 8 and not again and main.get_node_or_null("HubUI") == null, "F3: Day 8 starts — no WEEK COMPLETE, no second banner")
 	check(main.is_finale() and fk().finale and mgr().finale and a.finale and main._selling_window() == base_shift - main.FINALE_SELLING_CUT, "F3: Day 8 is still the top tier (sustained), tight clock %.0fs" % main._selling_window())
 	finish()
 
@@ -3867,9 +3905,8 @@ func _run_hazard_pause() -> void:
 	check(h2["mgr_moved"] > 50.0, "H2: manager on his rounds (moved %.0fpx)" % h2["mgr_moved"])
 	check(h2["spills"] > 0 and h2["lights"] and h2["darkest"] < 1.0, "H2: spills (%d) and a lights event (darkest %.2f) once open" % [h2["spills"], h2["darkest"]])
 	await shot("h2_open_chaos")
-	# --- H3: next shift, the ceiling opens it -> same. WEEK 21: after Day 7
-	# the next shift is an endless one — through WEEK COMPLETE and the hub, on
-	# a posting with all four on (so this also covers endless mode's prep).
+	# --- H3: next shift, the ceiling opens it -> same. After Day 7 the next
+	# shift is Day 8, the top tier, all four on.
 	main.shift_time_left = 0.05
 	await wait_until(func(): return main.is_day_report_active(), 5.0)
 	await _take_all_hazards_shift()
@@ -3883,26 +3920,11 @@ func _run_hazard_pause() -> void:
 	check(h3["fk_moved"] > 50.0 and h3["mgr_moved"] > 50.0 and h3["spills"] > 0 and h3["lights"], "H3: after the ceiling's auto-open all four start: %s" % str(h3))
 	finish()
 
-## WEEK 21 — Day 7's report -> WEEK COMPLETE -> the hub -> a posting with
-## every section open and every hazard on at level 1 (host test hook: the
-## posting is rewritten on the board before it's taken).
-## OCT 2026 PHASE 2: without the debug --endless route, Day 7's report just
-## leads to Day 8 — the top tier, every section open and every hazard on —
-## which is exactly the shift this wants.
+## Day 7's report leads to Day 8 — the top tier, every section open and every
+## hazard on — which is exactly the shift this wants. (Week 21 went through an
+## Endless Mode posting here; that mode was retired in OCT 2026 PHASE 4.)
 func _take_all_hazards_shift() -> void:
 	main._on_continue_pressed()
-	if not main.legacy_endless_route:
-		return
-	await wait_until(func(): return main.endless.screen == main.endless.SCREEN_WEEK_COMPLETE, 5.0)
-	main.enter_hub()
-	var o: Dictionary = main.endless.offers[2].duplicate(true)
-	o["sections"] = ["Produce", "Dairy/Frozen", "Bakery"]
-	o["levels"] = {"forklift": 1, "manager": 1, "orders": 1, "spills": 1, "lights": 1}
-	o["tight_clock"] = false
-	var board: Array = main.endless.offers.duplicate()
-	board[2] = o
-	main.endless.offers = board
-	main.take_offer(2)
 
 func _run_net_hazard_pause_host() -> void:
 	var want := 2
@@ -5114,28 +5136,12 @@ func _run_net_polish_client() -> void:
 	finish()
 
 ## ---------------------------------------------------------------------------
-## WEEK 21 — ENDLESS MODE (Endless.gd, HubUI.gd): Day 7 -> WEEK COMPLETE -> the
-## hub -> a posting off the shift board -> that shift, played for real by the
-## solo brain -> its report (medal, Bucks) -> the hub again, N times over, with
-## purchases in between.
-##   Board generator (thousands of boards, invariants + distribution):
-##     godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=endless-board
-##   Solo: godot --headless --fixed-fps 60 --path . --script res://tools/hazards_test.gd -- --server --day=7 --shifts=5 --test=endless
-##   Co-op (every peer plays its own player every shift, and clicks the hub's
-##   buttons itself — the request RPCs):
-##     godot --headless --fixed-fps 60 --path . --script res://tools/hazards_test.gd -- --server --day=7 --players=3 --shifts=5 --test=net-endless &
-##     (x2) godot --headless --fixed-fps 60 --path . --script res://tools/hazards_test.gd -- --client --test=net-endless
-##   --fast on the host: no prep, a 60s selling window (the flow, not the clocks).
-##   --port=N / --connect-port=N (and SW_NET_DIR=user://some_dir/ in the
-##   environment of every process of one run): run several at once.
-
-func en() -> Node:
-	return main.endless
-
-func hub() -> CanvasLayer:
-	return main.hub_ui
-
-var _endless_fast := "--fast" in OS.get_cmdline_user_args()
+## WEEK 21's ENDLESS MODE tests (endless-board, endless, net-endless) are gone
+## with the mode (OCT 2026 PHASE 4). Their ground is covered by
+## tools/events_test.gd: the random events that replaced the shift board, the
+## Break Room Shop that kept its upgrades (bought with the bank now), and the
+## save that carries the gear over. Kept here: shared helpers, and the
+## upgrade-effects check (events_test.gd's shop test runs it).
 
 func _arg_int(prefix: String, fallback: int) -> int:
 	for a in OS.get_cmdline_user_args():
@@ -5148,356 +5154,14 @@ func _arg_int(prefix: String, fallback: int) -> int:
 func _canon(v) -> String:
 	return JSON.stringify(JSON.parse_string(JSON.stringify(v)), "", true)
 
-## This peer's view of everything endless mode replicates or derives.
-func _endless_view() -> Dictionary:
-	var gates := {}
-	for g in get_nodes_in_group("gate"):
-		gates[String(g.name)] = g.get_node("Gate").collision.disabled
-	var ups := {}
-	for u in en().UPGRADES:
-		ups[u["key"]] = en().upgrade_level(u["key"])
-	var c: Dictionary = en().contract
-	var lv: Dictionary = main.hazard_levels()
-	var rs: Dictionary = en().run_stats
-	var v := {
-		"screen": en().screen, "day": main.current_day, "endless": main.is_endless(), "shift": en().shift_number,
-		"wallet": en().wallet, "upgrades": ups,
-		"run": [rs.get("shifts", 0), rs.get("sold", 0), rs.get("bucks", 0), rs.get("medals", [])],
-		"offers": en().offers.map(func(o): return [o["id"], o["sig"], o["stars"], o["name"], o["bucks_mult"], o["tight_clock"]]),
-		"contract": [c.get("id", 0), c.get("sig", ""), c.get("targets", []), c.get("crew", 0)],
-		"open": main._unlocked_sections().map(func(x): return x["name"]),
-		"gates": gates,
-		"levels": [lv["forklift"], lv["manager"], lv["orders"], lv["spills"], lv["lights"], lv["tight_clock"]],
-		"systems": [fk().active, fk().finale, mgr().active, mgr().finale, amb().lights_level, amb().spills_level],
-		"selling": main._selling_window(),
-		"effects": [snappedf(player().speed(), 0.01), en().carry_capacity(), snappedf(mgr().catch_time(), 0.01), cl().pan_capacity(), snappedf(en().cleanup_time_mult(), 0.01), player()._badge.visible],
-		"ui": [hub().visible, main.report_layer.visible, hub().offer_buttons.size(), hub().buy_buttons.size(), hub().enter_button != null],
-		"payout": [en().last_payout.get("shift", -1), en().last_payout.get("medal", -1), en().last_payout.get("total", -1)],
-		"week": en().week_summary,
-	}
-	if main.report_layer.visible:
-		v["report"] = [main.report_title_label.text, main.report_week_label.text, main.report_bucks_label.text, main.report_run_label.text, main.continue_button.text]
-	# Every word on the Week Complete / hub screen (the shift previews, the
-	# shop, which buttons are live) — so peers are compared on what they SEE.
-	if hub().visible:
-		v["hub_text"] = _screen_text(hub())
-	return v
-
-func _screen_text(node: Node) -> Array:
-	var out := []
-	for c in node.get_children():
-		if c.is_queued_for_deletion():
-			continue
-		if c is Button:
-			out.append("[%s%s]" % [c.text, " (off)" if c.disabled else ""])
-		elif c is Label:
-			out.append(c.text)
-		out.append_array(_screen_text(c))
-	return out
-
-## Keys where two canonical views differ.
-func _view_diff(mine: Dictionary, theirs: Dictionary) -> String:
-	var out := ""
-	for k in theirs:
-		if _canon(mine.get(k)) != _canon(theirs[k]):
-			out += " %s: mine %s vs host %s;" % [k, _canon(mine.get(k)), _canon(theirs[k])]
-	return out
-
-## Every per-shift check that doesn't need another peer (host).
-func _check_shift_setup(tag: String) -> void:
-	var c: Dictionary = en().contract
-	var lv: Dictionary = main.hazard_levels()
-	var want_open: Array = ["Dry Goods"] + c["sections"]
-	var got_open: Array = main._unlocked_sections().map(func(x): return x["name"])
-	want_open.sort()
-	got_open.sort()
-	check(want_open == got_open, "%s: open sections %s = the posting's %s" % [tag, str(got_open), str(want_open)])
-	var gate_ok := true
-	for s in main.SECTIONS:
-		var g := main.get_node_or_null("Gates/Gate%s/Gate" % s["node_name"])
-		if g == null:
-			continue
-		if g.collision.disabled != (s["name"] in want_open):
-			gate_ok = false
-	check(gate_ok, "%s: every gate open exactly when its section is on the posting" % tag)
-	var lv_ok := true
-	for k in en().HAZARDS:
-		if int(lv[k]) != int(c["levels"][k]):
-			lv_ok = false
-	check(lv_ok, "%s: hazard levels %s = the posting's %s" % [tag, str(lv), str(c["levels"])])
-	check(fk().active == (lv["forklift"] > 0) and fk().finale == (lv["forklift"] >= 2), "%s: forklift active %s finale %s (level %d)" % [tag, fk().active, fk().finale, lv["forklift"]])
-	check(mgr().active == (lv["manager"] > 0) and mgr().finale == (lv["manager"] >= 2), "%s: manager active %s finale %s (level %d)" % [tag, mgr().active, mgr().finale, lv["manager"]])
-	check(amb().lights_level == lv["lights"] and amb().spills_level == lv["spills"], "%s: lights level %d, spills level %d" % [tag, amb().lights_level, amb().spills_level])
-	check(c["levels"]["forklift"] == 0 or "Produce" in c["sections"], "%s: forklift only with Produce open" % tag)
-	var sell_want: float = main.shift_duration - (main.FINALE_SELLING_CUT if c["tight_clock"] else 0.0)
-	check(is_equal_approx(main._selling_window(), sell_want), "%s: selling window %.0fs (tight clock %s)" % [tag, main._selling_window(), c["tight_clock"]])
-	# Only with the real prep ceilings (--fast zeroes every day's prep, so a
-	# "Day 7" there is just its 96s-style cut, not the story's longest day).
-	if main.prep_ceiling_override < 0.0:
-		var day7: float = main.prep_ceiling_for(4) + main.shift_duration - main.FINALE_SELLING_CUT
-		check(main._current_shift_duration() <= day7 + 0.01, "%s: day clock %.0fs never longer than story Day 7's (%.0fs)" % [tag, main._current_shift_duration(), day7])
-	check(main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL if lv["orders"] >= 2 else main.PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "%s: priority order interval %.0fs (level %d)" % [tag, main._priority_order_interval(), lv["orders"]])
-
-## After a played shift (host): what happened matches what the posting said.
-func _check_shift_outcome(tag: String) -> Dictionary:
-	var lv: Dictionary = main.hazard_levels()
-	var played_open: float = main.store_opened_at # selling seconds actually had
-	check(lv["orders"] > 0 or main.orders_called_today == 0, "%s: orders level %d -> %d called (none if off)" % [tag, lv["orders"], main.orders_called_today])
-	check(lv["spills"] > 0 or amb().spills_today == 0, "%s: spills level %d -> %d spills (none if off)" % [tag, lv["spills"], amb().spills_today])
-	check(lv["lights"] > 0 or amb().lights_events_today == 0, "%s: lights level %d -> %d events (none if off)" % [tag, lv["lights"], amb().lights_events_today])
-	check(lv["manager"] > 0 or main.writeups_today == 0, "%s: manager level %d -> %d write-ups (none if off)" % [tag, lv["manager"], main.writeups_today])
-	check(lv["forklift"] > 0 or fk().rams_today == 0, "%s: forklift level %d -> %d rams (none if off)" % [tag, lv["forklift"], fk().rams_today])
-	if played_open >= 60.0:
-		check(lv["orders"] == 0 or main.orders_called_today > 0, "%s: orders level %d -> %d called in %.0fs of selling (some if on)" % [tag, lv["orders"], main.orders_called_today, played_open])
-		check(lv["lights"] == 0 or amb().lights_events_today > 0, "%s: lights level %d -> %d events (some if on)" % [tag, lv["lights"], amb().lights_events_today])
-		check(lv["spills"] == 0 or amb().spills_today > 0, "%s: spills level %d -> %d (some if on)" % [tag, lv["spills"], amb().spills_today])
-	# The payout: recomputed here from the report's own numbers.
-	var sold: int = main._total_sold() - main._sold_at_day_start
-	var clean: float = 0.5 * cl().mop_fraction() + 0.5 * cl().litter_fraction()
-	var want: Dictionary = en().compute_payout(en().contract, sold, main.orders_filled_today, clean, main.writeups_today, main._pay_today())
-	var p: Dictionary = en().last_payout
-	check(int(p.get("shift", -1)) == en().shift_number and int(p["total"]) == int(want["total"]) and int(p["medal"]) == int(want["medal"]), "%s: payout %d Bucks, %s — recomputed %d, %s (score $%d vs %s)" % [tag, p.get("total", -1), en().medal_text(int(p.get("medal", 0))), want["total"], en().medal_text(want["medal"]), main._pay_today(), str(want["targets"])])
-	var r := {"sold": sold, "score": main._pay_today(), "medal": want["medal"], "bucks": want["total"], "orders": "%d/%d" % [main.orders_filled_today, main.orders_called_today], "writeups": main.writeups_today, "clean": roundi(clean * 100.0), "spills": amb().spills_today, "lights": amb().lights_events_today, "rams": fk().rams_today, "selling": roundi(played_open)}
-	return r
-
-## Host (and solo): the Day 7 report -> WEEK COMPLETE -> hub checks. click: who
-## presses Continue / the enter button — a Callable, so the net run can have a
-## client do it.
-func _check_week_complete(tag: String) -> void:
-	check(main.report_layer.visible and main.report_title_label.text == "Day 7 Complete!" and main.report_week_label.text.begins_with("Bank:"), "%s: Day 7's report is an ordinary day report — Phase 2: the bank line, no week ('%s' / '%s')" % [tag, main.report_title_label.text, main.report_week_label.text])
-	check(main.continue_button.text == "Finish the Week", "%s: Day 7's button reads 'Finish the Week'" % tag)
-
-func _check_week_screen(tag: String, wallet_before: int, week_sold: int) -> void:
-	check(en().screen == en().SCREEN_WEEK_COMPLETE and hub().visible and not main.report_layer.visible, "%s: WEEK COMPLETE screen up, report down" % tag)
-	check(main.is_day_report_active() and not main.shift_active, "%s: the world stays frozen under it" % tag)
-	check(main.current_day == 7 and not main.is_endless(), "%s: still Day 7 (the story), not a Day 8" % tag)
-	check(en().wallet == wallet_before + en().WEEK_COMPLETE_BUCKS, "%s: +%d Bucks week bonus (wallet %d)" % [tag, en().WEEK_COMPLETE_BUCKS, en().wallet])
-	check(int(en().week_summary.get("sold", -1)) == week_sold, "%s: the week's %d sold captured for the screen" % [tag, week_sold])
-	check(main.writeups_week == 0 and main.priority_sales_week == 0 and cl().clean_bonus_week == 0, "%s: the week's running totals reset (nothing left to mislabel)" % tag)
-	check(hub().enter_button != null, "%s: the 'Clock in to Endless Shifts' button is there" % tag)
-
-func _check_hub(tag: String) -> void:
-	check(en().screen == en().SCREEN_HUB and hub().visible and not main.report_layer.visible, "%s: hub up" % tag)
-	check(main.current_day == en().ENDLESS_DAY and main.is_endless(), "%s: current_day parked at %d (endless), not counting days" % [tag, main.current_day])
-	var bands_ok: bool = en().offers.size() == en().OFFER_COUNT
-	for i in en().offers.size():
-		var o: Dictionary = en().offers[i]
-		bands_ok = bands_ok and o["stars"] >= en().OFFER_BANDS[i][0] and o["stars"] <= en().OFFER_BANDS[i][1]
-	check(bands_ok, "%s: board has %d postings, one per band: %s" % [tag, en().offers.size(), str(en().offers.map(func(o): return "%s %d*" % [o["name"], o["stars"]]))])
-	check(hub().offer_buttons.size() == en().offers.size() and hub().buy_buttons.size() == en().UPGRADES.size(), "%s: %d take buttons, %d shop rows" % [tag, hub().offer_buttons.size(), hub().buy_buttons.size()])
-	var afford_ok := true
-	for u in en().UPGRADES:
-		var cost: int = en().next_cost(u["key"])
-		var b: Button = hub().buy_buttons[u["key"]]
-		afford_ok = afford_ok and b.disabled == (cost < 0 or cost > en().wallet)
-	check(afford_ok, "%s: exactly the affordable upgrades are buyable (wallet %d)" % [tag, en().wallet])
-
-## The cheapest upgrade the wallet covers (not maxed), preferring `prefer`.
-func _pick_upgrade(prefer: Array) -> String:
-	for k in prefer:
-		var c: int = en().next_cost(k)
-		if c >= 0 and c <= en().wallet:
-			return k
-	var best := ""
-	var best_cost := 1 << 30
-	for u in en().UPGRADES:
-		var c: int = en().next_cost(u["key"])
-		if c >= 0 and c <= en().wallet and c < best_cost:
-			best = u["key"]
-			best_cost = c
-	return best
-
-func _play_one_shift(host_clocks_out: bool) -> void:
-	stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
-	_haul = {"walk_px": 0.0, "last_pos": null, "box_t": {}, "carry_s": [], "item_born": {}, "item_s": [], "box_items": {}, "box_cycle_s": [], "seen": {}, "last_event": dl().unpack_event_id, "last_carry": null, "open_placed": 0, "open_called": 0, "item_carry": null, "last_pos_c": null, "carry_item_s": [], "carry_item_px": []}
-	await _play_shift()
-	for o in get_nodes_in_group("carryable"):
-		if o.get_node("Carryable").carrier_id == me:
-			await tap(act + "interact")
-	if main.cleanup_active:
-		await _play_cleanup(not host_clocks_out, host_clocks_out)
-	await wait_until(func(): return main.is_day_report_active(), 200.0)
-	await wait(0.5)
-
-## ---------------------------------------------------------------------------
-
-func _run_endless_board() -> void:
-	await wait_until(func(): return main.shift_active, 20.0)
-	const BOARDS := 3000
-	var stars_hist := [0, 0, 0, 0, 0, 0]
-	var sec_hist := {}
-	var lvl_hist := {}
-	var bad := 0
-	var dup := 0
-	var fk_without_produce := 0
-	var tight_wrong := 0
-	var targets_bad := 0
-	for n in BOARDS:
-		en().roll_offers()
-		var sigs := {}
-		for i in en().offers.size():
-			var o: Dictionary = en().offers[i]
-			stars_hist[o["stars"]] += 1
-			if o["stars"] < en().OFFER_BANDS[i][0] or o["stars"] > en().OFFER_BANDS[i][1] or o["stars"] != en().stars_for_heat(en().heat_of(o["levels"], o["sections"])):
-				bad += 1
-			if sigs.has(o["sig"]):
-				dup += 1
-			sigs[o["sig"]] = true
-			if o["levels"]["forklift"] > 0 and not "Produce" in o["sections"]:
-				fk_without_produce += 1
-			if o["tight_clock"] != (o["stars"] >= en().TIGHT_CLOCK_STARS or o["sections"].size() == 3):
-				tight_wrong += 1
-			for s in o["sections"]:
-				sec_hist[s] = sec_hist.get(s, 0) + 1
-			for k in en().HAZARDS:
-				var key := "%s=%d" % [k, o["levels"][k]]
-				lvl_hist[key] = lvl_hist.get(key, 0) + 1
-			for crew in [1, 2, 3, 4]:
-				var t: Array = en().targets_for(o, crew)
-				if not (t[0] > 0 and t[0] < t[1] and t[1] < t[2]):
-					targets_bad += 1
-	print("BOARD  %d boards: stars %s | sections %s | levels %s" % [BOARDS, str(stars_hist), str(sec_hist), str(lvl_hist)])
-	check(bad == 0, "B1: every posting's stars in its band and matching its heat (%d bad of %d)" % [bad, BOARDS * 3])
-	check(dup < BOARDS / 100, "B2: postings on one board almost never repeat (%d duplicate pairs in %d boards)" % [dup, BOARDS])
-	check(fk_without_produce == 0, "B3: never a forklift without Produce open (%d)" % fk_without_produce)
-	check(tight_wrong == 0, "B4: tight clock exactly on 4-5 star or all-sections postings (%d wrong)" % tight_wrong)
-	# No posting's day may run longer than story Day 7's (prep ceiling + selling).
-	var day7: float = main.prep_ceiling_for(4) + main.shift_duration - main.FINALE_SELLING_CUT
-	var too_long := 0
-	for n in 500:
-		en().roll_offers()
-		for o in en().offers:
-			var clock: float = main.prep_ceiling_for(1 + o["sections"].size()) + main.shift_duration - (main.FINALE_SELLING_CUT if o["tight_clock"] else 0.0)
-			if clock > day7 + 0.01:
-				too_long += 1
-	check(too_long == 0, "B4b: no posting's day runs longer than story Day 7's %.0fs (%d over in 1500)" % [day7, too_long])
-	check(targets_bad == 0, "B5: medal targets positive and bronze < silver < gold for crews of 1-4 (%d bad)" % targets_bad)
-	var all_levels := true
-	for k in en().HAZARDS:
-		for l in 3:
-			all_levels = all_levels and lvl_hist.get("%s=%d" % [k, l], 0) > 0
-	check(all_levels and sec_hist.size() == 3, "B6: every hazard shows up at every level 0-2, every optional section opens")
-	for st in [1, 2, 3, 4, 5]:
-		check(stars_hist[st] > 0, "B7: %d-star postings appear (%d)" % [st, stars_hist[st]])
-	# Story days read on the same scale (the header's claim).
-	var story := {5: [1, 1, 1, 0, 0, 1], 6: [1, 1, 1, 1, 1, 1], 7: [2, 2, 2, 2, 2, 3]}
-	var story_stars := {}
-	for d in story:
-		var lv := {}
-		for i in 5:
-			lv[en().HAZARDS[i]] = story[d][i]
-		story_stars[d] = en().stars_for_heat(en().heat_of(lv, ["a", "b", "c"].slice(0, story[d][5])))
-	print("BOARD  story days on the star scale: %s" % str(story_stars))
-	check(story_stars[7] == 5, "B8: story Day 7 would read 5 stars (%s)" % str(story_stars))
-	# The payout formula visibly rewards playing well.
-	var c := {"targets": [100, 200, 300], "bucks_mult": 1.3}
-	var poor: Dictionary = en().compute_payout(c, 8, 0, 0.3, 3, 40)
-	var ok_: Dictionary = en().compute_payout(c, 20, 1, 0.7, 1, 210)
-	var great: Dictionary = en().compute_payout(c, 35, 3, 1.0, 0, 380)
-	print("BOARD  payouts poor %s | ok %s | great %s" % [str(poor), str(ok_), str(great)])
-	check(poor["total"] < ok_["total"] and ok_["total"] < great["total"] and great["total"] >= 3 * maxi(1, poor["total"]), "B9: poor %d < ok %d < great %d Bucks" % [poor["total"], ok_["total"], great["total"]])
-	# Per head: a crew of 3 with three times the solo numbers earns about what
-	# one great solo player does (the medal is the crew's, whole).
-	var crew3 := {"targets": [100, 200, 300], "bucks_mult": 1.3, "crew": 3}
-	var great3: Dictionary = en().compute_payout(crew3, 105, 9, 1.0, 0, 380)
-	check(absi(int(great3["total"]) - int(great["total"])) <= 3, "B10: a crew of 3 selling 105 earns %d Bucks per shift — solo selling 35 earns %d" % [great3["total"], great["total"]])
-	finish()
-
-## Solo: the whole loop, the brain playing every shift.
-func _run_endless() -> void:
-	var shifts := _arg_int("--shifts=", 4)
-	if _endless_fast:
-		main.shift_duration = 60.0
-		main.prep_ceiling_override = 0.0
-	await wait_until(func(): return main.shift_active and main.current_day == 7 and main.players.has(1), 20.0)
-	# --- EW: the story's last day, played.
-	var t0 := _wall()
-	await _play_one_shift(true)
-	print("ENDLESS  Day 7 played in %.0fs wall: sold %d, pay %s" % [_wall() - t0, main._total_sold() - main._sold_at_day_start, main._format_money(main._pay_today())])
-	_check_week_complete("EW1")
-	var week_sold: int = main._total_sold()
-	var w0: int = en().wallet
-	main.continue_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_WEEK_COMPLETE, 3.0)
-	await process_frame
-	await process_frame
-	_check_week_screen("EW2", w0, week_sold)
-	main._on_continue_pressed() # a stray Continue: nothing
-	await wait(0.3)
-	check(en().screen == en().SCREEN_WEEK_COMPLETE and main.current_day == 7, "EW3: a stray Continue on the Week Complete screen does nothing")
-	hub().enter_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_HUB, 3.0)
-	await process_frame
-	await process_frame
-	_check_hub("EH1")
-	var results := []
-	var bought := []
-	for n in shifts:
-		var tag := "S%d" % (n + 1)
-		# Buy something first (the cheapest the wallet covers, Back Brace and
-		# sneakers preferred — their effects are checked below).
-		var k := _pick_upgrade(["brace", "shoes"])
-		if k != "":
-			var lvl0: int = en().upgrade_level(k)
-			var w: int = en().wallet
-			var cost: int = en().next_cost(k)
-			hub().buy_buttons[k].pressed.emit()
-			await process_frame
-			check(en().upgrade_level(k) == lvl0 + 1 and en().wallet == w - cost, "%s: bought %s -> level %d for %d Bucks (wallet %d -> %d)" % [tag, k, lvl0 + 1, cost, w, en().wallet])
-			bought.append("%s%d" % [k, lvl0 + 1])
-		# An unaffordable one is refused.
-		for u in en().UPGRADES:
-			var c: int = en().next_cost(u["key"])
-			if c > en().wallet:
-				var w2: int = en().wallet
-				en().request_buy(u["key"])
-				check(en().wallet == w2 and en().next_cost(u["key"]) == c, "%s: can't buy %s (%d) with %d Bucks" % [tag, u["key"], c, w2])
-				break
-		var pick: int = n % en().offers.size()
-		var offer: Dictionary = en().offers[pick].duplicate(true)
-		var taken0: int = en().offers_taken
-		hub().offer_buttons[pick].pressed.emit()
-		await wait_until(func(): return main.shift_active, 5.0)
-		await process_frame
-		check(en().offers_taken == taken0 + 1 and en().shift_number == n + 1 and en().contract["id"] == offer["id"], "%s: took posting %d \"%s\" %d* -> shift #%d" % [tag, pick, offer["name"], offer["stars"], en().shift_number])
-		check(not hub().visible and not main.is_day_report_active(), "%s: hub down, world running" % tag)
-		_check_shift_setup(tag)
-		await wait(0.2)
-		check(main._finale_banner.visible and ("SHIFT #%d" % (n + 1)) in main._finale_banner.get_child(0).text, "%s: start banner '%s' / '%s'" % [tag, main._finale_banner.get_child(0).text, main._finale_banner.get_child(1).text])
-		if n == 0:
-			await _check_upgrade_effects(tag)
-		var t1 := _wall()
-		await _play_one_shift(true)
-		var r := _check_shift_outcome(tag)
-		r["posting"] = "%s %d* %s %s" % [offer["name"], offer["stars"], str(offer["sections"]), str(offer["levels"])]
-		r["wall_s"] = roundi(_wall() - t1)
-		results.append(r)
-		print("ENDLESS  %s: %s" % [tag, str(r)])
-		check(main.report_title_label.text == "Shift #%d Complete" % (n + 1) and not main.report_week_label.text.contains("Week"), "%s: report '%s' / '%s' — no 'Week' anywhere" % [tag, main.report_title_label.text, main.report_week_label.text])
-		check(main.report_bucks_label.visible and main.report_bucks_label.text.contains("+%d Break Room Bucks" % r["bucks"]) and main.report_run_label.text.contains("%d shift(s)" % (n + 1)), "%s: report shows the Bucks and the run: '%s' / '%s'" % [tag, main.report_bucks_label.text.replace("\n", " | "), main.report_run_label.text])
-		check(not main.report_pay_label.text.contains("Week") and not main.debug_label.text.contains("Week") and not main.status_label.text.contains("Week"), "%s: no 'Week' on the pay line or HUD ('%s' / '%s')" % [tag, main.report_pay_label.text, main.status_label.text])
-		check(main.continue_button.text == "Back to the Break Room", "%s: button reads '%s'" % [tag, main.continue_button.text])
-		var old_ids: Array = en().offers.map(func(o): return o["id"])
-		main.continue_button.pressed.emit()
-		await wait_until(func(): return en().screen == en().SCREEN_HUB, 3.0)
-		await process_frame
-		await process_frame
-		_check_hub("%s-hub" % tag)
-		check(en().offers.all(func(o): return not o["id"] in old_ids), "%s: a fresh board after the shift" % tag)
-		check(int(en().run_stats["shifts"]) == n + 1, "%s: run stats count %d shifts" % [tag, en().run_stats["shifts"]])
-	print("ENDLESS SUMMARY — bought %s, wallet %d, run %s" % [str(bought), en().wallet, str(en().run_stats)])
-	for r in results:
-		print("ENDLESS  %s" % str(r))
-	finish()
-
-## Solo, early in a shift: the purchased upgrades do what they say.
+## The Break Room Shop's upgrades, measured on the live player (Shop.gd).
 func _check_upgrade_effects(tag: String) -> void:
 	var p := player()
 	# Speed: walk right across open floor for a moment and measure.
-	check(is_equal_approx(p.speed(), p.SPEED * en().speed_mult()), "%s: walk speed %.0f = %.0f x %.2f" % [tag, p.speed(), p.SPEED, en().speed_mult()])
+	check(is_equal_approx(p.speed(), p.SPEED * main.shop.speed_mult()), "%s: walk speed %.0f = %.0f x %.2f" % [tag, p.speed(), p.SPEED, main.shop.speed_mult()])
 	# Back Brace: E fills your arms up to the capacity; the host refuses one
 	# more; E on full arms sets the whole armful down, spread out.
-	var cap: int = en().carry_capacity()
+	var cap: int = main.shop.carry_capacity()
 	p.teleport_to(Vector2(1440, 700)) # open floor in the checkout hub
 	await wait(0.3)
 	for i in cap + 1:
@@ -5507,7 +5171,7 @@ func _check_upgrade_effects(tag: String) -> void:
 		await tap(act + "interact")
 		await wait(0.25)
 	var held: int = p.carried_count(me)
-	check(held == cap, "%s: Back Brace level %d -> E grabbed %d at once (capacity %d)" % [tag, en().upgrade_level("brace"), held, cap])
+	check(held == cap, "%s: Back Brace level %d -> E grabbed %d at once (capacity %d)" % [tag, main.shop.upgrade_level("brace"), held, cap])
 	for o in get_nodes_in_group("carryable"):
 		var c: Node = o.get_node("Carryable")
 		if c.carrier_id == 0 and o.global_position.distance_to(p.global_position) < 70.0:
@@ -5529,7 +5193,9 @@ func _check_upgrade_effects(tag: String) -> void:
 			for b in range(a + 1, mine.size()):
 				gap = minf(gap, mine[a].global_position.distance_to(mine[b].global_position))
 		var fast := mine.filter(func(o): return o.linear_velocity.length() > 60.0).size()
-		check(p.carried_count(me) == 0 and gap >= 28.0 and fast == 0, "%s: one E on full arms set all %d down, side by side (closest %.0fpx apart, %d still flying)" % [tag, mine.size(), gap, fast])
+		# >= 24: side by side, not piled (a product is 28px; real-time physics
+		# settles two touching ones a px or two closer than the fixed-fps sim did).
+		check(p.carried_count(me) == 0 and gap >= 24.0 and fast == 0, "%s: one E on full arms set all %d down, side by side (closest %.0fpx apart, %d still flying)" % [tag, mine.size(), gap, fast])
 	else:
 		await tap(act + "interact")
 		await wait(0.3)
@@ -5558,201 +5224,3 @@ func _check_upgrade_effects(tag: String) -> void:
 	p.teleport_to(main.SPAWN_CENTER)
 	await wait(0.3)
 
-## ---------------------------------------------------------------------------
-## Co-op. Every step is a numbered file the host writes (ne_<n>.json); each
-## client acts on it and answers (ne_<n>_<peer>.json). "view" steps: the
-## client waits until its own _endless_view() matches the host's (8s max)
-## and reports any difference.
-
-var _ne_seq := 0
-
-func _ne_step(kind: String, data := {}) -> void:
-	_ne_seq += 1
-	data["kind"] = kind
-	_net_write("ne_%d.json" % _ne_seq, data)
-
-func _ne_answers(ids: Array, timeout: float) -> Dictionary:
-	var out := {}
-	for id in ids:
-		if id == 1:
-			continue
-		out[id] = await _net_read("ne_%d_%d.json" % [_ne_seq, id], timeout)
-	return out
-
-func _ne_sync_view(ids: Array, tag: String) -> void:
-	await wait(0.3)
-	_ne_step("view", {"tag": tag, "view": JSON.parse_string(JSON.stringify(_endless_view()))})
-	var ans := await _ne_answers(ids, 40.0)
-	for id in ans:
-		check(ans[id].get("ok", false), "%s: %s sees exactly the host's endless state%s" % [tag, main.player_display_name(id), ans[id].get("why", " (no answer)")])
-
-func _run_net_endless_host() -> void:
-	var want := _arg_int("--players=", 2)
-	var shifts := _arg_int("--shifts=", 4)
-	if DirAccess.dir_exists_absolute(NET_DIR):
-		for f in DirAccess.get_files_at(NET_DIR):
-			DirAccess.remove_absolute(NET_DIR + f)
-	if _endless_fast:
-		main.shift_duration = 60.0
-		main.prep_ceiling_override = 0.0
-	await wait_until(func(): return main.shift_active and main.players.size() >= want, 60.0)
-	var ids: Array = main.players.keys()
-	ids.sort()
-	check(main.players.size() == want and main.current_day == 7, "net: %d players on Day 7" % main.players.size())
-	_ne_step("settings", {"fast": _endless_fast, "dur": main.shift_duration, "prep": main.prep_ceiling_override})
-	await _ne_answers(ids, 30.0)
-	# --- Day 7, everyone playing.
-	_ne_step("play")
-	await _play_one_shift(true)
-	_check_week_complete("NW1")
-	await _ne_sync_view(ids, "NW1 Day 7 report")
-	# A CLIENT finishes the week (its Continue is a request RPC).
-	var w0: int = en().wallet
-	var week_sold: int = main._total_sold()
-	_ne_step("click", {"who": ids[1], "what": "continue"})
-	await wait_until(func(): return en().screen == en().SCREEN_WEEK_COMPLETE, 10.0)
-	await _ne_answers(ids, 30.0)
-	_check_week_screen("NW2", w0, week_sold)
-	await _ne_sync_view(ids, "NW2 week complete")
-	# The LAST client clocks the crew in to endless.
-	_ne_step("click", {"who": ids[-1], "what": "enter"})
-	await wait_until(func(): return en().screen == en().SCREEN_HUB, 10.0)
-	await _ne_answers(ids, 30.0)
-	_check_hub("NH1")
-	await _ne_sync_view(ids, "NH1 hub")
-	# NP1: the purchase race — everyone buys Steel-Toe Boots at once; the
-	# wallet covers one level (40 - 15 = 25 < 35), so it's bought once.
-	var p0: int = en().purchases_applied
-	var at := Time.get_unix_time_from_system() + 2.0
-	_ne_step("click", {"who": 0, "what": "buy", "key": "boots", "at": at})
-	while Time.get_unix_time_from_system() < at:
-		await process_frame
-	hub().buy_buttons["boots"].pressed.emit()
-	await _ne_answers(ids, 30.0)
-	await wait(1.0)
-	check(en().purchases_applied == p0 + 1 and en().upgrade_level("boots") == 1 and en().wallet == w0 + en().WEEK_COMPLETE_BUCKS - 15, "NP1 race: %d peers bought Steel-Toe Boots at once -> bought once (level %d, wallet %d)" % [want, en().upgrade_level("boots"), en().wallet])
-	await _ne_sync_view(ids, "NP1 after the purchase race")
-	var results := []
-	for n in shifts:
-		var tag := "NS%d" % (n + 1)
-		var offer: Dictionary
-		var taken0: int = en().offers_taken
-		if n == 0:
-			# NT1: the posting race — every peer takes a DIFFERENT posting in
-			# the same instant; exactly one shift starts, everyone on it.
-			at = Time.get_unix_time_from_system() + 2.0
-			_ne_step("click", {"who": 0, "what": "take_race", "at": at})
-			while Time.get_unix_time_from_system() < at:
-				await process_frame
-			hub().offer_buttons[0].pressed.emit()
-			await _ne_answers(ids, 30.0)
-			await wait(1.0)
-			check(en().offers_taken == taken0 + 1 and main.shift_active, "NT1 race: %d peers took different postings at once -> one shift started (#%d \"%s\")" % [want, en().shift_number, en().contract.get("name", "")])
-		else:
-			# Whoever's turn it is picks (host or a client), a different band each time.
-			var who: int = ids[n % ids.size()]
-			var pick: int = n % en().offers.size()
-			offer = en().offers[pick].duplicate(true)
-			if who == 1:
-				hub().offer_buttons[pick].pressed.emit()
-			else:
-				_ne_step("click", {"who": who, "what": "take", "index": pick})
-				await _ne_answers(ids, 30.0)
-			await wait_until(func(): return main.shift_active, 10.0)
-			check(en().offers_taken == taken0 + 1 and en().contract["id"] == offer["id"], "%s: %s took posting %d \"%s\" %d*" % [tag, main.player_display_name(who), pick, offer["name"], offer["stars"]])
-		check(en().contract.get("crew", 0) == want and en().contract["targets"] == en().targets_for(en().contract, want), "%s: medal targets set for a crew of %d: %s" % [tag, want, str(en().contract["targets"])])
-		_check_shift_setup(tag)
-		await _ne_sync_view(ids, "%s shift start" % tag)
-		_ne_step("play")
-		var t1 := _wall()
-		await _play_one_shift(true)
-		var r := _check_shift_outcome(tag)
-		r["posting"] = "%s %d* %s %s" % [en().contract["name"], en().contract["stars"], str(en().contract["sections"]), str(en().contract["levels"])]
-		r["wall_s"] = roundi(_wall() - t1)
-		results.append(r)
-		print("NET-ENDLESS  %s: %s" % [tag, str(r)])
-		await _ne_answers(ids, 300.0)
-		await _ne_sync_view(ids, "%s report" % tag)
-		# Back to the break room (a client's click on odd shifts).
-		if n % 2 == 1:
-			_ne_step("click", {"who": ids[1], "what": "continue"})
-			await _ne_answers(ids, 30.0)
-		else:
-			main.continue_button.pressed.emit()
-		await wait_until(func(): return en().screen == en().SCREEN_HUB, 10.0)
-		await process_frame # the screens swap on the next _process
-		await process_frame
-		_check_hub("%s-hub" % tag)
-		# Someone buys what the wallet covers (a client when it's their turn).
-		var k := _pick_upgrade(["brace", "shoes", "alibi", "janitor", "soles", "badge"])
-		if k != "":
-			var lvl0: int = en().upgrade_level(k)
-			var buyer: int = ids[(n + 1) % ids.size()]
-			if buyer == 1:
-				hub().buy_buttons[k].pressed.emit()
-			else:
-				_ne_step("click", {"who": buyer, "what": "buy", "key": k, "at": 0.0})
-				await _ne_answers(ids, 30.0)
-			await wait_until(func(): return en().upgrade_level(k) == lvl0 + 1, 5.0)
-			check(en().upgrade_level(k) == lvl0 + 1, "%s: %s bought %s level %d" % [tag, main.player_display_name(buyer), k, lvl0 + 1])
-		await _ne_sync_view(ids, "%s hub" % tag)
-	_ne_step("done")
-	await _ne_answers(ids, 30.0)
-	print("NET-ENDLESS SUMMARY — %d players, wallet %d, upgrades %s, run %s" % [want, en().wallet, str(en().upgrades), str(en().run_stats)])
-	for r in results:
-		print("NET-ENDLESS  %s" % str(r))
-	finish()
-
-func _run_net_endless_client() -> void:
-	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
-	me = main.multiplayer.get_unique_id()
-	act = "client_"
-	var who: String = main.player_display_name(me)
-	var n := 0
-	while true:
-		n += 1
-		var step := await _net_read("ne_%d.json" % n, 1800.0)
-		var kind: String = step.get("kind", "")
-		var ans := {}
-		match kind:
-			"settings":
-				main.shift_duration = float(step["dur"])
-				main.prep_ceiling_override = float(step["prep"])
-			"play":
-				await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 20.0)
-				await _play_one_shift(false)
-			"view":
-				var theirs: Dictionary = step["view"]
-				var ok := await wait_until(func(): return _canon(_endless_view()) == _canon(theirs), 8.0)
-				var why := "" if ok else _view_diff(JSON.parse_string(JSON.stringify(_endless_view())), theirs)
-				ans = {"ok": ok, "why": why}
-				check(ok, "%s: %s matches the host%s" % [who, step.get("tag", ""), why])
-			"click":
-				var target: int = int(step.get("who", 0))
-				var at: float = float(step.get("at", 0.0))
-				if target == me or target == 0:
-					while Time.get_unix_time_from_system() < at:
-						await process_frame
-					await wait_until(func(): return hub().visible or main.report_layer.visible, 5.0)
-					match step.get("what", ""):
-						"continue":
-							main.continue_button.pressed.emit()
-						"enter":
-							hub().enter_button.pressed.emit()
-						"buy":
-							hub().buy_buttons[step["key"]].pressed.emit()
-						"take":
-							hub().offer_buttons[int(step["index"])].pressed.emit()
-						"take_race":
-							var ids: Array = main.players.keys()
-							ids.sort()
-							hub().offer_buttons[(ids.find(me)) % hub().offer_buttons.size()].pressed.emit()
-			"done":
-				_net_write("ne_%d_%d.json" % [n, me], {})
-				finish()
-				return
-			_:
-				check(false, "%s: no step %d from the host" % [who, n])
-				finish()
-				return
-		_net_write("ne_%d_%d.json" % [n, me], ans)

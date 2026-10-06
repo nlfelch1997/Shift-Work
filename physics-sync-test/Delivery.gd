@@ -239,7 +239,9 @@ func _tick_truck(delta: float) -> void:
 	match _truck_state:
 		TRUCK_AWAY:
 			# WEEK 19: no deliveries once the store has closed for cleanup.
-			if _truck_timer <= 0.0 and not main.cleanup_active:
+			# PHASE 4: nor while a Surprise Delivery is announced — its truck
+			# is the next one in (start_event_delivery()).
+			if _truck_timer <= 0.0 and not main.cleanup_active and not main.events.holds_truck():
 				start_delivery()
 		TRUCK_ARRIVING:
 			truck_offset = maxf(0.0, truck_offset - TRUCK_AWAY_OFFSET / TRUCK_ARRIVE_TIME * delta)
@@ -281,6 +283,25 @@ func start_delivery() -> void:
 	_truck_timer = truck_interval()
 	deliveries_today += 1
 	print("[Delivery] Truck #%d arriving with %d box(es): %s" % [deliveries_today, cargo.size(), str(cargo)])
+
+## OCT 2026 PHASE 4 — host-only, from Events.gd's Surprise Delivery: the
+## truck comes in NOW with exactly `cargo` (one box per open section, +
+## extras). Staffed sections' boxes still go to their helpers' back rooms,
+## the same rule as every truck. Only from AWAY (the event checks it, and the
+## regular truck holds while the event is announced). Returns whether it came.
+func start_event_delivery(cargo: Array) -> bool:
+	if not multiplayer.is_server() or _truck_state != TRUCK_AWAY:
+		return false
+	var rest: Array = main.staff.divert_boxes(cargo)
+	truck_load = rest
+	_truck_state = TRUCK_ARRIVING
+	_truck_timer = truck_interval()
+	deliveries_today += 1
+	print("[Delivery] SURPRISE truck #%d arriving with %d box(es): %s" % [deliveries_today, rest.size(), str(rest)])
+	return true
+
+func truck_away() -> bool:
+	return _truck_state == TRUCK_AWAY
 
 func truck_parked() -> bool:
 	return truck_offset <= 0.0
@@ -461,6 +482,7 @@ func unpack_into_section(section: String, event_text: String) -> void:
 		spots.append(pos)
 		main.spawn_product_at(section, pos)
 	_pad_event(section, event_text, true)
+	main.events.note_unpack(section) # OCT 2026 PHASE 4: a Surprise Delivery counts it
 	print("[Delivery] Unpacked a %s box (%d today) -> %d loose on the floor by its pad (%s)" % [section, boxes_unpacked_today, UNITS_PER_BOX, event_text])
 
 ## Host-only: somewhere in the ring round the section's pad that isn't on top

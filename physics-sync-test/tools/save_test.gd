@@ -7,28 +7,29 @@ extends SceneTree
 ##   OCT 2026 PHASE 2 (save VERSION 2, the shopkeeper economy): solo — earn,
 ##   buy Produce mid-prep, quit mid-day, relaunch (bank, sections, stage and
 ##   lifetime sales back; the day replays), play to Day 7, relaunch into Day 8
-##   (the game goes on past the old week), then — the debug --endless route —
-##   relaunch into WEEK COMPLETE, earn + spend Bucks, quit, relaunch into the
-##   hub (SAVE = --save-file=user://save_test/save.json). Run in this order:
-##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --test=save --phase=1   (2, 7)
-##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --endless --test=save --phase=3   (4)
+##   (the game goes on past the old week), then — OCT 2026 PHASE 4, save
+##   VERSION 5 — buy gear at the Break Room Shop with the bank, quit
+##   mid-shift, relaunch with the gear (and its effect) intact
+##   (SAVE = --save-file=user://save_test/save.json). Run in this order:
+##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --test=save --phase=1   (2, 7, 3, 4)
 ##   Damaged / missing files, and debug starts never touching the real save:
 ##     godot --headless --path . --script res://tools/save_test.gd -- --server SAVE --test=save --phase=5
 ##     godot --headless --path . --script res://tools/save_test.gd -- --server --day=3 --test=save --phase=6
 ##   Co-op — the host has a save (and so does the client, a different one);
-##   the client must see the HOST's progress, buy/take a shift/press Save
-##   through the host, and its own file must never change:
+##   the client must see the HOST's progress, buy gear/press Save through the
+##   host, and its own file must never change (PHASE 4: the host's file is an
+##   old version-2 save with Endless upgrades — they load as the crew's gear):
 ##     godot --headless --path . --script res://tools/save_test.gd -- --server --save-file=user://save_test/host.json --test=net-save &
 ##     godot --headless --path . --script res://tools/save_test.gd -- --client --save-file=user://save_test/client.json --test=net-save
 ##   (--test=net-save-story: the same, with a mid-game save: Day 5, the bank)
 ##
 ## Sales are injected on the host (a cashier's replicated total_sold), and a
 ## shift is ended by running its clock out — the save/load paths, the report,
-## the hub's real buttons and the payouts all run through the game's own code.
+## the shop's real buttons and the payouts all run through the game's own code.
 
-## Loaded at run time, not preloaded: SaveGame.gd reaches Endless.gd ->
-## BreakRoom.gd, which names the Net autoload — not registered yet while a
-## --script SceneTree is being compiled.
+## Loaded at run time, not preloaded: SaveGame.gd reaches Shop.gd/Events.gd,
+## which name the Net/Sfx autoloads — not registered yet while a --script
+## SceneTree is being compiled.
 var SaveGameScript: GDScript
 const DIR := "user://save_test/"
 const SOLO := DIR + "save.json"
@@ -69,10 +70,13 @@ func _initialize() -> void:
 				if DirAccess.dir_exists_absolute(NET_DIR):
 					for f in DirAccess.get_files_at(NET_DIR):
 						DirAccess.remove_absolute(NET_DIR + f)
-				_write_text(HOST_SAVE, JSON.stringify(HOST_ENDLESS_FILE if mode == "net-save" else HOST_STORY_FILE, "\t"))
+				_write_text(HOST_SAVE, JSON.stringify(HOST_V2_GEAR_FILE if mode == "net-save" else HOST_STORY_FILE, "\t"))
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	main.cleanup_ceiling_override = 0.0 # the report the moment the clock runs out
 	match mode:
 		"save":
@@ -113,8 +117,8 @@ func wait_until(cond: Callable, timeout: float) -> bool:
 		t += 1.0 / 60.0
 	return cond.call()
 
-func en() -> Node:
-	return main.endless
+func shop() -> Node:
+	return main.shop
 
 func player() -> Node2D:
 	return main.players[me]
@@ -175,11 +179,9 @@ func measure_speed(frames := 30) -> float:
 ## The progress this peer can see — host and client must agree on all of it.
 func view() -> Dictionary:
 	return {
-		"day": main.current_day, "screen": en().screen, "wallet": en().wallet,
-		"upgrades": en().upgrades, "run": en().run_stats, "shift": en().shift_number,
-		"week_summary": en().week_summary, "lifetime_sold": main._total_sold(),
+		"day": main.current_day, "gear": shop().upgrades, "lifetime_sold": main._total_sold(),
 		"money": main.money, "earned": main.lifetime_earned, "owned": main.sections_owned, "stage": main.complication_stage,
-		"speed_mult": en().speed_mult(), "carry": en().carry_capacity(), "badge": en().has_badge(),
+		"speed_mult": shop().speed_mult(), "carry": shop().carry_capacity(), "badge": shop().has_badge(),
 	}
 
 ## =============================================================================
@@ -191,7 +193,7 @@ func view() -> Dictionary:
 func _phase1() -> void:
 	check(main.load_status == SaveGameScript.LOAD_NONE and main.save_enabled, "P1: no save file -> a fresh start (status %d), saving on" % main.load_status)
 	check(await wait_shift(), "P1: Day 1's shift starts")
-	check(main.current_day == 1 and main.money == 0 and main.sections_owned == 1 and en().wallet == 0 and en().upgrades.is_empty(), "P1: Day 1, empty bank, Dry Goods only")
+	check(main.current_day == 1 and main.money == 0 and main.sections_owned == 1 and shop().upgrades.is_empty(), "P1: Day 1, empty bank, Dry Goods only, no gear")
 	check(not FileAccess.file_exists(SOLO), "P1: nothing saved before a day is done")
 	add_sales(50)
 	main.record_writeup(1, "testing")
@@ -232,7 +234,6 @@ func _phase2() -> void:
 	check(main.money == int(expect["money"]) and main.lifetime_earned == int(expect["earned"]) and main.sections_owned == 2, "P2: bank %s, lifetime $%d, 2 sections — as saved" % [main._format_money(main.money), main.lifetime_earned])
 	check(main.get_node("Gates/GateMeatDeli/CollisionShape2D").disabled, "P2: Produce's gate is open after the relaunch")
 	check(main.complication_stage == main.STAGE_FORKLIFT, "P2: and the forklift stage arrived with this (replayed) shift's start (stage %d)" % main.complication_stage)
-	check(main.multiplayer.is_server() and not en().screen, "P2: shop play, no hub")
 	add_sales(3)
 	await end_shift_now()
 	check(main.report_layer.visible and main.report_week_label.text.begins_with("Bank: %s" % main._format_money(main.money)) and main.report_today_label.text == "Sold Today: 3", "P2: Day 3's report: '%s' / '%s'" % [main.report_today_label.text, main.report_week_label.text])
@@ -252,89 +253,70 @@ func _phase2() -> void:
 	check(main.saves_written == before + 1 and FileAccess.file_exists(SOLO), "P2: Save button wrote the file (saves %d -> %d)" % [before, main.saves_written])
 	check(main.save_button.text == "Saved ✓", "P2: and says so ('%s')" % main.save_button.text)
 	var d := disk()
-	check(d["shop"]["completed_day"] == 7 and not d["endless"]["unlocked"] and d["endless"]["wallet"] == 0, "P2: saved on Day 7's report: completed 7, no Endless, no Bucks")
+	check(d["shop"]["completed_day"] == 7 and d["gear"].is_empty() and d["events"]["seen"].is_empty(), "P2: saved on Day 7's report: completed 7, no gear, no events")
+	var rawj: Dictionary = _read_json(SOLO)
+	check(int(rawj.get("version", 0)) == 5 and rawj.has("gear") and rawj.has("events") and not rawj.has("endless"), "P2: the file is version 5: 'gear' and 'events', no 'endless' block (%s)" % str(rawj.keys()))
 	await wait(2.7)
 	check(main.save_button.text == "Save", "P2: the button reads 'Save' again after a moment")
 	_write_text(EXPECT, JSON.stringify({"money": main.money, "earned": main.lifetime_earned, "owned": main.sections_owned, "stage": main.complication_stage}))
 	print("P2: quitting on Day 7's report")
 	finish()
 
-## Relaunch (no --endless): the game goes on — Day 8, everything as saved.
-## Leaves the file alone (no checkpoint reached) for the endless phases.
+## Relaunch: the game goes on — Day 8, everything as saved. Leaves the file
+## alone (no checkpoint reached) for the gear phases.
 func _phase7() -> void:
 	var expect: Dictionary = _read_json(EXPECT)
 	var raw := FileAccess.get_file_as_string(SOLO)
 	check(main.load_status == SaveGameScript.LOAD_OK, "P7: loaded")
-	check(await wait_shift() and main.current_day == 8 and not main.is_endless() and en().screen == en().SCREEN_NONE, "P7: a Day 7 save resumes on Day 8 — past the old week, no WEEK COMPLETE")
+	check(await wait_shift() and main.current_day == 8 and main.get_node_or_null("HubUI") == null, "P7: a Day 7 save resumes on Day 8 — past the old week, no WEEK COMPLETE")
 	check(main.money == int(expect["money"]) and main.lifetime_earned == int(expect["earned"]) and main.sections_owned == int(expect["owned"]), "P7: bank %s, lifetime $%d, %d sections — as saved" % [main._format_money(main.money), main.lifetime_earned, main.sections_owned])
 	check(main.complication_stage >= int(expect["stage"]), "P7: stage %d (saved %d; at most one step on at this shift's start)" % [main.complication_stage, int(expect["stage"])])
 	check(main.status_label.text.begins_with("Day 8  ·  Bank %s" % main._format_money(main.money)), "P7: status line '%s'" % main.status_label.text)
 	check(FileAccess.get_file_as_string(SOLO) == raw, "P7: nothing written (no checkpoint yet)")
 	finish()
 
-## Relaunch: straight to WEEK COMPLETE (paid once), the hub, an endless shift,
-## a purchase, quit.
+## OCT 2026 PHASE 4 — relaunch onto Day 8 again (the file still says Day 7
+## was the last done), buy gear at the Break Room Shop with the bank during
+## prep (the real E at the lockers, the real button), quit mid-shift.
 func _phase3() -> void:
 	check(main.load_status == SaveGameScript.LOAD_OK, "P3: loaded")
-	check(await wait_until(func(): return en().screen == en().SCREEN_WEEK_COMPLETE and main.hub_ui.visible, 5.0), "P3: a Day 7 save that never finished the week opens on WEEK COMPLETE")
-	check(not main.shift_active and main.current_day == 7, "P3: no shift runs under it, Day 7")
-	check(en().wallet == 40 and main.story_complete, "P3: the week's 40 Bucks paid (wallet %d), story complete" % en().wallet)
-	# Phase 2: the save keeps lifetime sales, not week totals (no week).
-	check(int(en().week_summary.get("sold", -1)) == 101, "P3: WEEK COMPLETE counts every sale across the relaunches: sold %s (want 101)" % str(en().week_summary.get("sold")))
-	var d := disk()
-	check(d["endless"]["unlocked"] and d["endless"]["wallet"] == 40, "P3: autosaved at WEEK COMPLETE (unlocked, wallet 40)")
+	check(await wait_shift() and main.current_day == 8 and not main.store_open, "P3: Day 8, in prep")
+	main.money = 1000 # enough for two pieces of gear (test plumbing)
+	player().teleport_to(shop().LOCKER_SPOT)
 	await wait(0.3)
-	press(main.hub_ui.enter_button, "P3: WEEK COMPLETE's enter-the-hub")
-	check(await wait_until(func(): return en().screen == en().SCREEN_HUB and main.current_day == 8, 3.0), "P3: the hub (Day parks at 8)")
-	await wait(0.3)
-	press(main.hub_ui.offer_buttons[0], "P3: the first posting")
-	check(await wait_shift() and en().shift_number == 1, "P3: endless shift #1 runs")
-	add_sales(30)
-	await end_shift_now()
-	var paid := int(en().last_payout.get("total", -1))
-	check(paid > 0 and en().wallet == 40 + paid, "P3: shift paid %d Bucks (wallet %d)" % [paid, en().wallet])
-	d = disk()
-	check(d["endless"]["wallet"] == en().wallet and d["endless"]["run_stats"]["shifts"] == 1 and d["endless"]["shift_number"] == 1, "P3: autosaved at the payout (wallet %d, 1 shift)" % d["endless"]["wallet"])
-	main._on_continue_pressed()
-	check(await wait_until(func(): return en().screen == en().SCREEN_HUB, 3.0), "P3: back to the break room")
-	await wait(0.3)
-	var w0: int = en().wallet
-	press(main.hub_ui.buy_buttons["shoes"], "P3: buy Comfy Sneakers")
+	Input.action_press(act + "interact")
+	await physics_frame
+	Input.action_release(act + "interact")
+	check(await wait_until(func(): return shop().panel.visible and shop().buttons.has("shoes"), 3.0), "P3: E at the gear lockers opens the shop")
+	press(shop().buttons["shoes"], "P3: buy Comfy Sneakers")
 	await wait(0.2)
-	check(en().upgrade_level("shoes") == 1 and en().wallet == w0 - 20, "P3: Sneakers level 1, wallet %d -> %d" % [w0, en().wallet])
-	d = disk()
-	check(d["endless"]["upgrades"].get("shoes") == 1 and d["endless"]["wallet"] == en().wallet, "P3: the purchase autosaved at once (%s, wallet %d)" % [str(d["endless"]["upgrades"]), d["endless"]["wallet"]])
-	await wait(0.3)
-	if en().wallet >= 15:
-		press(main.hub_ui.buy_buttons["boots"], "P3: buy Steel-Toe Boots")
-		await wait(0.2)
-	var expect := {"wallet": en().wallet, "upgrades": en().upgrades, "run": en().run_stats, "shift": en().shift_number}
-	check(_canon(disk()["endless"]["upgrades"]) == _canon(en().upgrades) and disk()["endless"]["wallet"] == en().wallet, "P3: file == live after every purchase (%s, wallet %d)" % [str(en().upgrades), en().wallet])
+	check(shop().upgrade_level("shoes") == 1 and main.money == 1000 - 200, "P3: Sneakers level 1, bank $1000 -> %s" % main._format_money(main.money))
+	var d := disk()
+	check(d["gear"].get("shoes") == 1 and d["shop"]["money"] == main.money and d["shop"]["completed_day"] == 7, "P3: the purchase autosaved at once (%s, bank %s) — the day itself still isn't" % [str(d["gear"]), main._format_money(d["shop"]["money"])])
+	await wait(0.2)
+	press(shop().buttons["boots"], "P3: buy Steel-Toe Boots")
+	await wait(0.2)
+	var expect := {"gear": shop().upgrades, "money": main.money}
+	check(_canon(disk()["gear"]) == _canon(shop().upgrades) and disk()["shop"]["money"] == main.money, "P3: file == live after every purchase (%s, bank %s)" % [str(shop().upgrades), main._format_money(main.money)])
 	_write_text(EXPECT, JSON.stringify(expect))
-	print("P3: quitting in the hub — expecting %s" % str(expect))
+	print("P3: quitting mid-prep on Day 8 — expecting %s" % str(expect))
 	finish()
 
-## Relaunch: straight into the hub, exactly what was there; the upgrade really
-## works; Shift #2 continues the count.
+## Relaunch: the gear is exactly what was bought, it really works, and the
+## next checkpoint keeps it.
 func _phase4() -> void:
 	var expect: Dictionary = _read_json(EXPECT)
 	check(main.load_status == SaveGameScript.LOAD_OK, "P4: loaded")
-	check(await wait_until(func(): return en().screen == en().SCREEN_HUB and main.hub_ui.visible, 5.0), "P4: a finished story opens straight into the hub")
-	check(main.current_day == 8 and not main.shift_active and en().offers.size() == 3, "P4: endless (day 8), no shift running, a fresh board of 3")
-	check(en().wallet == int(expect["wallet"]), "P4: wallet %d == %d" % [en().wallet, int(expect["wallet"])])
-	check(_canon(en().upgrades) == _canon(expect["upgrades"]), "P4: upgrades %s == %s" % [str(en().upgrades), str(expect["upgrades"])])
-	check(_canon(en().run_stats) == _canon(expect["run"]) and en().shift_number == int(expect["shift"]), "P4: run totals %s, shift counter %d" % [str(en().run_stats), en().shift_number])
-	check(int(en().week_summary.get("sold", -1)) == 101, "P4: the week's results kept (sold %s)" % str(en().week_summary.get("sold")))
-	await wait(0.3)
-	press(main.hub_ui.offer_buttons[2], "P4: the hard posting")
-	check(await wait_shift() and en().shift_number == int(expect["shift"]) + 1, "P4: Shift #%d (the count continues)" % en().shift_number)
+	check(await wait_shift() and main.current_day == 8, "P4: Day 8 (replayed — it never finished)")
+	check(_canon(shop().upgrades) == _canon(expect["gear"]) and main.money == int(expect["money"]), "P4: gear %s == %s, bank %s" % [str(shop().upgrades), str(expect["gear"]), main._format_money(main.money)])
 	var S: float = player().SPEED
 	var v := await measure_speed()
-	check(absf(v - S * en().speed_mult()) < S * 0.03 and en().speed_mult() > 1.0, "P4: the loaded Sneakers really work: %.0f px/s = %.0f x %.2f" % [v, S, en().speed_mult()])
+	check(absf(v - S * shop().speed_mult()) < S * 0.03 and shop().speed_mult() > 1.0, "P4: the loaded Sneakers really work: %.0f px/s = %.0f x %.2f" % [v, S, shop().speed_mult()])
+	check(is_equal_approx(shop().forklift_stun_mult(), 1.0 - 0.35), "P4: and the Boots (stun x%.2f)" % shop().forklift_stun_mult())
 	add_sales(20)
 	await end_shift_now()
-	check(main.report_title_label.text == "Shift #%d Complete" % en().shift_number, "P4: report '%s'" % main.report_title_label.text)
-	check(disk()["endless"]["wallet"] == en().wallet and disk()["endless"]["run_stats"]["shifts"] == int(expect["run"]["shifts"]) + 1, "P4: autosaved (wallet %d)" % en().wallet)
+	var d := disk()
+	check(d["shop"]["completed_day"] == 8 and _canon(d["gear"]) == _canon(shop().upgrades), "P4: Day 8 autosaved with the gear (%s)" % str(d["gear"]))
 	finish()
 
 ## Damaged files: never a crash, never a soft-lock — a fresh week.
@@ -342,7 +324,7 @@ func _phase5() -> void:
 	check(main.load_status == SaveGameScript.LOAD_CORRUPT, "P5: a garbage file is reported damaged (status %d)" % main.load_status)
 	check(FileAccess.file_exists(SOLO + ".bad") and FileAccess.get_file_as_string(SOLO + ".bad").begins_with("{ this is not json"), "P5: the damaged file was copied aside to .bad")
 	check(await wait_shift(), "P5: the game still starts a shift (no soft-lock)")
-	check(main.current_day == 1 and main.money == 0 and main.sections_owned == 1 and en().wallet == 0 and en().upgrades.is_empty() and not main.story_complete, "P5: a fresh start: Day 1, empty bank, no upgrades")
+	check(main.current_day == 1 and main.money == 0 and main.sections_owned == 1 and shop().upgrades.is_empty() and main.events.seen.is_empty(), "P5: a fresh start: Day 1, empty bank, no gear, no events seen")
 	add_sales(3)
 	await end_shift_now()
 	var d := disk()
@@ -383,12 +365,25 @@ func _phase5() -> void:
 	var s: Dictionary = r[1]
 	check(r[0] == SaveGameScript.LOAD_OK, "P5: a well-formed file with bad values still loads")
 	check(s["shop"]["completed_day"] == 0 and s["shop"]["money"] == 0 and s["shop"]["lifetime_earned"] == 0, "P5: day -3 -> 0, a string bank -> 0, negative lifetime -> 0 (%s)" % str(s["shop"]))
-	check(s["shop"]["sections_owned"] == 4 and s["shop"]["stage"] == 0 and s["shop"]["lifetime_sold"] == 2 and s["endless"]["unlocked"] == false, "P5: 9 sections -> 4, a string stage -> 0, 2.7 -> 2, 'yes' isn't true (%s)" % str(s["shop"]))
+	check(s["shop"]["sections_owned"] == 4 and s["shop"]["stage"] == 0 and s["shop"]["lifetime_sold"] == 2 and not s.has("endless"), "P5: 9 sections -> 4, a string stage -> 0, 2.7 -> 2, no 'endless' block survives (%s)" % str(s["shop"]))
 	_write_text(t, JSON.stringify({"version": 2, "shop": {"money": -250}}))
 	check(SaveGameScript.read(t)[1]["shop"]["money"] == -250 and SaveGameScript.read(t)[1]["shop"]["sections_owned"] == 1, "P5: a bank in the red loads as it was; missing sections -> 1")
-	check(s["endless"]["wallet"] == 1000000000 and s["endless"]["shift_number"] == 0, "P5: a huge wallet is capped, a string counter is 0")
-	check(_canon(s["endless"]["upgrades"]) == _canon({"shoes": 3, "soles": 1}), "P5: upgrades clamped to their max, unknown keys dropped (%s)" % str(s["endless"]["upgrades"]))
-	check(_canon(s["endless"]["run_stats"]["medals"]) == _canon([1, 0, 2, 0]) and _canon(s["endless"]["week_summary"]) == _canon({"sold": 9, "pay": -40}), "P5: medals and week summary cleaned (%s, %s)" % [str(s["endless"]["run_stats"]), str(s["endless"]["week_summary"])])
+	check(_canon(s["gear"]) == _canon({"shoes": 3, "soles": 1}), "P5: a v2 save's Endless upgrades carry over as gear, clamped to their max, unknown keys dropped (%s)" % str(s["gear"]))
+	check(s["events"]["seen"].is_empty() and s["events"]["completed"] == 0, "P5: a v2 save has met no events yet (%s)" % str(s["events"]))
+	# OCT 2026 PHASE 4 — version 5: damaged gear and event fields, cleaned.
+	_write_text(t, JSON.stringify({"version": 5, "shop": {"completed_day": 9, "sections_owned": 3},
+		"gear": {"shoes": "x", "badge": 7, "brace": 1.0, "hax": 2},
+		"endless": {"upgrades": {"janitor": 2}}, # a stray old block: "gear" wins
+		"events": {"seen": ["rush", "bogus", 5, "leak"], "completed": -3}}))
+	var r5: Array = SaveGameScript.read(t)
+	var s5: Dictionary = r5[1]
+	check(r5[0] == SaveGameScript.LOAD_OK and _canon(s5["gear"]) == _canon({"badge": 1, "brace": 1}), "P5: v5 gear cleaned: a string level dropped, 7 -> 1 (max), unknown keys dropped, 'gear' beats a stray 'endless' (%s)" % str(s5["gear"]))
+	check(_canon(s5["events"]["seen"]) == _canon({"rush": true, "leak": true}) and s5["events"]["completed"] == 0, "P5: events seen: only real event keys; completed -3 -> 0 (%s)" % str(s5["events"]))
+	# Every older version loads: v3 (staff) and v4 (upkeep) without any of it.
+	for ver in [2, 3, 4]:
+		_write_text(t, JSON.stringify({"version": ver, "shop": {"completed_day": 5, "money": 50, "sections_owned": 3}, "endless": {"unlocked": true, "wallet": 80, "upgrades": {"janitor": 1}}}))
+		var rv: Array = SaveGameScript.read(t)
+		check(rv[0] == SaveGameScript.LOAD_OK and rv[1]["shop"]["completed_day"] == 5 and _canon(rv[1]["gear"]) == _canon({"janitor": 1}) and rv[1]["events"]["seen"].is_empty(), "P5: a version-%d save loads: day 5, its upgrades as gear, the Bucks wallet dropped (%s)" % [ver, str(rv[1].get("gear"))])
 	# A save into a folder that doesn't exist yet.
 	var deep := DIR + "deep/er/save.json"
 	DirAccess.remove_absolute(deep)
@@ -416,8 +411,10 @@ func _phase6() -> void:
 ## CO-OP
 ## =============================================================================
 
-## The host's save: a finished story, a run in progress.
-const HOST_ENDLESS_FILE := {"version": 2,
+## The host's save: an OLD version-2 file from a crew that had played the
+## debug Endless route — its upgrades must come through as the crew's gear
+## (PHASE 4), its Bucks don't.
+const HOST_V2_GEAR_FILE := {"version": 2,
 	"shop": {"completed_day": 7, "money": 300, "lifetime_earned": 7000, "sections_owned": 4, "stage": 5, "lifetime_sold": 140},
 	"endless": {"unlocked": true, "wallet": 137, "upgrades": {"shoes": 2, "brace": 1, "badge": 1}, "shift_number": 4,
 		"run_stats": {"shifts": 4, "sold": 88, "bucks": 210, "medals": [1, 1, 1, 1]},
@@ -471,33 +468,29 @@ func _run_host() -> void:
 	if story:
 		check(await wait_shift() and main.current_day == 5 and main._total_sold() == 30 and main.money == 1234 and main.sections_owned == 2, "N0 host: Day 5 (after the saved Day 4), sold 30, bank $1234, 2 sections")
 	else:
-		check(en().screen == en().SCREEN_HUB and en().wallet == 137, "N0 host: in the hub with my 137 Bucks")
+		check(await wait_shift() and main.current_day == 8 and main.money == 300 and _canon(shop().upgrades) == _canon({"shoes": 2, "brace": 1, "badge": 1}), "N0 host: my v2 save -> Day 8, bank $300, its Endless upgrades as gear (%s)" % str(shop().upgrades))
 	_step("view", {"view": view(), "tag": "N1 right after joining"})
 	await _client_answer()
 	if story:
 		await _host_story()
 	else:
-		await _host_endless()
+		await _host_gear()
 	_step("bye")
 	await _client_answer()
 	finish()
 
-func _host_endless() -> void:
-	var w0: int = en().wallet
+func _host_gear() -> void:
+	var m0: int = main.money
 	var saves0: int = main.saves_written
 	_step("buy", {"key": "boots"})
 	await _client_answer()
-	check(await wait_until(func(): return en().upgrade_level("boots") == 1, 5.0) and en().wallet == w0 - 15, "N2 host: the client's purchase applied once (boots 1, wallet %d -> %d)" % [w0, en().wallet])
-	check(main.saves_written > saves0 and disk(HOST_SAVE)["endless"]["upgrades"].get("boots") == 1 and disk(HOST_SAVE)["endless"]["wallet"] == en().wallet, "N2 host: and it autosaved to MY file (wallet %d)" % disk(HOST_SAVE)["endless"]["wallet"])
+	check(await wait_until(func(): return shop().upgrade_level("boots") == 1, 5.0) and main.money == m0 - 150, "N2 host: the client's purchase applied once (boots 1, bank %s -> %s)" % [main._format_money(m0), main._format_money(main.money)])
+	check(main.saves_written > saves0 and disk(HOST_SAVE)["gear"].get("boots") == 1 and disk(HOST_SAVE)["shop"]["money"] == main.money, "N2 host: and it autosaved to MY file (bank %s)" % main._format_money(disk(HOST_SAVE)["shop"]["money"]))
 	_step("view", {"view": view(), "tag": "N2 after the purchase"})
 	await _client_answer()
-	_step("take", {"index": 1})
-	await _client_answer()
-	check(await wait_shift() and en().shift_number == 5 and int(en().contract.get("crew", 0)) == 2, "N3 host: the client took a posting -> Shift #5, crew of 2")
 	add_sales(40)
 	await end_shift_now()
-	var paid := int(en().last_payout.get("total", -1))
-	check(paid > 0 and disk(HOST_SAVE)["endless"]["wallet"] == en().wallet, "N3 host: paid %d, autosaved (wallet %d)" % [paid, en().wallet])
+	check(disk(HOST_SAVE)["shop"]["completed_day"] == 8 and disk(HOST_SAVE)["shop"]["money"] == main.money, "N3 host: Day 8 paid and autosaved (bank %s)" % main._format_money(main.money))
 	var saves1: int = main.saves_written
 	_step("save")
 	var a := await _client_answer()
@@ -507,9 +500,9 @@ func _host_endless() -> void:
 	await _client_answer()
 	_step("continue")
 	await _client_answer()
-	check(await wait_until(func(): return en().screen == en().SCREEN_HUB, 5.0), "N5 host: back in the hub")
+	check(await wait_shift() and main.current_day == 9, "N5 host: the client's Continue -> Day 9")
 	var d := disk(HOST_SAVE)
-	check(d["endless"]["wallet"] == en().wallet and d["endless"]["run_stats"]["shifts"] == 5 and d["endless"]["shift_number"] == 5, "N5 host: my file has the whole session (wallet %d, 5 shifts)" % d["endless"]["wallet"])
+	check(d["shop"]["completed_day"] == 8 and _canon(d["gear"]) == _canon(shop().upgrades), "N5 host: my file has the whole session (gear %s)" % str(d["gear"]))
 
 func _host_story() -> void:
 	add_sales(6)
@@ -541,14 +534,16 @@ func _run_client() -> void:
 				var theirs: Dictionary = step["view"]
 				var ok := await wait_until(func(): return _canon(view()) == _canon(theirs), 8.0)
 				check(ok, "client: %s — I see the host's progress%s" % [step["tag"], "" if ok else ": mine %s vs host %s" % [_canon(view()), _canon(theirs)]])
-				if theirs["screen"] == en().SCREEN_HUB:
-					check(main.hub_ui.visible and main.hub_ui.buy_buttons.size() == en().UPGRADES.size(), "client: and the hub is on my screen")
 			"buy":
-				await wait_until(func(): return main.hub_ui.buy_buttons.has(step["key"]), 5.0)
-				press(main.hub_ui.buy_buttons.get(step["key"]), "client: buy %s" % step["key"])
-			"take":
-				await wait_until(func(): return main.hub_ui.offer_buttons.size() > int(step["index"]), 5.0)
-				press(main.hub_ui.offer_buttons[int(step["index"])], "client: take posting %d" % int(step["index"]))
+				# The real thing: walk to the gear lockers, E, click the button.
+				player().teleport_to(shop().LOCKER_SPOT)
+				await wait(0.4)
+				Input.action_press(act + "interact")
+				await physics_frame
+				Input.action_release(act + "interact")
+				await wait_until(func(): return shop().panel.visible and shop().buttons.has(step["key"]), 5.0)
+				check(shop().panel.visible and shop().buttons.size() == shop().UPGRADES.size(), "client: E at the lockers opened the shop on my screen")
+				press(shop().buttons.get(step["key"]), "client: buy %s" % step["key"])
 			"save":
 				await wait_until(func(): return main.report_layer.visible, 5.0)
 				press(main.save_button, "client: the report's Save")

@@ -183,10 +183,9 @@ func wages_due() -> int:
 		n += int(WAGE.get(sec, 0))
 	return n
 
-## Staffing exists in the shopkeeper game only (not the practice shift, not
-## the debug-only Endless route).
+## Staffing exists in the shopkeeper game only (not the practice shift).
 func _staffing_live() -> bool:
-	return not main.is_endless() and not main.tutorial.active
+	return not main.tutorial.active
 
 ## The helper is on the floor right now (hired, section open, a real shift).
 func working(sec: String) -> bool:
@@ -207,8 +206,6 @@ func _prep_window() -> bool:
 func blocker(sec: String, action: String) -> String:
 	if not HELPER_SECTIONS.has(sec):
 		return "no helpers for %s" % sec
-	if main.is_endless():
-		return "not in Endless Mode"
 	if main.tutorial.active:
 		return "practice shift — hire in a real shift"
 	var i: int = main.section_index(sec)

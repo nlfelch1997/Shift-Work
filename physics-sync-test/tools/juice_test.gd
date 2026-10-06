@@ -9,9 +9,10 @@ extends SceneTree
 ## (+ coalescing), a rush bonus, orders, spill, write-up, forklift bonk, shelf
 ## wreck, display topple, thuds, cleanup sparkles + SPOTLESS, the report:
 ##   godot --headless --path . --script res://tools/juice_test.gd -- --server --day=7 --no-save --test=juice
-## Endless: Day 7 report -> Week Complete confetti -> hub -> a posting -> the
-## medal stamp + "+N Bucks":
-##   godot --headless --path . --script res://tools/juice_test.gd -- --server --day=7 --no-save --test=juice-endless
+## Events (OCT 2026 PHASE 4 — replaced Week 21's juice-endless when Endless
+## Mode was retired): a random event's win and miss get the order banner's
+## punch, confetti and a "+$N EVENT BONUS" popup (win only), once each:
+##   godot --headless --path . --script res://tools/juice_test.gd -- --server --day=7 --no-save --test=juice-events
 ## Co-op (2-4 players): every shared-world effect fires on every peer, once,
 ## within a beat of the host; shake only for the peer it's about:
 ##   godot --headless --path . --script res://tools/juice_test.gd -- --server --day=7 --no-save --players=3 --test=net-juice &
@@ -34,12 +35,14 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
 	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
-	# and Day 7's report still finishes the week into Endless Mode (the debug
-	# --endless route) for the endless checks.
+	# (OCT 2026 PHASE 4: Week 21's Endless Mode and its debug --endless route
+	# are retired — Day 7's report just leads to Day 8 now.)
 	main.test_follow_old_calendar = true
-	main.legacy_endless_route = true
 	_hook.call_deferred() # main.juice exists once Main's _ready has run
 	root.get_node("Sfx").log_plays = false
 	var mode := "juice"
@@ -50,8 +53,8 @@ func _initialize() -> void:
 	match mode:
 		"juice":
 			_run_solo.call_deferred()
-		"juice-endless":
-			_run_endless.call_deferred()
+		"juice-events":
+			_run_events.call_deferred()
 		"juice-perf":
 			_run_perf.call_deferred()
 		"net-juice":
@@ -434,73 +437,53 @@ func _run_solo() -> void:
 	check(juice.peak_popups <= juice.MAX_POPUPS and juice.peak_particles <= juice.MAX_PARTICLES * 2, "J13 caps held over the whole run (popups %d, particles %d)" % [juice.peak_popups, juice.peak_particles])
 	finish()
 
-## --- endless: Week Complete, medal, Bucks -----------------------------------------
+## --- events (PHASE 4): the win and the miss -------------------------------------
 
-func _run_endless() -> void:
+func _run_events() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
 	me = 1
 	await wait(1.6)
 	park_everything()
-	main.shift_time_left = 0.01
-	await wait_until(func(): return main.cleanup_active, 3.0)
-	main.clock_out(1)
-	await wait_until(func(): return main.is_day_report_active(), 5.0)
-	await wait(0.5)
-	var wc0 := count("week_complete")
-	main._on_continue_pressed()
-	check(await fired_after("week_complete", wc0, 3.0), "E1 Week Complete: confetti")
-	await wait(0.05)
-	check(juice.ui_particles.size() >= 60, "E1 ...a big burst (%d pieces)" % juice.ui_particles.size())
-	main.enter_hub()
-	await wait(0.5)
-	# A purchase in the hub: "-N Bucks".
-	var sp0 := count("spend")
-	main.endless.wallet += 0
-	var before: int = main.endless.wallet
-	if before > 0:
-		main.endless.wallet = before - 1
-		check(await fired_after("spend", sp0), "E2 '-Bucks' popup when the wallet goes down in the hub")
-		main.endless.wallet = before
-		await wait(0.2)
-	# Take a posting, sell enough for GOLD, end it.
-	main.take_offer(0)
-	await wait_until(func(): return main.shift_active, 5.0)
-	await wait(1.6)
-	park_everything()
+	main.events_on = true
 	main.open_store(1)
-	main.forklift._pause_timer = 1.0e9
-	await wait(0.5)
-	var gold: int = main.endless.contract["targets"][2]
-	var cashier: Node = active_cashier().get_node("Cashier")
-	var n := ceili(float(gold) / main.PAY_PER_SALE) + 2
-	var sa0 := count("sale")
-	for i in n:
-		var p := free_product()
-		if p == null:
-			break
-		cashier._complete_purchase(p, 0)
-		await wait(0.05)
 	await wait(0.3)
-	print("INFO  E3 %d sales (gold target $%d); popups live now: %d; sale effects %d" % [n, gold, juice.popups.size(), count("sale") - sa0])
-	check(juice.popups.filter(func(p): return p["key"] is Node and p["key"] == active_cashier()).size() <= 1, "E3 a rapid run of sales at one register is one growing popup, not a stack")
-	main.shift_time_left = 0.01
-	await wait_until(func(): return main.cleanup_active, 3.0)
-	var m0 := count("medal_3") + count("medal_2") + count("medal_1") + count("medal_0")
-	main.clock_out(1)
-	check(await wait_until(func(): return count("medal_3") + count("medal_2") + count("medal_1") + count("medal_0") > m0, 4.0), "E4 the medal stamp as the endless report comes up")
-	var medal: int = int(main.endless.last_payout.get("medal", -1))
-	print("INFO  E4 payout %s" % str(main.endless.last_payout))
-	check(count("medal_%d" % medal) == 1, "E4 ...for the medal actually won (%s)" % main.endless.MEDAL_NAMES[medal])
+	# A Lunch Rush, won: sell its goal from the rush section.
+	main.events.force_next("rush", 0.1)
+	await wait_until(func(): return main.events.active(), 12.0)
+	var sec: String = main.events.data.get("section", "")
+	var goal: int = int(main.events.data.get("goal", 0))
+	var of0 := count("order_filled")
+	var color: Color = main.SECTION_COLORS.get(sec, Color.WHITE)
+	var sold := 0
+	for obj in get_nodes_in_group("carryable"):
+		if sold >= goal:
+			break
+		var v = obj.get_node_or_null("Polygon2D")
+		if v != null and v.color.is_equal_approx(color) and obj.get_node("Carryable").carrier_id == 0:
+			main.note_sale(obj)
+			sold += 1
+	while sold < goal:
+		main.events.note_sale(sec)
+		sold += 1
+	check(await fired_after("order_filled", of0, 2.0), "E1 a won event: the banner punch + confetti (order_filled)")
 	await wait(0.05)
-	var wl: Label = main.report_week_label
-	check(wl.get_theme_font_size("font_size") > wl.get_meta("juice_font_base")[1], "E4 medal line mid-stamp (font %d > %d)" % [wl.get_theme_font_size("font_size"), wl.get_meta("juice_font_base")[1]])
-	var bucks: Array = juice.ui_popups.filter(func(p): return p["text"].ends_with("Bucks"))
-	check(bucks.size() == 1 and bucks[0]["text"] == "%+d Bucks" % int(main.endless.last_payout["total"]), "E4 '%+d Bucks' floats up (%s)" % [int(main.endless.last_payout["total"]), str(bucks.map(func(p): return p["text"]))])
-	if medal == 3:
-		check(juice.ui_popups.any(func(p): return p["text"] == "GOLD!") and juice.ui_particles.size() >= 60, "E4 GOLD gets the big confetti + 'GOLD!' (%d pieces)" % juice.ui_particles.size())
+	var bonus_pop: Array = juice.ui_popups.filter(func(p): return str(p["text"]).contains("EVENT BONUS"))
+	check(bonus_pop.size() == 1, "E1 ...and one '+$N EVENT BONUS' popup (%s)" % str(juice.ui_popups.map(func(p): return p["text"])))
+	await wait(0.5)
+	check(count("order_filled") == of0 + 1, "E1 fired once (%d)" % (count("order_filled") - of0))
+	# An inspection, missed: litter everywhere, time runs out.
 	await wait(3.0)
-	check(juice.ui_popups.is_empty() and juice.ui_particles.is_empty() and wl.get_theme_font_size("font_size") == wl.get_meta("juice_font_base")[1], "E5 report effects all faded, medal line back to its own font size")
-	check(count("medal_%d" % medal) == 1, "E5 the stamp fired once while the report stayed up")
+	main.events.force_next("inspection", 0.1)
+	await wait_until(func(): return main.events.active(), 12.0)
+	for i in 30:
+		main.cleanup.drop_litter(Vector2(1300 + (i % 10) * 30, 330 + (i / 10) * 30))
+	var om0 := count("order_missed")
+	var bp0: int = juice.ui_popups.filter(func(p): return str(p["text"]).contains("EVENT BONUS")).size()
+	main.events.time_left = 0.05
+	check(await fired_after("order_missed", om0, 3.0), "E2 a missed event: the miss beat (order_missed)")
+	await wait(0.05)
+	check(juice.ui_popups.filter(func(p): return str(p["text"]).contains("EVENT BONUS")).size() == bp0, "E2 ...and no bonus popup")
+	check(juice.peak_popups <= juice.MAX_POPUPS and juice.peak_particles <= juice.MAX_PARTICLES * 2, "E3 caps held (popups %d, particles %d)" % [juice.peak_popups, juice.peak_particles])
 	finish()
 
 ## --- load: real renderer, frame times, screenshots ----------------------------------

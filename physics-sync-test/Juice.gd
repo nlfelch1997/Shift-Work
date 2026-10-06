@@ -116,9 +116,6 @@ var _can_fills: Array = [] # PHASE 3D: each can's fill as last seen
 var _mess_left := -1
 var _knocked := {} # product name -> its node
 var _report_shown := false
-var _report_payout_shift := -1
-var _screen := 0
-var _wallet := 0
 var _orders_called := 0
 var _shift_active := false
 
@@ -391,7 +388,9 @@ func coffee(peer_id: int) -> void:
 	if p == null or not is_instance_valid(p):
 		return
 	var at: Vector2 = p.global_position + Vector2(0, -46)
-	popup(at, 0, "+%d%% SPEED" % roundi(main.break_room.COFFEE_SPEED_BONUS * 100.0), C_COFFEE, null, false, 1.3)
+	# (the bonus as the popup's own %d — pre-formatting left a bare "%" that
+	# popup() then tried to format: a script error on every cup, found in Phase 4)
+	popup(at, roundi(main.break_room.COFFEE_SPEED_BONUS * 100.0), "+%d%% SPEED", C_COFFEE, null, false, 1.3)
 	spray(particles, at + Vector2(0, 20), 8, C_COFFEE, Vector2(30, 80), Vector2(0.4, 0.7), -60.0, 0, 3.0)
 	squash_character(p, Vector2(0.8, 1.25))
 	_note("coffee", at)
@@ -575,44 +574,17 @@ func _watch_orders(quiet: bool) -> void:
 		_note("order_called", null)
 	_orders_called = called
 
-## The report / Week Complete payoff, on the modal screens. Story: the pay
-## line punches in with a modest burst. Endless: the medal line STAMPS in —
-## confetti scaled to the medal (gold gets the big one) — and "+N Bucks"
-## floats up. Week Complete: the fanfare gets its confetti.
+## The report payoff, on the modal screen: the pay line punches in with a
+## modest burst. (PHASE 4: Week 21's endless medal stamp, "+N Bucks" and the
+## Week Complete confetti went with Endless Mode.)
 func _watch_report(quiet: bool) -> void:
 	var shown: bool = main.report_layer.visible
 	var vp := get_viewport().get_visible_rect().size
 	if shown and not _report_shown and not quiet:
-		if main.is_endless():
-			_report_payout_shift = -1 # wait for the payout (see below)
-		else:
-			punch_font(main.report_pay_label, 1.35, 0.45)
-			_confetti_ui(vp, 24)
-			_note("report", null)
-	if shown and main.is_endless() and not quiet:
-		var p: Dictionary = main.endless.last_payout
-		var shift: int = int(p.get("shift", -2))
-		if shift == main.endless.shift_number and shift != _report_payout_shift:
-			_report_payout_shift = shift
-			var medal: int = int(p.get("medal", 0))
-			punch_font(main.report_week_label, [1.2, 1.5, 1.7, 2.0][medal], 0.55)
-			_confetti_ui(vp, [0, 16, 32, 70][medal])
-			if int(p.get("total", 0)) != 0:
-				ui_popup(Vector2(vp.x / 2.0, vp.y * 0.72), "%+d Bucks" % int(p["total"]), C_MONEY, false, 1.8)
-			if medal == 3:
-				ui_popup(Vector2(vp.x / 2.0, vp.y * 0.22), "GOLD!", Color(1, 0.82, 0.25), true, 1.6)
-			_note("medal_%d" % medal, null)
+		punch_font(main.report_pay_label, 1.35, 0.45)
+		_confetti_ui(vp, 24)
+		_note("report", null)
 	_report_shown = shown
-	var screen: int = main.endless.screen
-	if screen != _screen and screen == main.endless.SCREEN_WEEK_COMPLETE and not quiet:
-		_confetti_ui(vp, 80)
-		_note("week_complete", null)
-	_screen = screen
-	var wallet: int = main.endless.wallet
-	if wallet < _wallet and screen == main.endless.SCREEN_HUB and not quiet:
-		ui_popup(Vector2(vp.x * 0.5, vp.y * 0.16), "-%d Bucks" % (_wallet - wallet), C_LOSS, false, 1.2)
-		_note("spend", null)
-	_wallet = wallet
 
 func _confetti_ui(vp: Vector2, n: int) -> void:
 	if n <= 0:

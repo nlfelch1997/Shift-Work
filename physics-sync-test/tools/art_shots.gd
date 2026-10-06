@@ -11,6 +11,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	main.opening_stock_fraction = 1.0 # stocked shelves to photograph (WEEK 16: the store opens empty)
 	_run.call_deferred()
 

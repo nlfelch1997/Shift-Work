@@ -1,6 +1,6 @@
 #!/bin/bash
 # WEEK 27 — runs every juice test (tools/juice_test.gd): solo Day 7, the
-# endless medal flow, a 3-player co-op session, and (if xvfb-run exists) the
+# random events' win/miss beats, a 3-player co-op session, and (if xvfb-run exists) the
 # rendered load test.
 #   GODOT=/path/to/godot tools/run_juice_tests.sh
 set -u
@@ -10,7 +10,7 @@ FILTER="^(PASS|FAIL|RESULT|INFO|PERF|PEAKS|JUICE|SHOT)|SCRIPT ERROR|ERROR:"
 run() { echo "=== $*"; "$GODOT" --headless --path . --script res://tools/juice_test.gd -- "$@" 2>&1 | grep -E "$FILTER"; return "${PIPESTATUS[0]}"; }
 status=0
 run --server --day=7 --no-save --test=juice || status=1
-run --server --day=7 --no-save --test=juice-endless || status=1
+run --server --day=7 --no-save --test=juice-events || status=1
 echo "=== net-juice (host + 2 clients)"
 "$GODOT" --headless --path . --script res://tools/juice_test.gd -- --server --port=8941 --day=7 --no-save --players=3 --test=net-juice > /tmp/sw_juice_host.log 2>&1 &
 hp=$!

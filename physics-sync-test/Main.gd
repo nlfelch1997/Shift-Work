@@ -388,26 +388,18 @@ extends Node2D
 ## pay, and raises the end-of-day report exactly as the clock used to.
 ## Cleanliness is a pay BONUS, never a fail state.
 ##
-## WEEK 21 — ENDLESS MODE (Endless.gd: the board, contracts, Bucks, upgrades;
-## HubUI.gd: its two screens). Days 1-7 are the story. Day 7's report ->
-## _finish_story(): the WEEK COMPLETE screen (the week's totals, +40 Bucks, and
-## a plain statement that the story is over) -> enter_hub(): the break room hub,
-## the shift board beside the shop -> take_offer(): that posting's shift, the
-## same prep/selling/cleanup/clock-out day as ever -> its report (medal, Bucks,
-## the run's totals) -> the hub again. current_day parks at 8 for the whole
-## run; nothing on screen calls an endless shift a "Day".
-## - ONE gate for everything that used to read the day: is_section_open() for
-##   sections (gates, lock visuals, _unlocked_sections(), is_unlocked_at_pos(),
-##   Cleanup's bins) and hazard_levels() for hazards (forklift, manager,
-##   priority orders, spills, lights, the finale's tight clock). The story's day
-##   gates produce exactly what they always did; endless reads the posting.
-## - "WEEK" TOTALS: honest by construction. The story's report keeps Week Total
-##   (Days 1-7 are a week). At WEEK COMPLETE the week's totals are captured for
-##   that screen and the running week counters are zeroed; an endless report
-##   shows the SHIFT and the RUN (Endless.run_stats) and no line claims to be a
-##   week. (WEEK 24: the run — wallet, upgrades, totals — is saved now; see
-##   the SAVE / LOAD note below.)
-## - Upgrades read through Endless.gd from Player.gd (speed, spill traction,
+## WEEK 21 — ENDLESS MODE, RETIRED IN OCT 2026 PHASE 4. Days 1-7 used to be
+## a story followed by a separate Endless Mode (a hub screen with a SHIFT
+## BOARD of randomized postings and a Break Room shop paid in Bucks). Phase 2
+## parked it behind a debug flag; Phase 4 folded it into the ongoing game and
+## removed the mode (Endless.gd, HubUI.gd, --endless, the WEEK COMPLETE
+## screen, the Bucks):
+## - the postings' scenarios -> RANDOM EVENTS during ordinary shifts
+##   (Events.gd — which old knob became which event is in its header);
+## - the Break Room shop -> the GEAR LOCKERS in the break room (Shop.gd), the
+##   same seven upgrades and effects, paid out of the shared bank;
+## - the coffee machine (BreakRoom.gd) is unchanged: $ off Pay Today.
+## - Upgrades are read through Shop.gd from Player.gd (speed, spill traction,
 ##   forklift stun, the Back Brace's carry capacity), Carryable.gd (the host's
 ##   capacity check, the carried stack), Manager.gd (fuse) and Cleanup.gd.
 ##
@@ -467,7 +459,6 @@ extends Node2D
 ##     COFFEE_POS / COFFEE_RANGE            (180,66) top-wall counter / 70 px
 ##     COFFEE_SPEED_BONUS                   +0.20, added to the sneakers' multiplier
 ##     COFFEE_COST_DOLLARS                  $40 per cup off a story day's Pay Today
-##     COFFEE_COST_BUCKS                    5 per cup off an endless shift's Bucks, per head
 ##
 ##   SHOPKEEPER ECONOMY (OCT 2026 PHASE 2; replaced DAY GATING) — Main.gd
 ##     STARTING_MONEY                      $0
@@ -533,22 +524,20 @@ extends Node2D
 ##     Ambience FINALE_SPILL_MAX_BONUS     +1     (cap 4 solo, +1 per extra player)
 ##     Ambience FINALE_SPILL_INTERVAL      12-20 s (vs 16-26)
 ##     Ambience FINALE_LIGHTS_INTERVAL     12-22 s (vs 18-30)
-##     FINALE_BANNER_SECONDS               4.5 s  (now only the endless postings' start banner)
 ##
-##   ENDLESS MODE (WEEK 21) — Endless.gd; every value a FLAGGED placeholder
-##     hazard levels                      0 off / 1 Days 3-6 numbers / 2 Day 7 numbers
-##     stars from heat (levels + extra sections, 0-13)  2* at 3, 3* at 6, 4* at 9, 5* at 11
-##     OFFER_BANDS                        [1-2*], [3*], [4-5*] — one posting each
-##     TIGHT_CLOCK_STARS                  4 (Day 7's 96s selling window); also any
-##                                         posting with all four sections open
-##                                         (keeps every shift <= Day 7's 816s)
-##     Bucks: 1/sale, 4/order filled, +40% of those for a spotless close,
-##            -3/write-up (all per head in a crew), medal +5/+12/+25,
-##            x(1 + 0.15 per star above 1)
-##     WEEK_COMPLETE_BUCKS                40
-##     medal targets (gold): $150/300/400/420 by 1-4 sections, -4%/heat (floor
-##            45%), +60%/extra player; silver 70%, bronze 40%
-##     upgrades: see Endless.gd's UPGRADES (costs and effects)
+##   RANDOM EVENTS (OCT 2026 PHASE 4) — Events.gd; every value a FLAGGED placeholder
+##     EVENT_CHANCE / _TOP                0.6 / 0.8 of shifts (first event ever: always)
+##     FIRST_AFTER_OPEN_MIN / _MAX       12 / 25 s after the store opens
+##     max per shift                      1 (2 at the top tier, EVENT_GAP 40 s apart)
+##     WARN_SECONDS / _FIRST              6 / 10 s heads-up banner
+##     unlocks (sections owned, lifetime $): rush 2/$0, inspection 2/$600,
+##            leak 2/$1000, catering 3/$0, delivery 3/$2000
+##     bonuses (solo, x1.5 per extra player... see CREW_BONUS_SCALE):
+##            rush $50, inspection $40, leak $40, catering $60, delivery $60
+##     the rest (goals, windows, counts) in Events.gd's NUMBERS block
+##   BREAK ROOM SHOP (OCT 2026 PHASE 4) — Shop.gd; FLAGGED
+##     upgrade prices                     the old Bucks prices x 10, in $ (whole shop $5,600)
+##     LOCKER_SPOT / LOCKER_RANGE         (95,405) break room lockers / 70 px; prep only
 ##
 ##   STORAGE DELIVERIES — Delivery.gd (forklift driving: DeliveryForklift.gd)
 ##     (deliveries run every shift — Storage is the crew's from the start)
@@ -718,10 +707,6 @@ const DEBUG_DAY_PRESETS := [
 ## Purchase interaction: how close to a for-sale gate's line E buys it — the
 ## store's shared E radius (Carryable.gd's PICKUP_RANGE, the sign, the clock).
 const GATE_BUY_RANGE := 70.0
-## The old story's length — only the debug --endless route reads it now (Day
-## 7's report finishes that "week" into Endless Mode, so the untouched Endless
-## code stays reachable and tested until Phase 4 folds it in).
-const LEGACY_WEEK_DAYS := 7
 ## The selling window. Week 12 cut the finale's clock by 20s and its grace by
 ## 5s, which landed as a 15s cut to the selling window: 96s vs Day 6's 111s
 ## (-14%), with the biggest crowd of the week. WEEK 16 keeps exactly that
@@ -836,8 +821,8 @@ const DeliveryScript := preload("res://Delivery.gd")
 const DeliveryForkliftScript := preload("res://DeliveryForklift.gd")
 const CleanupScript := preload("res://Cleanup.gd")
 const TutorialScript := preload("res://Tutorial.gd")
-const EndlessScript := preload("res://Endless.gd")
-const HubUIScript := preload("res://HubUI.gd")
+const ShopScript := preload("res://Shop.gd")
+const EventsScript := preload("res://Events.gd")
 const SoundDirectorScript := preload("res://SoundDirector.gd")
 const JuiceScript := preload("res://Juice.gd")
 const BreakRoomScript := preload("res://BreakRoom.gd")
@@ -962,12 +947,6 @@ var debug_money := -1
 var debug_rating := -1.0
 var rating_frozen := false
 var _day_given := false
-## Debug: --endless. Day 7's report finishes the old story's week into the
-## untouched Endless Mode (WEEK COMPLETE -> hub) — the only route to it until
-## Phase 4. endless_active is the flag every "is this an endless shift" read
-## goes through now (current_day keeps counting, so "> 7" no longer means it).
-var legacy_endless_route := false
-var endless_active := false
 ## Host-local, one-off notices on the big banner band (legacy save, a
 ## section bought): [big, small, seconds left].
 var _notice := ["", "", 0.0]
@@ -993,7 +972,6 @@ var purchases_refused := 0
 ##   --no-save turns it all off; --new-game ignores the save until the first
 ##   checkpoint overwrites it.
 var completed_story_day := 0
-var story_complete := false
 var save_path := SaveGameScript.DEFAULT_PATH
 var save_enabled := true
 var _skip_load := false
@@ -1326,8 +1304,8 @@ func prep_ceiling_for(open_sections: int) -> float:
 		return prep_ceiling_override
 	return PREP_CEILING_BASE + PREP_CEILING_PER_SECTION * maxi(0, open_sections - 1)
 
-## WEEK 21: the finale's cut now comes from hazard_levels()'s tight_clock —
-## Day 7 in the story, a 4-5 star posting in endless mode.
+## WEEK 21: the finale's cut comes from hazard_levels()'s tight_clock (the
+## top complication tier).
 func _selling_window() -> float:
 	return shift_duration - (FINALE_SELLING_CUT if hazard_levels()["tight_clock"] else 0.0)
 
@@ -1344,35 +1322,20 @@ func _section_name_at(world_pos: Vector2) -> String:
 			return section["name"]
 	return ""
 
-## WEEK 12 — true on the finale day. WEEK 21: the STORY's Day 7 only —
-## endless shifts get finale numbers per system, through hazard_levels().
-## OCT 2026 PHASE 2: the top complication tier (stage 5), every shift once
-## reached — no longer one day.
+## WEEK 12 — true on the finale day. OCT 2026 PHASE 2: the top complication
+## tier (stage 5), every shift once reached — no longer one day.
 func is_finale() -> bool:
-	return complication_stage >= STAGE_RUSH and not is_endless()
-
-## WEEK 21 — an Endless Mode shift (see Endless.gd's header). Phase 2: a flag
-## (only the debug --endless route sets it), since current_day now counts on
-## past 7 in the normal game.
-func is_endless() -> bool:
-	return endless_active
+	return complication_stage >= STAGE_RUSH
 
 ## WEEK 21 — THE one place a system asks "is this hazard on today, and how
 ## hard?" Levels: 0 off, 1 the normal numbers, 2 the old Day 7 finale numbers
 ## (each system's own `finale` flag). OCT 2026 PHASE 2: the shopkeeper game
 ## reads complication_stage (forklift 1 — and only with Produce open, it
 ## lives there —, manager 2, orders 3, spills + lights 4, everything at 2 +
-## the tight clock at 5); endless mode reads the taken posting. Every peer
-## (both inputs are replicated).
+## the tight clock at 5). (PHASE 4: Endless Mode's per-posting levels are
+## gone with the mode.) Every peer (the inputs are replicated).
 func hazard_levels() -> Dictionary:
 	var produce_open := is_unlocked_at_pos(forklift.home_position)
-	if is_endless():
-		var d := {"tight_clock": endless.tight_clock()}
-		for k in EndlessScript.HAZARDS:
-			d[k] = endless.level_of(k)
-		if not produce_open:
-			d["forklift"] = 0
-		return d
 	if tutorial.active:
 		# The practice shift (Tutorial.gd) is Day 1 plus the manager, so the
 		# crew meets his vision cone before it can cost them anything.
@@ -1390,11 +1353,9 @@ func hazard_levels() -> Dictionary:
 
 ## WEEK 21 — THE one place a section's open/locked state is decided.
 ## OCT 2026 PHASE 2: owned or not (bought in SECTIONS order, so "owned" is
-## just the first sections_owned rows); endless reads the taken posting; the
-## practice shift is Dry Goods only, whatever the crew owns.
+## just the first sections_owned rows); the practice shift is Dry Goods
+## only, whatever the crew owns.
 func is_section_open(section: Dictionary) -> bool:
-	if is_endless():
-		return endless.section_open(section["name"])
 	var i := section_index(section["name"])
 	if tutorial.active:
 		return i == 0
@@ -1427,7 +1388,7 @@ func stage_needs_met(stage: int) -> bool:
 ## Host-only, at every shift start (_start_shift()): at most ONE new stage,
 ## and only if its needs are met. Returns the stage that just began (0 = none).
 func _advance_complication_stage() -> int:
-	if is_endless() or tutorial.active:
+	if tutorial.active:
 		return 0
 	var nxt := complication_stage + 1
 	if nxt < COMPLICATION_STAGES.size() and stage_needs_met(nxt):
@@ -1449,7 +1410,7 @@ func _bank_shift_pay(pay: int, wages := 0) -> void:
 ## detail, imminent]. imminent = it starts next shift.
 func next_complication_forecast() -> Array:
 	var nxt := complication_stage + 1
-	if is_endless() or nxt >= COMPLICATION_STAGES.size():
+	if nxt >= COMPLICATION_STAGES.size():
 		return ["", "", false]
 	var st: Dictionary = COMPLICATION_STAGES[nxt]
 	var title := str(st["title"]).trim_prefix("NEW: ").to_lower()
@@ -1473,8 +1434,6 @@ func gate_of(sec_name: String) -> Node:
 
 ## The unowned section whose gate `pos` is standing at ("" if none).
 func for_sale_gate_at(pos: Vector2) -> String:
-	if is_endless():
-		return ""
 	for i in range(sections_owned, SECTIONS.size()):
 		var g := gate_of(SECTIONS[i]["name"])
 		if g == null:
@@ -1486,8 +1445,6 @@ func for_sale_gate_at(pos: Vector2) -> String:
 
 ## Why `sec_name` can't be bought right now ("" = it can).
 func purchase_blocker(sec_name: String) -> String:
-	if is_endless():
-		return "not in Endless Mode"
 	if tutorial.active:
 		return "practice shift — buy it in a real shift"
 	var i := section_index(sec_name)
@@ -1637,10 +1594,14 @@ var delivery: Node2D
 var delivery_forklift: CharacterBody2D
 ## WEEK 19 — end-of-shift cleanup (Cleanup.gd), built in _ready().
 var cleanup: Node2D
-## WEEK 21 — endless mode: the shift board, the shop, the wallet (Endless.gd),
-## and its two screens (HubUI.gd), both built in _ready().
-var endless: Node
-var hub_ui: CanvasLayer
+## OCT 2026 PHASE 4 — the Break Room Shop (Shop.gd: crew upgrades, paid out
+## of the bank) and random events (Events.gd), both built in _ready().
+## (They replace Week 21's Endless Mode — Endless.gd and HubUI.gd are gone.)
+var shop: Node2D
+var events: Node2D
+## OCT 2026 PHASE 4: random events on/off for this session (--events=off, or
+## a test harness before the scene is ready). Events.gd reads it.
+var events_on := true
 var sound_director: Node
 var juice: Node2D
 ## Oct 2026 playtest fix — the guided practice shift before Day 1 (Tutorial.gd).
@@ -1727,11 +1688,6 @@ func _unhandled_input(event: InputEvent) -> void:
 ## count matches the host's.
 func _status_text() -> String:
 	var crew := "%d player%s" % [players.size(), "" if players.size() == 1 else "s"]
-	if is_endless():
-		# In the hub between shifts shift_number is the LAST shift (#0 before
-		# the first), so name the place instead.
-		var where := "Break Room" if endless.screen == EndlessScript.SCREEN_HUB else "Shift #%d" % endless.shift_number
-		return "Endless  ·  %s  ·  %d Bucks  ·  %s" % [where, endless.wallet, crew]
 	if tutorial.active:
 		return "Practice shift  ·  %s" % crew
 	return "Day %d  ·  Bank %s  ·  %s" % [current_day, _format_money(money), crew]
@@ -1786,9 +1742,12 @@ func _ready() -> void:
 	cleanup.name = "Cleanup"
 	add_child(cleanup)
 	move_child(cleanup, $Players.get_index())
-	endless = EndlessScript.new()
-	endless.name = "Endless"
-	add_child(endless)
+	# OCT 2026 PHASE 4 — the Break Room Shop (Shop.gd) and random events
+	# (Events.gd). Explicit names: their Syncs' paths must match on every peer.
+	shop = ShopScript.new()
+	shop.name = "Shop"
+	add_child(shop)
+	move_child(shop, $Players.get_index())
 	# OCT 2026 PHASE 3D. Explicit name: its Sync's path must match on every peer.
 	store_rating = StoreRatingScript.new()
 	store_rating.name = "StoreRating"
@@ -1806,6 +1765,9 @@ func _ready() -> void:
 	staff.name = "Staff"
 	add_child(staff)
 	move_child(staff, $Players.get_index())
+	events = EventsScript.new()
+	events.name = "Events"
+	add_child(events)
 	# WEEK 22 — every sound driven by game state (see SoundDirector.gd/Sfx.gd).
 	sound_director = SoundDirectorScript.new()
 	sound_director.name = "SoundDirector"
@@ -1840,7 +1802,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover", ".:money", ".:lifetime_earned", ".:sections_owned", ".:complication_stage", ".:shelf_rows", ".:stage_banner", ".:endless_active", ".:bounced_today", ".:bounced_week", ".:rating_sales_today", ".:rating_sales_week"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover", ".:money", ".:lifetime_earned", ".:sections_owned", ".:complication_stage", ".:shelf_rows", ".:stage_banner", ".:bounced_today", ".:bounced_week", ".:rating_sales_today", ".:rating_sales_week"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1883,12 +1845,6 @@ func _ready() -> void:
 	_build_store_sign()
 	_build_time_clock()
 	_build_gate_hint()
-	hub_ui = HubUIScript.new()
-	hub_ui.name = "HubUI"
-	hub_ui.endless = endless
-	hub_ui.main = self
-	hub_ui.layer = UI_LAYER_REPORT
-	add_child(hub_ui)
 	_build_report_extras()
 
 	_parse_cli_args()
@@ -1923,9 +1879,10 @@ func _parse_cli_args() -> void:
 			debug_rating = float(arg.substr("--rating=".length()))
 		elif arg == "--rating-frozen":
 			rating_frozen = true
-	# Only ever switches it ON: test harnesses set it before this runs.
-	if "--endless" in args:
-		legacy_endless_route = true
+	# OCT 2026 PHASE 4: --events=off — no random events (the income
+	# harness's baseline); every other system untouched.
+	if "--events=off" in args:
+		events_on = false
 	# WEEK 24: debug starts leave the player's real save alone (see the
 	# SAVE / LOAD note on completed_story_day).
 	var custom_save := false
@@ -1967,8 +1924,8 @@ func _parse_cli_args() -> void:
 ## current_day actually changing (initial arrival or a later day-advance),
 ## rather than each peer computing it once from its own local CLI flag.
 func _configure_gates() -> void:
-	# OCT 2026 PHASE 2: a gate is open once its section is owned (or, endless,
-	# opened by the posting); a locked one shows what it costs.
+	# OCT 2026 PHASE 2: a gate is open once its section is owned; a locked
+	# one shows what it costs.
 	for gate_body in get_tree().get_nodes_in_group("gate"):
 		var gate: Node = gate_body.get_node("Gate")
 		var section := {}
@@ -1981,8 +1938,6 @@ func _configure_gates() -> void:
 
 ## What a locked gate's sign says.
 func _gate_closed_text(sec_name: String) -> String:
-	if is_endless():
-		return "CLOSED this shift"
 	if tutorial.active:
 		return "LOCKED"
 	if section_index(sec_name) == sections_owned:
@@ -2008,7 +1963,7 @@ func _shelf_rows_for_open_sections() -> int:
 	return STACK_ROWS_BY_TIER[tier]
 
 func _configure_hazards() -> void:
-	# WEEK 21: every hazard from hazard_levels() (story days and endless alike).
+	# WEEK 21: every hazard from hazard_levels().
 	var lv := hazard_levels()
 	forklift.configure(lv["forklift"] > 0, lv["forklift"] >= 2)
 	manager.configure(lv["manager"] > 0, lv["manager"] >= 2)
@@ -2129,10 +2084,8 @@ func _on_host_pressed() -> void:
 	var fresh_crew: bool = _host_from_menu and save_enabled and not _skip_load and load_status == SaveGameScript.LOAD_NONE and resume == "story" and current_day == 1
 	if _practice_requested or fresh_crew:
 		tutorial.begin(resume)
-	elif resume == "story":
-		get_tree().create_timer(PRODUCT_SPAWN_DELAY).timeout.connect(_start_shift)
 	else:
-		_resume_past_story(resume)
+		get_tree().create_timer(PRODUCT_SPAWN_DELAY).timeout.connect(_start_shift)
 
 ## Host-only: --day=N -> old Day N's sections, stage and lifetime earnings.
 func _apply_debug_day_preset(day: int) -> void:
@@ -2345,6 +2298,9 @@ func _start_shift() -> void:
 	_bounce_times = []
 	break_room.reset_for_new_shift() # WEEK 23: a fresh pot, nobody's had a cup
 	staff.reset_for_new_shift() # OCT 2026 PHASE 3: who's on the books, empty back rooms
+	# OCT 2026 PHASE 4: nothing pending; no events at all on the shift a NEW
+	# complication starts (its banner gets the shift) or in practice.
+	events.reset_for_new_shift(new_stage > 0 or tutorial.active)
 	sold_by_section_today = {}
 	_clear_priority_order()
 	orders_called_today = 0
@@ -2368,13 +2324,10 @@ func _start_shift() -> void:
 	shift_time_left = duration
 	# OCT 2026 PHASE 2: the banner announces a NEW complication stage, once,
 	# as its first shift starts (the old one-time FINAL SHIFT banner went with
-	# Day 7). WEEK 21: and every endless shift — the same banner, naming the
-	# posting.
+	# Day 7).
 	stage_banner = new_stage
 	if new_stage > 0:
 		finale_banner_left = STAGE_BANNER_SECONDS
-	elif is_endless():
-		finale_banner_left = FINALE_BANNER_SECONDS
 	else:
 		finale_banner_left = 0.0 # nothing left over from a short last shift
 
@@ -2546,6 +2499,7 @@ func open_store(by_peer: int) -> void:
 	_restock_timer = 0.0 # first customers right away, not up to 3s later
 	_announce_store_open.rpc(by_peer)
 	_order_timer = PRIORITY_ORDER_FIRST_AFTER_OPEN
+	events.on_store_open() # OCT 2026 PHASE 4: does this shift get an event?
 	print("[Main] Store OPEN on Day %d — %s, %.0fs of prep left unused, %.0fs to sell" % [current_day, "sign flipped by %s" % player_display_name(by_peer) if by_peer != 0 else "prep ceiling ran out", prep_time_left, shift_time_left])
 	prep_time_left = 0.0
 
@@ -2556,6 +2510,7 @@ func start_cleanup() -> void:
 	if not multiplayer.is_server() or not shift_active or cleanup_active or _day_report_active:
 		return
 	cleanup_active = true
+	events.on_store_close() # PHASE 4: nothing runs on a closed store
 	_despawn_all_customers()
 	# An order still open lapses (no bonus, no penalty), as it did at the
 	# old end of shift.
@@ -2731,20 +2686,13 @@ func _end_shift() -> void:
 	# no penalty) — nothing it tagged can sell from here anyway.
 	_clear_priority_order()
 	ambience.end_shift()
-	if is_endless():
-		# WEEK 21: the shift's Pay is its score; Endless.gd turns sales,
-		# orders filled and cleanliness into Bucks (and the medal).
-		var clean: float = 0.5 * cleanup.mop_fraction() + 0.5 * cleanup.litter_fraction()
-		endless.score_shift(_total_sold() - _sold_at_day_start, orders_filled_today, clean, writeups_today, _pay_today(), break_room.coffee_cups_today)
-		print("[Main] Shift #%d complete!  Sold: %d  |  Write-ups: %d  |  Pay (score): %s" % [endless.shift_number, _total_sold() - _sold_at_day_start, writeups_today, _format_money(_pay_today())])
-		save_progress("shift #%d paid out" % endless.shift_number)
-	else:
-		print("[Main] Day %d complete!  Sold today: %d  |  Lifetime sold: %d  |  Write-ups today: %d  |  Coffee: %d cup(s) -%s  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, break_room.coffee_cups_today, _format_money(break_room.dollars_today()), _format_money(_pay_today())])
-		# OCT 2026 PHASE 2: the day's pay goes into the crew's bank.
-		# PHASE 3: and the staff's wages come out of it, at the same moment.
-		_bank_shift_pay(_pay_today(), staff.close_books())
-		completed_story_day = maxi(completed_story_day, current_day)
-		save_progress("Day %d complete" % current_day)
+	print("[Main] Day %d complete!  Sold today: %d  |  Lifetime sold: %d  |  Write-ups today: %d  |  Coffee: %d cup(s) -%s  |  Events: %d fired, +%s  |  Pay today: %s" % [current_day, _total_sold() - _sold_at_day_start, _total_sold(), writeups_today, break_room.coffee_cups_today, _format_money(break_room.dollars_today()), events.log_today.size(), _format_money(events.bonus_today), _format_money(_pay_today())])
+	# OCT 2026 PHASE 2: the day's pay goes into the crew's bank.
+	# PHASE 3: and the staff's wages come out of it, at the same moment.
+	# PHASE 4: event bonuses are already part of Pay Today (Events.gd).
+	_bank_shift_pay(_pay_today(), staff.close_books())
+	completed_story_day = maxi(completed_story_day, current_day)
+	save_progress("Day %d complete" % current_day)
 
 ## Any peer's Continue click routes here. Only the host actually drives the
 ## day advance (current_day/gates/shift are all host-authoritative), so a
@@ -2804,12 +2752,12 @@ func save_progress(reason: String) -> bool:
 	var ok := SaveGameScript.write(save_path, SaveGameScript.snapshot(self))
 	if ok:
 		saves_written += 1
-	print("[Save] %s: %s — completed day %d, bank %s, lifetime earned $%d, %d section(s), stage %d%s" % ["saved" if ok else "SAVE FAILED", reason, completed_story_day, _format_money(money), lifetime_earned, sections_owned, complication_stage, (", endless wallet %d upgrades %s" % [endless.wallet, str(endless.upgrades)]) if story_complete else ""])
+	print("[Save] %s: %s — completed day %d, bank %s, lifetime earned $%d, %d section(s), stage %d, gear %s" % ["saved" if ok else "SAVE FAILED", reason, completed_story_day, _format_money(money), lifetime_earned, sections_owned, complication_stage, str(shop.upgrades)])
 	return ok
 
 ## Host-only, once, as hosting begins: reads the save and puts its progress
-## back. Returns where to pick up: "story" (start current_day's shift as
-## usual), or — debug --endless route saves only — "week_complete" / "hub".
+## back. Returns where to pick up: always "story" (start current_day's shift
+## as usual) — PHASE 4 retired the old Endless Mode resume points.
 func _load_progress() -> String:
 	if not save_enabled or _skip_load:
 		return "story"
@@ -2844,38 +2792,17 @@ func _load_progress() -> String:
 	# OCT 2026 PHASE 3D (3 stars and empty cans in a version-2/3 save).
 	store_rating.set_rating(d["upkeep"]["rating"])
 	cleanup.set_cans(d["upkeep"]["cans"])
-	var e: Dictionary = d["endless"]
-	story_complete = e["unlocked"]
-	endless.wallet = e["wallet"]
-	endless.upgrades = e["upgrades"]
-	endless.shift_number = e["shift_number"]
-	endless.run_stats = e["run_stats"]
-	endless.week_summary = e["week_summary"]
-	var resume := "story"
-	if story_complete:
-		resume = "hub"
-	elif legacy_endless_route and completed_story_day >= LEGACY_WEEK_DAYS:
-		resume = "week_complete"
-		current_day = LEGACY_WEEK_DAYS
-	else:
-		current_day = completed_story_day + 1
-	print("[Save] Loaded %s — completed day %d, resuming: %s, bank %s, lifetime earned $%d, %d section(s), stage %d, rating %.2f, cans %s%s" % [save_path, completed_story_day, ("Day %d" % current_day) if resume == "story" else resume, _format_money(money), lifetime_earned, sections_owned, complication_stage, store_rating.rating, str(cleanup.cans), (", endless wallet %d" % endless.wallet) if story_complete else ""])
-	show_toast(("Welcome back — Endless Mode, %d Bucks" % endless.wallet) if story_complete else ("Welcome back — Day %d  ·  Bank %s" % [current_day, _format_money(money)]), Color(0.55, 1, 0.6), 4.0)
-	return resume
+	# OCT 2026 PHASE 4: the crew's gear (a v2-v4 save's Endless upgrades
+	# carry over — SaveGame.gd), and which events this crew has met.
+	shop.upgrades = d["gear"]
+	events.seen = d["events"]["seen"]
+	events.completed_total = d["events"]["completed"]
+	current_day = completed_story_day + 1
+	print("[Save] Loaded %s — completed day %d, resuming Day %d, bank %s, lifetime earned $%d, %d section(s), stage %d, rating %.2f, cans %s, gear %s, events seen %s" % [save_path, completed_story_day, current_day, _format_money(money), lifetime_earned, sections_owned, complication_stage, store_rating.rating, str(cleanup.cans), str(shop.upgrades), str(events.seen.keys())])
+	show_toast("Welcome back — Day %d  ·  Bank %s" % [current_day, _format_money(money)], Color(0.55, 1, 0.6), 4.0)
+	return "story"
 
 const LEGACY_NOTICE_SECONDS := 10.0
-
-## Host-only, from _on_host_pressed(): a save past Day 7's report opens on
-## the WEEK COMPLETE screen (not yet continued past — it pays its Bucks now,
-## exactly once, as it would have) or the hub, over the same frozen, empty
-## store those screens always sit over. Same functions the live game uses.
-func _resume_past_story(resume: String) -> void:
-	_day_report_active = true
-	if resume == "week_complete":
-		_finish_story()
-	else:
-		endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
-		enter_hub()
 
 ## Host-only: ends the end-of-day report and starts the next day. Guarded on
 ## _day_report_active (not just multiplayer.is_server()) so a duplicate
@@ -2891,21 +2818,6 @@ func _resume_past_story(resume: String) -> void:
 func _advance_to_next_day() -> void:
 	if not multiplayer.is_server() or not _day_report_active:
 		return
-	# WEEK 21: the Week Complete screen and the hub have their own buttons;
-	# a stray Continue (a late RPC from the report) does nothing there.
-	if endless.screen != EndlessScript.SCREEN_NONE:
-		return
-	if is_endless():
-		# An endless shift's report -> back to the break room, fresh board.
-		endless.roll_offers()
-		endless.screen = EndlessScript.SCREEN_HUB
-		print("[Main] Back to the break room after shift #%d" % endless.shift_number)
-		save_progress("back to the break room")
-		return
-	# Debug --endless only: the old week still ends on Day 7, into Endless Mode.
-	if legacy_endless_route and current_day >= LEGACY_WEEK_DAYS:
-		_finish_story()
-		return
 	_day_report_active = false
 	current_day += 1
 	# Test plumbing: the tests written for the 7-day story roll Day N -> N+1
@@ -2913,7 +2825,7 @@ func _advance_to_next_day() -> void:
 	# Day N+1 had (sections, lifetime earnings), and the shift start below
 	# takes the one stage step every consecutive old day was. Never set in
 	# play.
-	if test_follow_old_calendar and not is_endless():
+	if test_follow_old_calendar:
 		var p: Array = DEBUG_DAY_PRESETS[clampi(current_day, 0, DEBUG_DAY_PRESETS.size() - 1)]
 		sections_owned = maxi(sections_owned, p[0])
 		lifetime_earned = maxi(lifetime_earned, p[2])
@@ -2942,98 +2854,30 @@ func _reconfigure_world() -> void:
 var _last_config_key := ""
 
 func _config_key() -> String:
-	return "%d:%d:%s:%d:%d:%d:%s" % [current_day, int(endless.contract.get("id", 0)), tutorial.active, sections_owned, complication_stage, shelf_rows, endless_active]
+	return "%d:%s:%d:%d:%d" % [current_day, tutorial.active, sections_owned, complication_stage, shelf_rows]
 
-## --- WEEK 21: the end of the story, and endless mode's hub --------------------
-
-## Host-only: Day 7's report -> the WEEK COMPLETE screen. The world stays
-## frozen under it (_day_report_active stays true through both screens).
-func _finish_story() -> void:
-	endless.week_summary = {
-		"sold": _total_sold(),
-		"pay": _pay_week(),
-		"writeups": writeups_week,
-		"priority_sales": priority_sales_week,
-		"clean_bonus": cleanup.clean_bonus_week,
-	}
-	endless.wallet += EndlessScript.WEEK_COMPLETE_BUCKS
-	# The week is over: its running totals stop meaning anything. Endless
-	# reports show the shift and the run (Endless.run_stats) instead.
-	writeups_week = 0
-	priority_sales_week = 0
-	cleanup.clean_bonus_week = 0
-	cleanup.litter_pay_week = 0
-	bounced_week = 0
-	rating_sales_week = 0
-	break_room.reset_week()
-	endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
-	completed_story_day = LEGACY_WEEK_DAYS
-	story_complete = true
-	print("[Main] WEEK COMPLETE — story over. Week: %s. +%d Bucks." % [str(endless.week_summary), EndlessScript.WEEK_COMPLETE_BUCKS])
-	save_progress("WEEK COMPLETE")
-
-## Host-only (any peer asks via Endless.request_enter_hub()): WEEK COMPLETE ->
-## the hub. current_day parks at ENDLESS_DAY from here on.
-func enter_hub() -> void:
-	if not multiplayer.is_server() or endless.screen != EndlessScript.SCREEN_WEEK_COMPLETE:
-		return
-	current_day = EndlessScript.ENDLESS_DAY
-	endless_active = true
-	endless.contract = {}
-	_reconfigure_world()
-	endless.roll_offers()
-	endless.screen = EndlessScript.SCREEN_HUB
-	print("[Main] Entered the break room hub — endless mode")
-	save_progress("entered the hub")
-
-## Host-only (any peer asks via Endless.request_take_offer()): take posting
-## `index` off the board and start it. The medal targets are fixed now, for
-## the crew that's here. Only from the hub, so two peers taking postings in
-## the same instant start one shift (the first; the second finds no hub).
-func take_offer(index: int) -> void:
-	if not multiplayer.is_server() or endless.screen != EndlessScript.SCREEN_HUB or shift_active:
-		return
-	if index < 0 or index >= endless.offers.size():
-		return
-	var c: Dictionary = endless.offers[index].duplicate(true)
-	c["targets"] = EndlessScript.targets_for(c, players.size())
-	c["crew"] = players.size()
-	endless.contract = c
-	endless.shift_number += 1
-	endless.offers_taken += 1
-	endless.screen = EndlessScript.SCREEN_NONE
-	_day_report_active = false
-	_reconfigure_world()
-	print("[Main] Taking posting %d: shift #%d \"%s\" %d* sections %s levels %s targets %s" % [index, endless.shift_number, c["name"], c["stars"], str(c["sections"]), str(c["levels"]), str(c["targets"])])
-	_start_shift()
-
-## --- WEEK 21: endless-mode lines on the end-of-shift report -------------------
-var report_bucks_label: Label
-var report_run_label: Label
+## --- Extra lines on the end-of-shift report -----------------------------------
+## OCT 2026 PHASE 4: the day's random events (was Week 21's Bucks line).
+var report_event_label: Label
 var report_shop_label: Label
 const MEDAL_COLORS := [Color(0.7, 0.7, 0.7), Color(0.9, 0.6, 0.35), Color(0.85, 0.9, 0.95), Color(1, 0.82, 0.25)]
 
 ## Two lines under Pay, built in code like the rest (see the .tscn note).
 func _build_report_extras() -> void:
-	# Grow both ways from the centre, so a longer endless report stays centred
-	# and on screen instead of spilling off the right and bottom edges.
+	# Grow both ways from the centre, so a longer report stays centred and on
+	# screen instead of spilling off the right and bottom edges.
 	var panel: Control = report_pay_label.get_parent()
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	report_bucks_label = Label.new()
-	report_bucks_label.name = "BucksLabel"
-	report_bucks_label.add_theme_font_size_override("font_size", 17)
-	report_bucks_label.add_theme_color_override("font_color", Color(1, 0.82, 0.25))
-	report_bucks_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	report_bucks_label.visible = false
-	report_pay_label.add_sibling(report_bucks_label)
-	report_run_label = Label.new()
-	report_run_label.name = "RunLabel"
-	report_run_label.add_theme_font_size_override("font_size", 15)
-	report_run_label.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
-	report_run_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	report_run_label.visible = false
-	report_bucks_label.add_sibling(report_run_label)
+	# OCT 2026 PHASE 4: the day's events, just above Pay (their bonuses are in it).
+	report_event_label = Label.new()
+	report_event_label.name = "EventLabel"
+	report_event_label.add_theme_font_size_override("font_size", 17)
+	report_event_label.add_theme_color_override("font_color", EventsScript.C_EVENT)
+	report_event_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	report_event_label.visible = false
+	report_pay_label.add_sibling(report_event_label)
+	panel.move_child(report_event_label, report_pay_label.get_index())
 	# OCT 2026 PHASE 2 — what's next: the complication forecast (the clear
 	# signal before something harder shows up) and the next section for sale.
 	report_shop_label = Label.new()
@@ -3041,7 +2885,7 @@ func _build_report_extras() -> void:
 	report_shop_label.add_theme_font_size_override("font_size", 16)
 	report_shop_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	report_shop_label.visible = false
-	report_run_label.add_sibling(report_shop_label)
+	report_pay_label.add_sibling(report_shop_label)
 
 ## Every peer, while a shopkeeper report is up: the forecast + what's for sale.
 func _fill_shop_forecast() -> void:
@@ -3067,34 +2911,6 @@ func _fill_shop_forecast() -> void:
 			break
 	report_shop_label.text = "\n".join(lines)
 	report_shop_label.add_theme_color_override("font_color", Color(1, 0.6, 0.25) if f[2] else Color(1, 0.85, 0.4))
-
-## Every peer, while an endless shift's report is up: "Shift #N", the medal,
-## the Bucks and why, and the RUN's totals where the story's "Week Total"
-## was — the week ended with Day 7, so no line here claims to be a week.
-func _fill_endless_report(today_sold: int) -> void:
-	var c: Dictionary = endless.contract
-	report_title_label.text = "Shift #%d Complete" % endless.shift_number
-	report_today_label.text = "%s  %s   ·   sold %d" % [EndlessScript.stars_text(int(c.get("stars", 1))), c.get("name", ""), today_sold]
-	report_pay_label.text = "Shift Pay: %s" % _format_money(_pay_today())
-	var p: Dictionary = endless.last_payout
-	if int(p.get("shift", -1)) != endless.shift_number:
-		# The payout rides the reliable EndlessSync; the report flag rides
-		# DaySync — a frame or two apart on a client.
-		report_week_label.text = "Tallying the shift..."
-		report_week_label.add_theme_color_override("font_color", Color(0.9, 0.95, 1))
-		report_bucks_label.text = ""
-	else:
-		var medal: int = p["medal"]
-		var t: Array = p["targets"]
-		report_week_label.text = ("%s MEDAL" % EndlessScript.MEDAL_NAMES[medal] if medal > 0 else "No medal") + "  —  pay %s" % _format_money(int(p["score"]))
-		report_week_label.add_theme_color_override("font_color", MEDAL_COLORS[medal])
-		var per_head: String = "" if int(p.get("crew", 1)) <= 1 else "\n(sales, orders and write-ups count per head: crew of %d)" % int(p["crew"])
-		var coffee: String = "" if int(p.get("coffee_cups", 0)) == 0 else "  − coffee %d (%d cup(s): %s)" % [-int(p["coffee"]), int(p["coffee_cups"]), break_room.drinkers_text()]
-		report_bucks_label.text = "Medal targets: bronze $%d · silver $%d · gold $%d\n+%d Break Room Bucks   ·   wallet now %d\n= (sales %d + orders %d + clean %d − write-ups %d + medal %d) × %.2f for %d★%s%s" % [t[0], t[1], t[2], p["total"], endless.wallet, p["sales"], p["orders"], p["clean"], -int(p["writeups"]), p["medal_bucks"], p["mult"], int(c.get("stars", 1)), coffee, per_head]
-	var rs: Dictionary = endless.run_stats
-	var m: Array = rs.get("medals", [0, 0, 0, 0])
-	report_run_label.text = "Endless run so far: %d shift(s) · %d sold · %d gold / %d silver / %d bronze · %d Bucks earned" % [int(rs.get("shifts", 0)), int(rs.get("sold", 0)), m[3], m[2], m[1], int(rs.get("bucks", 0))]
-	continue_button.text = "Back to the Break Room"
 
 ## --- WEEK 9: manager write-ups and pay ------------------------------------
 
@@ -3158,11 +2974,13 @@ func player_display_name(peer_id: int) -> String:
 ## OCT 2026 PHASE 3D: + troublemakers thrown out (BOUNCE_PAY each), outside
 ## the gross like the trash pay. The live "Today" counter on the HUD
 ## (StoreRating.gd) is exactly this number, all shift long.
+## OCT 2026 PHASE 4: + random-event bonuses (Events.gd's bonus_today), outside
+## the gross like the trash and bounce pay, credited the moment each is earned.
 func _pay_today() -> int:
-	return _gross_pay_today() + cleanup.clean_bonus_today + cleanup.litter_pay_today() + bounced_today * BOUNCE_PAY - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
+	return _gross_pay_today() + cleanup.clean_bonus_today + cleanup.litter_pay_today() + bounced_today * BOUNCE_PAY + events.bonus_today - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
 
 func _pay_week() -> int:
-	return _total_sold() * PAY_PER_SALE + rating_sales_week + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week + cleanup.litter_pay_week + bounced_week * BOUNCE_PAY - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
+	return _total_sold() * PAY_PER_SALE + rating_sales_week + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week + cleanup.litter_pay_week + bounced_week * BOUNCE_PAY + events.bonus_week - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
 
 ## Sales plus the priority-order extra — the day's pay before write-ups and
 ## before the cleanup bonus (which is a share of this). PHASE 3D: sales at
@@ -3196,6 +3014,12 @@ func _tick_priority_orders(delta: float) -> void:
 		return
 	_order_timer -= delta
 	if _order_timer <= 0.0:
+		# OCT 2026 PHASE 4: a random event is warning, running, or due before
+		# this order could close — it takes the banner row; the call-out
+		# waits (checked again shortly), so the two never overlap.
+		if events.blocks_orders(_priority_order_window()):
+			_order_timer = 1.0
+			return
 		_order_timer = _priority_order_interval()
 		# Don't call one out that the shift clock would cut short.
 		if _order_id == 0 and shift_time_left > _priority_order_window():
@@ -3267,7 +3091,12 @@ func _loose_stock_for_section(section: Dictionary) -> int:
 ## slots. Tags it to the open order if it's the ordered section and the item
 ## isn't already tagged (re-shelving a knocked-off item doesn't count twice).
 func note_item_stocked(obj: Node, shelf_body: Node) -> void:
-	if not multiplayer.is_server() or _order_id == 0 or obj.has_meta("priority_order"):
+	if not multiplayer.is_server():
+		return
+	# OCT 2026 PHASE 4: a Catering Order (Events.gd) counts it first (no
+	# priority order is ever open alongside one).
+	events.note_item_stocked(obj, _section_name_at(shelf_body.global_position))
+	if _order_id == 0 or obj.has_meta("priority_order"):
 		return
 	var cell := _grid_cell_of(shelf_body.global_position)
 	var in_section := SECTIONS.any(func(s): return s["name"] == order_section and s["grid_pos"] == cell)
@@ -3299,6 +3128,7 @@ func note_sale(item: Node) -> void:
 	if visual != null:
 		var sec := _section_of_color(visual.color)
 		sold_by_section_today[sec] = int(sold_by_section_today.get(sec, 0)) + 1
+		events.note_sale(sec) # OCT 2026 PHASE 4: a Lunch Rush counts it
 	if not item.has_meta("priority_order"):
 		return
 	var id: int = item.get_meta("priority_order")
@@ -3337,28 +3167,26 @@ func _clear_priority_order() -> void:
 	order_stocked = 0
 	order_time_left = 0.0
 
-## WEEK 21 — the banner is Day 7's FINAL SHIFT in the story, and names the
-## posting at the start of every endless shift, so nobody is surprised by what
-## they signed up for (every peer, from replicated state).
+## The banner band: a NEW complication's title as its first shift starts
+## (OCT 2026 PHASE 2), or — PHASE 4 — a random event's warning (Events.gd's
+## banner_lines(): what's coming, what to do, the bonus, the countdown).
+## Every peer, from replicated state.
 func _set_banner_text() -> void:
 	var big: Label = _finale_banner.get_child(0)
 	var small: Label = _finale_banner.get_child(1)
 	var detail: Label = _finale_banner.get_child(2)
-	detail.visible = is_endless()
-	if not is_endless():
-		# OCT 2026 PHASE 2: the new complication this shift brings.
-		var st: Dictionary = COMPLICATION_STAGES[clampi(stage_banner, 0, COMPLICATION_STAGES.size() - 1)]
-		big.text = str(st["title"])
-		small.text = str(st["line"])
+	var ev: Array = events.banner_lines()
+	detail.visible = not ev.is_empty()
+	if not ev.is_empty():
+		big.text = ev[0]
+		small.text = ev[1]
+		detail.text = ev[2]
+		big.add_theme_color_override("font_color", EventsScript.C_EVENT)
 		return
-	var c: Dictionary = endless.contract
-	var on := []
-	for k in EndlessScript.HAZARDS:
-		if endless.level_of(k) > 0:
-			on.append("%s %s" % [EndlessScript.HAZARD_NAMES[k].to_lower(), EndlessScript.pips(endless.level_of(k))])
-	big.text = "SHIFT #%d" % endless.shift_number
-	small.text = "%s  %s  %s" % [str(c.get("name", "")), EndlessScript.stars_text(int(c.get("stars", 1))), EndlessScript.STAR_WORDS[int(c.get("stars", 1))]]
-	detail.text = "open: %s\n%s" % [EndlessScript.sections_text(c), ("on: " + ", ".join(on)) if not on.is_empty() else "no hazards on this shift"]
+	big.add_theme_color_override("font_color", Color(1, 0.8, 0.2))
+	var st: Dictionary = COMPLICATION_STAGES[clampi(stage_banner, 0, COMPLICATION_STAGES.size() - 1)]
+	big.text = str(st["title"])
+	small.text = str(st["line"])
 
 ## WEEK 12 — every peer, the moment its FINAL SHIFT banner comes up (from
 ## _update_alert_layer()): the fanfare (WEEK 22). Cosmetic only — nothing
@@ -3425,7 +3253,7 @@ func _build_alert_layer() -> void:
 	_finale_banner.alignment = BoxContainer.ALIGNMENT_CENTER
 	_finale_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_finale_banner.visible = false
-	# WEEK 21: a third, smaller line — the endless banner's section/hazard list.
+	# A third, smaller line — PHASE 4: a random event's how-to and countdown.
 	for spec in [["", 52, Color(1, 0.8, 0.2)], ["", 22, Color(1, 1, 1)], ["", 17, Color(0.85, 0.95, 1)]]:
 		var l := Label.new()
 		l.text = spec[0]
@@ -3490,23 +3318,34 @@ func _update_alert_layer(delta: float) -> void:
 	# same style as the LOOK BUSY row, cyan so the two never read as the
 	# same warning. The open order wins over a lingering result line.
 	_order_result_timer = maxf(0.0, _order_result_timer - delta)
-	if order_section != "":
+	# OCT 2026 PHASE 4: a running random event owns this row (no order is
+	# ever open alongside one), then its result line for a few seconds.
+	var ev_line: String = events.status_line()
+	if ev_line != "":
+		_order_label.text = ev_line
+		_order_label.add_theme_color_override("font_color", events.status_color())
+	elif events.result_left > 0.0 and order_section == "":
+		_order_label.text = events.result_text
+		_order_label.add_theme_color_override("font_color", EventsScript.C_WIN if events.result_ok else EventsScript.C_MISS)
+	elif order_section != "":
 		_order_label.text = "MANAGER: Stock %d more in %s!  %ds left  (%sx pay)" % [order_needed - order_stocked, order_section, ceili(order_time_left), str(PRIORITY_ORDER_MULTIPLIER)]
 		_order_label.add_theme_color_override("font_color", Color(1, 0.85, 0.2) if order_time_left <= 5.0 else Color(0.45, 0.9, 1))
 	elif _order_result_timer > 0.0:
 		_order_label.text = _order_result_text
 		_order_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5) if _order_result_filled else Color(0.75, 0.75, 0.75))
-	_order_label.visible = (order_section != "" or _order_result_timer > 0.0) and not _day_report_active
+	_order_label.visible = (order_section != "" or _order_result_timer > 0.0 or ev_line != "" or events.result_left > 0.0) and not _day_report_active
 	if multiplayer.is_server():
 		finale_banner_left = maxf(0.0, finale_banner_left - delta)
 	# A client can hold a banner timer for a stage it hasn't heard of yet
 	# (both ride DaySync, but the first packet may predate the stage).
-	var show_finale := finale_banner_left > 0.0 and not _day_report_active and (is_endless() or stage_banner > 0)
+	var show_finale := finale_banner_left > 0.0 and not _day_report_active and stage_banner > 0
 	if show_finale and not _finale_banner.visible:
 		_play_finale_sting()
-	# Every frame it's up, not just as it appears: on a client the banner's
-	# timer (DaySync) can land before the new posting (EndlessSync) does.
-	if show_finale:
+	# PHASE 4: an event's warning uses the same band (its own sound plays from
+	# Events.gd); a stage banner only ever runs at shift start, before any
+	# event can, so the two never meet.
+	var show_event: bool = events.warning() and not _day_report_active and not show_finale
+	if show_finale or show_event:
 		_set_banner_text()
 	# OCT 2026 PHASE 2: local one-off notices (a section bought, an old save)
 	# use the same band when nothing scheduled is on it.
@@ -3514,15 +3353,15 @@ func _update_alert_layer(delta: float) -> void:
 	# screen), and never outlives its shift.
 	if _day_report_active:
 		_notice[2] = 0.0
-	var show_notice_now: bool = not show_finale and float(_notice[2]) > 0.0 and not _day_report_active
+	var show_notice_now: bool = not show_finale and not show_event and float(_notice[2]) > 0.0 and not _day_report_active
 	if show_notice_now:
 		_notice[2] = maxf(0.0, float(_notice[2]) - delta)
 	if show_notice_now:
 		(_finale_banner.get_child(0) as Label).text = _notice[0]
 		(_finale_banner.get_child(1) as Label).text = _notice[1]
 		_finale_banner.get_child(2).visible = false
-	_finale_banner.visible = show_finale or show_notice_now
-	_finale_banner.modulate.a = clampf(finale_banner_left if show_finale else float(_notice[2]), 0.0, 1.0) # fades over the last second
+	_finale_banner.visible = show_finale or show_event or show_notice_now
+	_finale_banner.modulate.a = 1.0 if show_event else clampf(finale_banner_left if show_finale else float(_notice[2]), 0.0, 1.0) # fades over the last second
 
 ## Cumulative total across every cashier, for as long as the session has
 ## run — never reset, unlike _sold_at_day_start (see the score-continuity
@@ -3668,7 +3507,8 @@ func _restock_customers() -> void:
 ## times the store rating's crowd multiplier (PHASE 3D, RATING_CROWD_MULT).
 func customer_cap() -> int:
 	var base: int = _customer_baseline() + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
-	return maxi(1, roundi(base * store_rating.crowd_mult()))
+	# OCT 2026 PHASE 4: + a Lunch Rush's extra crowd (Events.gd), while it runs.
+	return maxi(1, roundi(base * store_rating.crowd_mult())) + events.extra_customers()
 
 ## PHASE 3D: what one sale pays at the store rating right now.
 func sale_price() -> int:
@@ -3927,7 +3767,8 @@ func make_shopping_list() -> PackedStringArray:
 				out.append(sec)
 				taken[sec] = n + 1
 				added = true
-	return out
+	# OCT 2026 PHASE 4: a Lunch Rush puts its section on every new list.
+	return events.adjust_list(out)
 
 ## OCT 2026 PHASE 3B — host: a shopper's walk from `from` to `to` around the
 ## store's walls, gates, shelves, registers and displays (CustomerNav.gd).
@@ -4175,7 +4016,7 @@ func _process(delta: float) -> void:
 	# three instead of separate "initial setup" and "day changed" cases.
 	if _config_key() != _last_config_key:
 		_reconfigure_world()
-		print("[Main] Day is now %d%s" % [current_day, (" (endless shift #%d)" % endless.shift_number) if is_endless() else ""])
+		print("[Main] Day is now %d" % current_day)
 
 	# End-of-day report (see _end_shift()/_advance_to_next_day()) — a real
 	# full-screen CanvasLayer now, replacing the old debug-label-only
@@ -4184,15 +4025,7 @@ func _process(delta: float) -> void:
 	# hides it at the same moment; the sold numbers are recomputed from
 	# already-replicated state (_total_sold()/_sold_at_day_start), not a
 	# separate replicated pair, so there's nothing new to keep in sync here.
-	# WEEK 21: not while the Week Complete screen or the hub is up (HubUI.gd
-	# draws those, over the same frozen world).
-	report_layer.visible = _day_report_active and endless.screen == EndlessScript.SCREEN_NONE
-	# An endless shift's report only once its payout is in — the report flag
-	# (DaySync, unreliable) and the endless state (EndlessSync, reliable) land
-	# on a client in either order, and without this the LAST shift's report
-	# flashed up for a frame as the next shift was taken.
-	if is_endless() and int(endless.last_payout.get("shift", -1)) != endless.shift_number:
-		report_layer.visible = false
+	report_layer.visible = _day_report_active
 	if report_layer.visible:
 		var week_sold := _total_sold()
 		var today_sold := week_sold - _sold_at_day_start
@@ -4204,7 +4037,7 @@ func _process(delta: float) -> void:
 		report_week_label.add_theme_color_override("font_color", Color(0.9, 0.95, 1))
 		# WEEK 9 — write-ups only exist once the manager is on; before
 		# that the line is hidden rather than showing a meaningless 0.
-		# WEEK 21: "when the manager was on the floor", story or endless.
+		# WEEK 21: "when the manager was on the floor".
 		report_writeup_label.visible = lv["manager"] > 0 or writeups_today > 0
 		var who := []
 		for peer_id in writeups_by_peer:
@@ -4214,7 +4047,7 @@ func _process(delta: float) -> void:
 		if break_room.coffee_cups_today > 0:
 			report_pay_label.text += "\n(coffee: %d cup(s), %s off — %s)" % [break_room.coffee_cups_today, _format_money(break_room.dollars_today()), break_room.drinkers_text()]
 		# OCT 2026 PHASE 3: the staff's wages, out of the bank beside the pay.
-		if staff.wages_today > 0 and not is_endless():
+		if staff.wages_today > 0:
 			report_pay_label.text += "\nStaff wages: -%s (%s)  →  bank %s%s" % [_format_money(staff.wages_today), staff.wages_detail, "+" if _pay_today() - staff.wages_today >= 0 else "", _format_money(_pay_today() - staff.wages_today)]
 		report_order_label.visible = lv["orders"] > 0
 		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  ·  +%s trash binned (%d)  ·  %d bag(s) to the dumpster  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), _format_money(cleanup.litter_pay_today()), cleanup.trash_binned_today, cleanup.bags_dumped_today, ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
@@ -4223,24 +4056,20 @@ func _process(delta: float) -> void:
 		var full_left: int = cleanup.full_cans()
 		report_cleanup_label.text += "\nStore rating %s %.1f  ·  prices %s%s  ·  %d troublemaker(s) thrown out (+%s)%s" % [store_rating.star_text(store_rating.rating), store_rating.rating, "+" if rating_sales_today >= 0 else "", _format_money(rating_sales_today), bounced_today, _format_money(bounced_today * BOUNCE_PAY), ("  ·  %d can(s) still FULL" % full_left) if full_left > 0 else ""]
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
-		report_bucks_label.visible = is_endless()
-		report_run_label.visible = is_endless()
+		# OCT 2026 PHASE 4: the day's random events and their bonuses.
+		report_event_label.text = events.report_line()
+		report_event_label.visible = report_event_label.text != ""
 		continue_button.text = "Continue"
-		report_pay_label.get_parent().add_theme_constant_override("separation", 6 if is_endless() else 10)
-		report_shop_label.visible = not is_endless()
-		if not is_endless():
-			_fill_shop_forecast()
-		if legacy_endless_route and current_day >= LEGACY_WEEK_DAYS and not is_endless():
-			continue_button.text = "Finish the Week"
-		elif is_endless():
-			_fill_endless_report(today_sold)
+		report_pay_label.get_parent().add_theme_constant_override("separation", 6 if report_event_label.visible else 10)
+		report_shop_label.visible = true
+		_fill_shop_forecast()
 
 	var connected := Net.is_active()
 	var role := "OFFLINE"
 	if connected:
 		role = "HOST" if multiplayer.is_server() else "CLIENT"
 	var lines := ["peer id: %d  (%s)  players: %d  %s" % [
-		multiplayer.get_unique_id() if connected else 0, role, players.size(), ("endless shift #%d  wallet %d Bucks" % [endless.shift_number, endless.wallet]) if is_endless() else "day: %d" % current_day,
+		multiplayer.get_unique_id() if connected else 0, role, players.size(), "day: %d" % current_day,
 	]]
 	for obj in carryable_objects:
 		var c: Node = obj.get_node("Carryable")
@@ -4289,6 +4118,7 @@ func _process(delta: float) -> void:
 		# WEEK 19: nor during cleanup — and with no ticks, the spills on the
 		# floor at close stop drying, so they're there to be mopped.
 		if store_open and not cleanup_active:
+			events.tick_host(delta) # OCT 2026 PHASE 4: random events
 			ambience.tick_host(delta)
 			cleanup.tick_selling(delta)
 			if not rating_frozen:
@@ -4337,6 +4167,8 @@ func _process(delta: float) -> void:
 		lines.append("STORE %s | litter on the floor: %d" % ["OPEN" if store_open else "CLOSED — prep, opens by itself in %.0fs" % prep_time_left, cleanup.litter.size()])
 	if ambience.active:
 		lines.append("LIGHTS %s  |  SPILLS on the floor: %d" % ["FLICKERING (%.0f%%)" % (ambience.brightness * 100.0) if ambience.brightness < 1.0 or ambience.event_playing() else "ok", ambience.spills.size()])
+	if events.busy():
+		lines.append("EVENT %s %s — %.0fs" % [events.key, "warning" if events.warning() else "ACTIVE", events.time_left])
 	if order_section != "":
 		lines.append("PRIORITY ORDER: %d/%d in %s, %.0fs left" % [order_stocked, order_needed, order_section, order_time_left])
 	# No fixed completion state as of Week 5B — stock demand is continuous
@@ -4349,12 +4181,7 @@ func _process(delta: float) -> void:
 	if shift_active:
 		var week_sold := _total_sold()
 		var today_sold := week_sold - _sold_at_day_start
-		# WEEK 21: no "week" once the story's week is over.
-		if is_endless():
-			var t: Array = endless.contract.get("targets", [0, 0, 0])
-			lines.append("Stocked now: %d/%d  |  This shift: %d sold  |  Shift pay: %s (bronze $%d / silver $%d / gold $%d)  |  %.0fs left" % [total_filled, total_slots, today_sold, _format_money(_pay_today()), t[0], t[1], t[2], shift_time_left])
-		else:
-			lines.append("Stocked now: %d/%d  |  Today: %d  |  Lifetime sold: %d  |  Pay today: %s  |  Bank %s  |  stage %d, %d section(s)  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, _format_money(_pay_today()), _format_money(money), complication_stage, sections_owned, shift_time_left])
+		lines.append("Stocked now: %d/%d  |  Today: %d  |  Lifetime sold: %d  |  Pay today: %s  |  Bank %s  |  stage %d, %d section(s)  |  %.0fs left" % [total_filled, total_slots, today_sold, week_sold, _format_money(_pay_today()), _format_money(money), complication_stage, sections_owned, shift_time_left])
 	debug_label.text = "\n".join(lines)
 	# Only once you're actually in a game (not over the main menu) and
 	# your own player exists — before that "0 players" would be all it said.

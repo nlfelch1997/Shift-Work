@@ -1,11 +1,14 @@
 extends SceneTree
 ## WEEK 23 — the break room's COFFEE MACHINE (BreakRoom.gd), tested for real:
 ## real E presses at the real machine, real walking speed measured off real
-## movement, the real end-of-shift payout (story Pay, endless Bucks).
+## movement, the real end-of-shift payout (Pay Today).
+## OCT 2026 PHASE 4: Endless Mode (and its Bucks) is retired — the old
+## "endless shift" half now plays Day 8 with Comfy Sneakers bought at the
+## Break Room Shop (Shop.gd, out of the bank), and coffee costs $ there too.
 ##
-##   Solo (Day 6 -> Day 7 -> WEEK COMPLETE -> hub -> two endless shifts):
+##   Solo (Day 6 -> Day 7 -> Day 8 with sneakers):
 ##     godot --headless --path . --script res://tools/coffee_test.gd -- --server --day=6 --prep-seconds=900 --test=coffee
-##   Co-op, 2-4 players (Day 7 -> WEEK COMPLETE -> hub -> an endless shift);
+##   Co-op, 2-4 players (Day 7 -> Day 8 with sneakers);
 ##   every peer checks its own view against the host's:
 ##     godot --headless --path . --script res://tools/coffee_test.gd -- --server --day=7 --prep-seconds=900 --players=3 --test=net-coffee &
 ##     (x2) godot --headless --path . --script res://tools/coffee_test.gd -- --client --test=net-coffee
@@ -27,12 +30,14 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
 	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
-	# and Day 7's report still finishes the week into Endless Mode (the debug
-	# --endless route) for the endless checks.
+	# (OCT 2026 PHASE 4: Week 21's Endless Mode and its debug --endless route
+	# are retired — Day 7's report just leads to Day 8 now.)
 	main.test_follow_old_calendar = true
-	main.legacy_endless_route = true
 	main.cleanup_ceiling_override = 0.0 # the report the moment the clock runs out (C4 turns cleanup back on)
 	var mode := "coffee"
 	for a in OS.get_cmdline_user_args():
@@ -73,8 +78,8 @@ func wait_until(cond: Callable, timeout: float) -> bool:
 func br() -> Node:
 	return main.break_room
 
-func en() -> Node:
-	return main.endless
+func shop() -> Node:
+	return main.shop
 
 func player() -> Node2D:
 	return main.players[me]
@@ -147,7 +152,7 @@ func coffee_view() -> Dictionary:
 	var icons := {}
 	for id in main.players:
 		icons[str(id)] = main.players[id]._coffee_cup.visible
-	return {"peers": peers, "today": br().coffee_cups_today, "week": br().coffee_cups_week, "icons": icons, "day": main.current_day, "shift": en().shift_number}
+	return {"peers": peers, "today": br().coffee_cups_today, "week": br().coffee_cups_week, "icons": icons, "day": main.current_day, "gear": shop().upgrades}
 
 ## The pay a story day should show: the game's own components, minus coffee
 ## computed HERE from the cup count (so a wrong deduction can't hide).
@@ -265,71 +270,35 @@ func _run_solo() -> void:
 	await end_shift_now()
 	check(main._pay_today() == expected_story_pay() and main._pay_today() == main._gross_pay_today() + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY, "C10: Day 7 pay %s — no coffee, no deduction" % main._format_money(main._pay_today()))
 	check(not main.report_pay_label.text.contains("coffee"), "C10: no coffee line on the report ('%s')" % main.report_pay_label.text)
-	# --- C11: the week ends: its tab closes.
+	# --- C11: the next shift (Day 8 — no week end, no WEEK COMPLETE any more).
 	main.continue_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_WEEK_COMPLETE, 5.0)
-	check(br().coffee_cups_week == 0, "C11: WEEK COMPLETE: the week's coffee tab resets")
-	await wait_until(func(): return main.hub_ui.enter_button != null, 5.0)
-	main.hub_ui.enter_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_HUB, 5.0)
-	await wait_until(func(): return main.hub_ui.buy_buttons.has("shoes"), 5.0)
-	await wait(0.2)
-	# --- E1: sneakers + coffee stack ADDITIVELY.
-	main.hub_ui.buy_buttons["shoes"].pressed.emit()
-	await wait(0.1)
-	check(en().upgrade_level("shoes") == 1, "E1: bought Comfy Sneakers 1 (wallet %d)" % en().wallet)
-	main.hub_ui.offer_buttons[0].pressed.emit()
-	await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 5.0)
+	await wait_until(func(): return main.shift_active and main.current_day == 8 and not main.is_day_report_active(), 10.0)
 	await wait(0.3)
-	check(br().coffee_cups_today == 0 and not br().has_coffee(1), "E1: endless shift #1 starts with a fresh pot")
+	check(br().coffee_cups_today == 0 and not br().has_coffee(1), "C11: Day 8 starts with a fresh pot")
+	# --- E1: sneakers (the Break Room Shop, out of the bank) + coffee stack ADDITIVELY.
+	main.money = 1000
+	p.teleport_to(shop().LOCKER_SPOT)
+	await wait(0.3)
+	await tap("host_interact") # E at the lockers opens the shop panel
+	await wait_until(func(): return shop().panel.visible and shop().buttons.has("shoes"), 3.0)
+	shop().buttons["shoes"].pressed.emit()
+	await wait(0.1)
+	check(shop().upgrade_level("shoes") == 1 and main.money == 1000 - 200, "E1: bought Comfy Sneakers 1 at the lockers for $200 (bank %s)" % main._format_money(main.money))
+	await tap("host_interact")
 	var v3 := await measure_speed()
 	check(absf(v3 - S * 1.08) < S * 0.03, "E1: sneakers alone: %.0f px/s = SPEED x 1.08" % v3)
 	p.teleport_to(machine_spot(0))
 	await wait(0.2)
 	var cbt: String = br()._coffee_hint.text
-	check(cbt.contains("-5 Bucks"), "E1: the endless prompt names the Bucks cost ('%s')" % cbt)
+	check(cbt.contains("-$40") and not cbt.contains("Bucks"), "E1: the prompt names the $ cost ('%s')" % cbt)
 	await tap("host_interact")
 	await wait(0.2)
 	var v4 := await measure_speed()
 	check(br().has_coffee(1) and absf(v4 - S * 1.28) < S * 0.03 and is_equal_approx(p.speed(), S * 1.28), "E1: sneakers + coffee: %.0f px/s = SPEED x (1 + 0.08 + 0.20) = %.0f (additive)" % [v4, S * 1.28])
-	# --- E2: a shift that earns nothing can't go negative: coffee is capped.
-	var w0: int = en().wallet
-	var pay_before: int = main._pay_today()
+	# --- E2: the cup comes off Day 8's Pay, $40, like any day.
+	add_sales(20)
 	await end_shift_now()
-	var lp: Dictionary = en().last_payout
-	check(main._pay_today() == pay_before and main._pay_today() == main._gross_pay_today() + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY, "E2: endless Pay (the medal score) %s untouched by coffee" % main._format_money(main._pay_today()))
-	check(int(lp["coffee_cups"]) == 1 and int(lp["total"]) >= 0 and int(lp["total"]) == int(lp["earned"]) + int(lp["coffee"]) and int(lp["coffee"]) == -mini(int(lp["earned"]), 5) and en().wallet == w0 + int(lp["total"]), "E2: payout earned %d, coffee %d -> +%d Bucks, never negative (wallet %d -> %d)" % [lp["earned"], lp["coffee"], lp["total"], w0, en().wallet])
-	# --- E3: a real shift: the full 5 Bucks come off.
-	main.continue_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_HUB, 5.0)
-	await wait_until(func(): return main.hub_ui.offer_buttons.size() == 3 and is_instance_valid(main.hub_ui.offer_buttons[1]) and not main.hub_ui.offer_buttons[1].is_queued_for_deletion(), 5.0)
-	await wait(0.2)
-	main.hub_ui.offer_buttons[1].pressed.emit()
-	await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 5.0)
-	await wait(0.3)
-	check(not br().has_coffee(1) and br().coffee_cups_today == 0, "E3: shift #2: fresh pot again")
-	p.teleport_to(machine_spot(2))
-	await wait(0.2)
-	await tap("host_interact")
-	await wait(0.2)
-	add_sales(40)
-	w0 = en().wallet
-	await end_shift_now()
-	lp = en().last_payout
-	var sold: int = main._total_sold() - main._sold_at_day_start
-	var clean: float = 0.5 * main.cleanup.mop_fraction() + 0.5 * main.cleanup.litter_fraction()
-	var plain: Dictionary = en().compute_payout(en().contract, sold, main.orders_filled_today, clean, main.writeups_today, main._pay_today())
-	check(int(plain["total"]) >= 5 and int(lp["earned"]) == int(plain["total"]) and int(lp["coffee"]) == -5 and int(lp["total"]) == int(plain["total"]) - 5 and en().wallet == w0 + int(plain["total"]) - 5, "E3: %d sold -> %d Bucks without coffee, %d with (−5) — wallet %d -> %d" % [sold, plain["total"], lp["total"], w0, en().wallet])
-	check(int(lp["medal"]) == int(plain["medal"]) and int(lp["score"]) == int(plain["score"]), "E3: medal and score identical with or without coffee (%s, $%d)" % [en().medal_text(int(lp["medal"])), lp["score"]])
-	await wait(0.2)
-	var bl: String = main.report_bucks_label.text
-	check(bl.contains("+%d Break Room Bucks" % int(lp["total"])) and bl.contains("− coffee 5 (1 cup(s): Host)"), "E3: report: '%s'" % bl.replace("\n", " | "))
-	# --- E4: per head (pure): a crew of 3, all three cups = one solo cup.
-	var c3 := {"targets": [100, 200, 300], "bucks_mult": 1.0, "crew": 3}
-	var a: Dictionary = en().compute_payout(c3, 90, 0, 0.0, 0, 250, 0)
-	var b: Dictionary = en().compute_payout(c3, 90, 0, 0.0, 0, 250, 3)
-	var c: Dictionary = en().compute_payout(c3, 90, 0, 0.0, 0, 250, 1)
-	check(int(a["total"]) - int(b["total"]) == 5 and int(a["total"]) - int(c["total"]) == 2, "E4: crew of 3: 3 cups cost %d Bucks, 1 cup %d (per head, like sales)" % [int(a["total"]) - int(b["total"]), int(a["total"]) - int(c["total"])])
+	check(main._pay_today() == expected_story_pay() and main._pay_today() == main._gross_pay_today() + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY - 40, "E2: Day 8 pay %s carries the $40 cup" % main._format_money(main._pay_today()))
 	finish()
 
 ## =============================================================================
@@ -428,30 +397,22 @@ func _run_host() -> void:
 	var rep := await _answers(ids)
 	for id in rep:
 		check(rep[id].get("ok", false), "N6: %s's report matches: '%s'%s" % [main.player_display_name(id), str(rep[id].get("label", "")).replace("\n", " | "), rep[id].get("why", "")])
-	# --- N7: WEEK COMPLETE -> hub -> an endless shift (a client clicks through).
+	# --- N7: Day 8 (no WEEK COMPLETE any more); the host buys Comfy
+	# Sneakers at the Break Room Shop out of the bank, during prep.
 	main.continue_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_WEEK_COMPLETE, 5.0)
-	check(br().coffee_cups_week == 0, "N7: week tab closed at WEEK COMPLETE")
-	await wait_until(func(): return main.hub_ui.enter_button != null, 5.0)
-	main.hub_ui.enter_button.pressed.emit()
-	await wait_until(func(): return en().screen == en().SCREEN_HUB, 5.0)
-	await wait_until(func(): return main.hub_ui.buy_buttons.has("shoes"), 5.0)
-	await wait(0.2)
-	main.hub_ui.buy_buttons["shoes"].pressed.emit()
-	await wait(0.2)
-	_step("take", {"who": ids[-1]})
-	await _answers(ids)
-	await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 10.0)
+	await wait_until(func(): return main.shift_active and main.current_day == 8 and not main.is_day_report_active(), 10.0)
+	main.money = maxi(main.money, 500)
+	check(shop().buy("shoes", 1, 0), "N7: the host bought Comfy Sneakers for the crew (bank %s)" % main._format_money(main.money))
 	await wait(0.5)
-	check(br().coffee_peers.is_empty() and br().coffee_cups_today == 0 and en().upgrade_level("shoes") == 1, "N8: endless shift #%d: fresh pot, sneakers 1" % en().shift_number)
-	await _sync_view(ids, "N8 endless start")
+	check(br().coffee_peers.is_empty() and br().coffee_cups_today == 0 and shop().upgrade_level("shoes") == 1, "N8: Day 8: fresh pot, sneakers 1")
+	await _sync_view(ids, "N8 Day 8 start")
 	# --- N9: the last client buys a cup here; speeds stack additively.
 	var eb: int = ids[-1]
 	_step("buy", {"who": eb, "spot": 2, "at": 0.0})
 	await _answers(ids)
 	await wait_until(func(): return br().has_coffee(eb), 5.0)
-	check(br().coffee_cups_today == 1 and br().has_coffee(eb), "N9: %s had a cup on the endless shift" % main.player_display_name(eb))
-	await _sync_view(ids, "N9 after the endless cup")
+	check(br().coffee_cups_today == 1 and br().has_coffee(eb), "N9: %s had a cup on Day 8" % main.player_display_name(eb))
+	await _sync_view(ids, "N9 after the Day 8 cup")
 	_step("speed")
 	host_v = await measure_speed()
 	sp = await _answers(ids)
@@ -460,26 +421,19 @@ func _run_host() -> void:
 		var v: float = float(sp[id].get("v", -1.0))
 		var want_v: float = S * (1.28 if id == eb else 1.08)
 		check(absf(v - want_v) < S * 0.03, "N9: %s walks %.0f px/s = SPEED x %.2f" % [main.player_display_name(id), v, want_v / S])
-	# --- N10: endless payday — Bucks, per head, on every peer.
+	# --- N10: Day 8 payday: one cup, $40, the same Pay on every peer.
 	add_sales(45)
-	var w0: int = en().wallet
 	await wait(0.5)
 	await end_shift_now()
-	await wait(0.5)
-	var lp: Dictionary = en().last_payout
-	var sold: int = main._total_sold() - main._sold_at_day_start
-	var clean: float = 0.5 * main.cleanup.mop_fraction() + 0.5 * main.cleanup.litter_fraction()
-	var plain: Dictionary = en().compute_payout(en().contract, sold, main.orders_filled_today, clean, main.writeups_today, main._pay_today())
-	var cost: int = mini(int(plain["total"]), int(round(5.0 / want)))
-	check(int(lp["earned"]) == int(plain["total"]) and int(lp["coffee"]) == -cost and int(lp["total"]) == int(plain["total"]) - cost and en().wallet == w0 + int(lp["total"]), "N10: crew of %d, 1 cup: %d Bucks earned - %d coffee (5 / %d per head) = +%d (wallet %d -> %d)" % [want, plain["total"], cost, want, lp["total"], w0, en().wallet])
-	check(main._pay_today() == main._gross_pay_today() + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY, "N10: endless Pay (score) %s carries no coffee $" % main._format_money(main._pay_today()))
-	_step("payout", {"payout": JSON.parse_string(JSON.stringify(lp)), "wallet": en().wallet, "pay": main._pay_today(), "bucks_label": main.report_bucks_label.text})
+	pay = main._pay_today()
+	check(pay == main._gross_pay_today() + main.cleanup.clean_bonus_today - main.writeups_today * main.WRITEUP_PENALTY - 40, "N10: Day 8 Pay Today %s carries one $40 cup" % main._format_money(pay))
+	_step("report", {"pay": pay, "week": main._pay_week(), "label": main.report_pay_label.text})
 	rep = await _answers(ids)
 	for id in rep:
-		check(rep[id].get("ok", false), "N10: %s's payout, wallet and report match the host's%s" % [main.player_display_name(id), rep[id].get("why", "")])
+		check(rep[id].get("ok", false), "N10: %s's report matches the host's%s" % [main.player_display_name(id), rep[id].get("why", "")])
 	_step("done")
 	await _answers(ids)
-	print("NET-COFFEE SUMMARY — %d players, cups poured %d, refused %d, wallet %d" % [want, br().cups_poured, br().cups_refused, en().wallet])
+	print("NET-COFFEE SUMMARY — %d players, cups poured %d, refused %d, bank %s" % [want, br().cups_poured, br().cups_refused, main._format_money(main.money)])
 	finish()
 
 func _run_client() -> void:
@@ -534,18 +488,7 @@ func _run_client() -> void:
 				var mine := {"pay": main._pay_today(), "week": main._pay_week(), "label": main.report_pay_label.text}
 				var ok: bool = mine["pay"] == int(step["pay"]) and mine["week"] == int(step["week"]) and mine["label"] == step["label"]
 				ans = {"ok": ok, "label": mine["label"], "why": "" if ok else " — mine %s vs host %s" % [str(mine), str(step)]}
-				check(ok, "%s: Day 7 report matches the host (%s)" % [who, mine["label"].replace("\n", " | ")])
-			"take":
-				if int(step["who"]) == me:
-					await wait_until(func(): return main.hub_ui.visible and main.hub_ui.offer_buttons.size() > 0, 5.0)
-					main.hub_ui.offer_buttons[0].pressed.emit()
-			"payout":
-				var hp: Dictionary = step["payout"]
-				await wait_until(func(): return main.report_layer.visible and _canon(en().last_payout) == _canon(hp), 8.0)
-				await process_frame
-				var ok: bool = _canon(en().last_payout) == _canon(hp) and en().wallet == int(step["wallet"]) and main._pay_today() == int(step["pay"]) and main.report_bucks_label.text == step["bucks_label"]
-				ans = {"ok": ok, "why": "" if ok else " — payout %s wallet %d pay %d label '%s'" % [_canon(en().last_payout), en().wallet, main._pay_today(), main.report_bucks_label.text]}
-				check(ok, "%s: endless payout matches the host (+%d Bucks, wallet %d)" % [who, int(en().last_payout.get("total", -1)), en().wallet])
+				check(ok, "%s: Day %d report matches the host (%s)" % [who, main.current_day, mine["label"].replace("\n", " | ")])
 			"done":
 				_net_write("co_%d_%d.json" % [n, me], {})
 				finish()

@@ -13,6 +13,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	careless = true
 	var client := "--client" in args
 	if _mode == "soak":
@@ -353,10 +356,6 @@ func _run_hire() -> void:
 	var why_practice: String = st().blocker("Produce", "speed")
 	main.tutorial.active = false
 	check(why_practice.begins_with("practice shift"), "H5: practice shift: '%s'" % why_practice)
-	main.endless_active = true
-	var why_endless: String = st().blocker("Produce", "speed")
-	main.endless_active = false
-	check(why_endless == "not in Endless Mode", "H5: endless: '%s'" % why_endless)
 	# --- H6 the two upgrades, and what they set
 	var m0: int = main.money
 	await press_button("Produce:speed")
@@ -915,6 +914,10 @@ func _counts() -> Dictionary:
 		c["bags"] = main.cleanup.bags.size()
 		c["rating"] = snappedf(main.store_rating.rating, 0.01)
 		c["cap"] = main.customer_cap()
+	# OCT 2026 PHASE 4: the shift's random events (when they're on).
+	if main.get("events") != null and main.events_on:
+		c["events"] = main.events.log_today.map(func(e): return "%s%s" % [e[0], "+" if e[1] else "-"])
+		c["event_bonus"] = main.events.bonus_today
 	return c
 
 func _run_staff_soak() -> void:

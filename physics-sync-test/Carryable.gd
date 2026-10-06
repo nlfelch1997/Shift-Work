@@ -94,7 +94,7 @@ var target_rotation: float
 ## reliable broadcast RPCs below, same "one-shot events get reliable RPCs,
 ## not sync properties" reasoning as request_push.
 var carrier_id: int = 0
-## WEEK 21 — the Back Brace upgrade (Endless.gd's carry_capacity()) lets a
+## WEEK 21 — the Back Brace upgrade (Shop.gd's carry_capacity() — PHASE 4: was Endless.gd's) lets a
 ## player hold more than one product. carry_seq orders a carrier's stack: set
 ## from a per-process counter as each pickup RPC lands, and reliable RPCs from
 ## the host land in the same order on every peer, so "the newest one" (the
@@ -394,7 +394,7 @@ func _player_has_room(requester_id: int) -> bool:
 		return true
 	if holds_box or body.is_in_group("delivery_box"):
 		return false
-	return held < get_tree().current_scene.endless.carry_capacity()
+	return held < get_tree().current_scene.shop.carry_capacity()
 
 func _validate_pickup(requester_id: int, requester_pos: Vector2) -> void:
 	if not _player_has_room(requester_id):

@@ -180,6 +180,7 @@ const BIN_REGION := Rect2i(534, 124, 33, 65)
 const STATION_SHEET := "res://assets/warehouse/tile-B-03.png"
 const STATION_REGION := Rect2i(2, 203, 92, 83)
 const PUDDLE_COLOR := Color(0.62, 0.36, 0.12, 0.8) # cola, mostly
+const WATER_COLOR := Color(0.35, 0.6, 0.95, 0.75) # PHASE 4: a roof leak
 const Z_ON_FLOOR := 0
 const Z_HELD := 2
 
@@ -405,14 +406,19 @@ func drop_litter(pos: Vector2) -> int:
 	litter_dropped_today += 1
 	return id
 
-## Host-only. Public for tests (and the practice shift).
-func drop_puddle(pos: Vector2, r := -1.0) -> int:
+## Host-only. Public for tests (and the practice shift). OCT 2026 PHASE 4:
+## water = a roof leak (Events.gd's Leaky Roof) — the same mop-only puddle,
+## drawn as water under a drip instead of cola and a cup.
+func drop_puddle(pos: Vector2, r := -1.0, water := false) -> int:
 	if not multiplayer.is_server():
 		return 0
 	var id := _next_puddle_id
 	_next_puddle_id += 1
 	var next := puddles.duplicate()
-	next.append({"id": id, "pos": pos, "r": r if r > 0.0 else randf_range(PUDDLE_R_MIN, PUDDLE_R_MAX)})
+	var pd := {"id": id, "pos": pos, "r": r if r > 0.0 else randf_range(PUDDLE_R_MIN, PUDDLE_R_MAX)}
+	if water:
+		pd["water"] = true
+	next.append(pd)
 	puddles = next
 	puddles_dropped_today += 1
 	return id
@@ -541,7 +547,7 @@ func _mop_at(head: Vector2, delta: float, peer := 0) -> float:
 	if best == null:
 		return -1.0
 	var k: String = best["key"]
-	var prog: float = _progress.get(k, 0.0) + delta / (float(best["time"]) * main.endless.cleanup_time_mult())
+	var prog: float = _progress.get(k, 0.0) + delta / (float(best["time"]) * main.shop.cleanup_time_mult())
 	if prog < 1.0:
 		_progress[k] = prog
 		return prog
@@ -574,7 +580,7 @@ func _sweep_at(head: Vector2, delta: float, pan: int, peer := 0) -> Array:
 		if room <= 0:
 			best = maxf(best, _progress.get(k, 0.0))
 			continue
-		var prog: float = _progress.get(k, 0.0) + delta / (SWEEP_TIME * main.endless.cleanup_time_mult())
+		var prog: float = _progress.get(k, 0.0) + delta / (SWEEP_TIME * main.shop.cleanup_time_mult())
 		if prog >= 1.0 and swept.size() < room:
 			swept.append(piece["id"])
 			_progress.erase(k)
@@ -680,10 +686,10 @@ func bonus_for(gross: int) -> int:
 	return int(round(maxf(0.0, float(gross)) * CLEAN_BONUS_MAX * (0.5 * mop_fraction() + 0.5 * litter_fraction())))
 
 ## Every peer (replicated counters): share of the category cleaned.
-## WEEK 21: + the Break Room's Janitor's Kit (Endless.gd). Every peer (the
+## WEEK 21: + the Break Room's Janitor's Kit (Shop.gd since PHASE 4). Every peer (the
 ## pan's fill art reads it too).
 func pan_capacity() -> int:
-	return PAN_CAPACITY + main.endless.pan_bonus()
+	return PAN_CAPACITY + main.shop.pan_bonus()
 
 func can_capacity() -> int:
 	return CAN_CAPACITY
@@ -774,7 +780,7 @@ func _bin_open(i: int) -> bool:
 		return true
 	for s in main.SECTIONS:
 		if s["name"] == sec:
-			return main.is_section_open(s) # WEEK 21: story day or endless posting
+			return main.is_section_open(s) # owned (or the practice shift's Dry Goods)
 	return false
 
 ## The cans as they'd be with every bag back in its can (the save).
@@ -1315,12 +1321,15 @@ func _build_puddle_node(pd: Dictionary) -> Node2D:
 		pts.append(Vector2.RIGHT.rotated(TAU * i / 12.0) * r * rng.randf_range(0.75, 1.15) * Vector2(1.0, 0.7))
 	var blob := Polygon2D.new()
 	blob.polygon = pts
-	blob.color = PUDDLE_COLOR
+	var water: bool = pd.get("water", false)
+	blob.color = WATER_COLOR if water else PUDDLE_COLOR
 	node.add_child(blob)
 	var shine := Polygon2D.new()
 	shine.polygon = PackedVector2Array([Vector2(-0.4, -0.3) * r, Vector2(-0.05, -0.4) * r, Vector2(0.0, -0.3) * r, Vector2(-0.3, -0.18) * r])
 	shine.color = Color(1, 1, 1, 0.3)
 	node.add_child(shine)
+	if water:
+		return node # no cup: it came through the ceiling (Events.gd draws the drip)
 	var cup := _sprite(MARKET_SHEET_4, LITTER_REGIONS[6], LITTER_SCALE)
 	cup.position = Vector2(r * 0.7, -r * 0.3)
 	cup.rotation = PI * 0.5
