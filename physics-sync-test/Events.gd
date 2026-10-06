@@ -233,7 +233,9 @@ func _ready() -> void:
 		l.add_theme_constant_override("shadow_offset_y", 2)
 		l.size = Vector2(420, 70)
 		l.pivot_offset = l.size / 2.0
-		l.position = main.delivery.pad_center(s["name"]) + Vector2(-210, -120)
+		# Just below the section's unpack pad (above it is the section's own
+		# sign, which a marker there covered — found in the screenshots).
+		l.position = main.delivery.pad_center(s["name"]) + Vector2(-210, 64)
 		l.visible = false
 		add_child(l)
 		_markers[s["name"]] = l
@@ -801,7 +803,11 @@ func report_line() -> String:
 	var parts := []
 	for e in log_today:
 		parts.append("%s %s%s" % [e[0], "✓" if e[1] else "✗", (" +$%d" % int(e[2])) if e[1] else ""])
-	return "Events: " + "   ·   ".join(parts)
+	# Two to a line, so a busy day never runs off the report.
+	var lines := []
+	for i in range(0, parts.size(), 2):
+		lines.append("   ·   ".join(parts.slice(i, i + 2)))
+	return "Events: " + "\n".join(lines)
 
 ## --- World markers (every peer) ---------------------------------------------------
 

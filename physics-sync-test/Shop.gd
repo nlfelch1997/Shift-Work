@@ -298,7 +298,7 @@ func _rebuild_panel() -> void:
 	sb.content_margin_top = 8
 	sb.content_margin_bottom = 10
 	box.add_theme_stylebox_override("panel", sb)
-	box.position = Vector2(110, 40)
+	box.position = Vector2(110, 80) # below the PREP line (and the staff panel's height)
 	box.custom_minimum_size = Vector2(740, 0)
 	_panel_root.add_child(box)
 	var col := VBoxContainer.new()

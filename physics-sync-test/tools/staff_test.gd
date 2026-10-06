@@ -106,6 +106,11 @@ func _staffed_color(obj: Node) -> bool:
 	var visual := obj.get_node_or_null("Polygon2D")
 	if visual == null:
 		return false
+	# PHASE 4 (--event-brain): a section a running event asks for is fair game,
+	# staffed or not — a player helps out where the order/rush is.
+	for sec in _event_focus():
+		if visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
+			return false
 	for sec in _hire_spec:
 		if visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
 			return true
