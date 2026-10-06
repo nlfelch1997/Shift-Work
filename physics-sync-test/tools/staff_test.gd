@@ -170,8 +170,87 @@ func _open_at(s: float) -> void:
 	if not main.store_open and main.shift_active:
 		main.open_store(1)
 
+## OCT 2026 PHASE 3D — --upkeep: the bot also keeps the store clean during
+## the selling window, as a tidy crew would: when the floor has UPKEEP_LITTER
+## pieces of trash, a puddle or spill, or a can is full, it stops between jobs
+## and cleans — trash by hand into the nearest can with room, wet mess with
+## the nearest mop, a full can's bag out to the dumpster — then goes back to
+## stocking. Without it, the bot never cleans mid-shift (only at close, as
+## before): the neglected store. The time it spends is on the INCOME line.
+const UPKEEP_LITTER := 4
+var _upkeep_s := 0.0
+var _upkeep_passes := 0
+
+func _upkeep_due() -> bool:
+	if not main.store_open or main.cleanup_active:
+		return false
+	var cl: Node = main.cleanup
+	return cl.litter.size() >= UPKEEP_LITTER or not cl.puddles.is_empty() or cl.full_cans() > 0 or (main.ambience.spills_enabled() and main.ambience.spills.any(func(sp): return sp["phase"] == 1))
+
+func _upkeep_pass() -> bool:
+	if not _upkeep_due():
+		return false
+	var cl: Node = main.cleanup
+	var t0 := _wall()
+	_upkeep_passes += 1
+	steer(Vector2.ZERO)
+	# Full cans first: their bags out back.
+	var guard := 0
+	while cl.full_cans() > 0 and guard < 3 and main.store_open and not main.cleanup_active:
+		guard += 1
+		await _dump_a_can()
+	# Wet mess: a mop.
+	var wet: Array = cl.puddles.map(func(x): return {"pos": x["pos"], "r": float(x["r"])})
+	if main.ambience.spills_enabled():
+		for sp in main.ambience.spills:
+			wet.append({"pos": sp["pos"], "r": float(sp["r"])})
+	if not wet.is_empty() and await get_tool("mop"):
+		for m in wet:
+			if not main.store_open or main.cleanup_active:
+				break
+			if await face_target(m["pos"], mop_stand(m)):
+				press(act + "place")
+				await wait_until(func(): return not mop_messes_view().any(func(q): return q["pos"].distance_to(m["pos"]) < 12.0), 5.0)
+				press(act + "place", 0.0)
+		if cl.tool_of(me) >= 0:
+			await tap(act + "interact")
+	# Trash by hand, a handful at a time, into a can with room.
+	guard = 0
+	while cl.litter.size() > 0 and guard < 12 and main.store_open and not main.cleanup_active:
+		guard += 1
+		while cl.hand_count(me) < cl.HAND_MAX and cl.litter.size() > 0:
+			var near = _nearest(player().global_position, cl.litter, [])
+			if near == null:
+				break
+			await walk_to(near["pos"], 22.0, 10.0)
+			var before: int = cl.hand_count(me)
+			await tap(act + "interact")
+			await wait_until(func(): return cl.hand_count(me) > before, 1.0)
+			if cl.hand_count(me) == before:
+				break
+		if cl.hand_count(me) > 0:
+			var best := -1
+			var bd := INF
+			for i in cl.BINS.size():
+				if cl._bin_open(i) and not cl.can_full(i):
+					var d := route_len(player().global_position, cl.BINS[i]["pos"])
+					if d < bd:
+						bd = d
+						best = i
+			if best < 0:
+				await tap(act + "interact") # drop it (nowhere to put it) and empty a can
+				await _dump_a_can()
+				continue
+			await walk_to(cl.BINS[best]["pos"] + Vector2(0, 30), 12.0, 20.0)
+			await tap(act + "interact")
+			await wait_until(func(): return cl.hand_count(me) == 0, 1.0)
+	_upkeep_s += _wall() - t0
+	return true
+
 func _run_income() -> void:
 	_hire_spec = _parse_hire()
+	if "--upkeep" in OS.get_cmdline_user_args():
+		upkeep_hook = _upkeep_pass
 	_open_after = float(_arg_int("--open-after=", -1))
 	var afk := "--afk" in OS.get_cmdline_user_args()
 	var shifts := _arg_int("--shifts=", 1)
@@ -186,6 +265,9 @@ func _run_income() -> void:
 		var money0: int = main.money
 		var life0: int = main.lifetime_earned
 		var t0 := _wall()
+		var rating0: float = main.store_rating.rating
+		_upkeep_s = 0.0
+		_upkeep_passes = 0
 		if _open_after >= 0.0:
 			_open_at(_open_after)
 		if afk:
@@ -205,6 +287,8 @@ func _run_income() -> void:
 				var h := helper(sec)
 				helper_bits.append("%s[s%d c%d]: placed %d, unpacked %d, walked %.0fpx, yield %.0fs" % [sec, main.staff.speed_level(sec), main.staff.carry_level(sec), h.placed_today, h.unpacked_today, h.walked_px, h.forklift_yield_s])
 		var pay: int = main._pay_today()
+		var cl: Node = main.cleanup
+		print("UPKEEP day=%d upkeep=%d frozen=%d shift=%d | rating %.2f -> %.2f | sold %d, customer cap %d, price $%d | rating on prices %s, trash %s (%d binned), bounced %d | cleaning passes %d, %.0fs | litter dropped %d, puddles %d, cans %s, bags dumped %d | pay %s" % [main.debug_day, 1 if upkeep_hook.is_valid() else 0, 1 if main.rating_frozen else 0, n + 1, rating0, main.store_rating.rating, sold, main.customer_cap(), main.sale_price(), main._format_money(main.rating_sales_today), main._format_money(cl.litter_pay_today()), cl.trash_binned_today, main.bounced_today, _upkeep_passes, _upkeep_s, cl.litter_dropped_today, cl.puddles_dropped_today, str(cl.cans), cl.bags_dumped_today, main._format_money(pay)])
 		print("INCOME day=%d open_after=%d stage=%d sections=%d hire=%s afk=%d share=%d shift=%d | sold %d by %s | pay %s, wages %s, net %s | bank %s -> %s, lifetime +%d | opened at %.0fs by %s, prep ceiling %.0fs | boxes diverted %d (skipped %d), bot placed %d | %s | wall %.0fs" % [main.debug_day, int(_open_after), main.complication_stage, main.sections_owned, str(_hire_spec).replace(" ", ""), 1 if afk else 0, 1 if _share else 0, n + 1, sold, str(main.sold_by_section_today).replace(" ", ""), main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(pay - main.staff.wages_today), main._format_money(money0), main._format_money(main.money), main.lifetime_earned - life0, stats.get("opened_at", -1.0), stats.get("opened_by", "ceiling" if afk else "?"), stats["grace"], main.staff.boxes_diverted_today, main.staff.boxes_skipped_today, stats["placed"], "; ".join(helper_bits), _wall() - t0])
 		check(main.money == money0 + pay - main.staff.wages_today, "shift %d: bank moved by pay - wages exactly (%s -> %s)" % [n + 1, main._format_money(money0), main._format_money(main.money)])
 		check(main.lifetime_earned == life0 + maxi(0, pay), "shift %d: lifetime earned grew by the pay alone (wages don't touch it)" % (n + 1))
@@ -664,7 +748,7 @@ func _run_staff_save() -> void:
 			check(st().staff.is_empty() and st().helpers.values().all(func(h): return not h.active), "V1: ...with nobody hired")
 			check(st().do_action("Produce", "hire", 1) and st().do_action("Dairy/Frozen", "hire", 1) and st().do_action("Produce", "speed", 1) and st().do_action("Produce", "carry", 1) and st().do_action("Produce", "carry", 1), "V1: hired Sam (speed 2, carry 3) and Alex")
 			var disk := _read_json(path)
-			check(int(disk.get("version", 0)) == SG.VERSION and SG.VERSION == 3, "V1: the save on disk is version %d" % int(disk.get("version", 0)))
+			check(int(disk.get("version", 0)) == SG.VERSION and SG.VERSION >= 3, "V1: the save on disk is version %d" % int(disk.get("version", 0)))
 			var ds: Dictionary = disk.get("staff", {})
 			check(ds.size() == 2 and int(ds.get("Produce", {}).get("speed", -1)) == 1 and int(ds.get("Produce", {}).get("carry", -1)) == 2 and int(ds.get("Dairy/Frozen", {}).get("speed", -1)) == 0, "V1: ...with the staff in it (%s)" % str(ds))
 			check(int(disk.get("shop", {}).get("money", 0)) == main.money, "V1: and the bank after paying for them (%s)" % main._format_money(main.money))
@@ -823,6 +907,14 @@ func _counts() -> Dictionary:
 	c["staffed_sold"] = 0
 	for sec in st().HELPER_SECTIONS:
 		c["staffed_sold"] += int(main.sold_by_section_today.get(sec, 0))
+	# OCT 2026 PHASE 3D: what's lying about (the soak crew never cleans).
+	if main.get("store_rating") != null:
+		c["litter"] = main.cleanup.litter.size()
+		c["puddles"] = main.cleanup.puddles.size()
+		c["full_cans"] = main.cleanup.full_cans()
+		c["bags"] = main.cleanup.bags.size()
+		c["rating"] = snappedf(main.store_rating.rating, 0.01)
+		c["cap"] = main.customer_cap()
 	return c
 
 func _run_staff_soak() -> void:

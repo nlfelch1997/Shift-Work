@@ -440,11 +440,28 @@ extends Node2D
 ##     Cleanup.gd LITTER_RATE_PER_CUSTOMER 1/60 per customer-second in the store
 ##     Cleanup.gd CLEAN_BONUS_MAX           0.25 (+25% of gross pay, split
 ##                                          evenly: spills & knockovers / litter)
-##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied at a trash bin
-##     Cleanup.gd LITTER_PAY_PER_PIECE      $1 a piece picked up (E by hand any time, or swept),
-##                                          its own Pay line, outside the bonus (Oct 2026)
+##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied into a trash can
+##     Cleanup.gd LITTER_PAY_PER_PIECE      $1 a piece, paid when it goes INTO A CAN (Phase 3D;
+##                                          was: when picked up), its own Pay line, outside the bonus
 ##     Carryable.gd PICKUP_RANGE            70 px (+12 host net slack), the store's shared E radius (Oct 2026: was 60)
 ##     Cleanup.gd MOP_TIME_* / SWEEP_TIME   spill ~2.1-2.6 s, display 1.6, stock 0.8 / 0.45 s
+##
+##   STORE UPKEEP (OCT 2026 PHASE 3D) — Cleanup.gd (FLAGGED)
+##     HAND_MAX                            3 pieces of trash in hand (hands full: no stock)
+##     CAN_CAPACITY                        15 pieces a can; full = overflowing (rated down)
+##     BAG_SPEED_MULT                      0.85 x walking with a bin bag
+##     DUMPSTER_POS / DUMPSTER_RANGE       (2030,1530) Storage SW corner / 95 px; never fills
+##     PUDDLE_CHANCE / PUDDLE_MAX          15% of drops are drink puddles / 6 at once (mop only)
+##     MOPS / BROOMS                       3 / 3 (station 2+2, hub rack 1+1), usable all day
+##   STORE RATING (OCT 2026 PHASE 3D) — StoreRating.gd + Main.gd (FLAGGED)
+##     MESS_LITTER / _SPILL / _FULL_CAN    1 / 3 / 4 points (a loose bag counts as a full can)
+##     MESS_PER_STAR_BASE / _PER_SECTION   6 + 3 per section past the first (6, 9, 12, 15)
+##     FALL_PER_SEC / RISE_PER_SEC         1 star per 60 s / per 90 s; store open only
+##     RATING_START                        3.0 (new shops and pre-v4 saves) — the old economy
+##     RATING_CROWD_MULT (Main.gd)         [0.70, 1.00, 1.15] customer cap at 1/3/5 stars
+##     RATING_PRICE_MULT (Main.gd)         [0.85, 1.00, 1.10] per-sale pay at 1/3/5 stars
+##     BOUNCE_PAY / BOUNCE_CALM_SECONDS    $5 a troublemaker thrown out / one fewer for 45 s
+##     ESCORT_SPEED_MULT                   0.8 x hauling one; Customer.gd ESCORT_MAX_TIME 25 s
 ##
 ##   BREAK ROOM COFFEE (WEEK 23) — BreakRoom.gd (FLAGGED placeholders)
 ##     COFFEE_POS / COFFEE_RANGE            (180,66) top-wall counter / 70 px
@@ -729,6 +746,32 @@ const STAGE_BANNER_SECONDS := 6.5
 ## moment erasing a whole shift. Tune freely.
 const PAY_PER_SALE := 10
 const WRITEUP_PENALTY := 25
+## ============================================================================
+## OCT 2026 PHASE 3D — THE STORE RATING'S ECONOMY LEVERS (StoreRating.gd owns
+## the rating itself: what drags it down, how fast it moves). ALL FLAGGED,
+## TUNABLE, measured in tools/staff_test.gd's income mode (clean vs neglected
+## store — the Phase 3D report has the table). Bounded and modest on purpose:
+## a neglected store earns noticeably less, never nothing, and 3 stars (where
+## a new shop and every old save start) is exactly the pre-3D economy.
+## Each is [at 1 star, at 3 stars, at 5 stars], linear in between:
+## - RATING_CROWD_MULT: the customer cap (how many shoppers are in the store
+##   at once — Main.gd's _restock_customers(); every leaver is replaced, so
+##   this IS the arrival rate). 17 at the top tier -> 12 / 17 / 20.
+## - RATING_PRICE_MULT: what each sale pays (PAY_PER_SALE $10 -> $9 / $10 /
+##   $11, rounded per sale at the rating of the moment — note_sale()). Only
+##   the base sale: the priority-order extra is untouched.
+const RATING_START := 3.0
+const RATING_CROWD_MULT := [0.7, 1.0, 1.15]
+const RATING_PRICE_MULT := [0.85, 1.0, 1.10]
+## THROWING OUT A TROUBLEMAKER (Customer.gd's escorted_by): +BOUNCE_PAY on
+## Pay Today, and for BOUNCE_CALM_SECONDS after it one fewer disruptive
+## customer is let in (that slot goes to a shopper). Hauling one slows you to
+## ESCORT_SPEED_MULT. Grabbing reaches Player.gd's GRAB_RANGE (+ net slack on
+## the host). FLAGGED placeholders.
+const BOUNCE_PAY := 5
+const BOUNCE_CALM_SECONDS := 45.0
+const ESCORT_SPEED_MULT := 0.8
+const GRAB_NET_SLACK := 14.0
 ## WEEK 11 — manager priority stock orders, Day 5+ (see the WEEK 11 header
 ## note). Every PRIORITY_ORDER_INTERVAL of shift clock he calls out one
 ## unlocked section and a quantity; the crew has PRIORITY_ORDER_WINDOW to
@@ -799,6 +842,7 @@ const SoundDirectorScript := preload("res://SoundDirector.gd")
 const JuiceScript := preload("res://Juice.gd")
 const BreakRoomScript := preload("res://BreakRoom.gd")
 const StaffScript := preload("res://Staff.gd")
+const StoreRatingScript := preload("res://StoreRating.gd")
 const SaveGameScript := preload("res://SaveGame.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
@@ -913,6 +957,10 @@ var shelf_rows := 1
 var stage_banner := 0
 ## Debug: --money=N starts the bank there (purchase tests, playtesting).
 var debug_money := -1
+## Debug/tests (PHASE 3D): --rating=X starts the store rating there;
+## --rating-frozen keeps it there (the income harness measures each level).
+var debug_rating := -1.0
+var rating_frozen := false
 var _day_given := false
 ## Debug: --endless. Day 7's report finishes the old story's week into the
 ## untouched Endless Mode (WEEK COMPLETE -> hub) — the only route to it until
@@ -1005,6 +1053,14 @@ var _day_report_active := false
 ## a new value to the synchronizer.
 var writeups_today := 0
 var writeups_week := 0
+## OCT 2026 PHASE 3D — host-written, replicated (DaySync): troublemakers thrown
+## out (BOUNCE_PAY each), and what the store rating added to (or took off)
+## today's/this week's sales (note_sale()).
+var bounced_today := 0
+var bounced_week := 0
+var rating_sales_today := 0
+var rating_sales_week := 0
+var _bounce_times: Array = [] # host: Time.get_ticks_msec() of recent bounces
 var writeups_by_peer := {}
 ## WEEK 11 — priority orders (see PRIORITY_ORDER_* above). The open order and
 ## the day's order tallies are host-written and replicated via DaySync, the
@@ -1597,6 +1653,8 @@ var _practice_requested := false
 var break_room: Node2D
 ## OCT 2026 PHASE 3 — the hired staff (Staff.gd).
 var staff: Node2D
+## OCT 2026 PHASE 3D — the store rating and the HUD's "Today" counter.
+var store_rating: Node
 
 ## Every RigidBody2D carrying a Carryable child, found generically instead
 ## of hardcoding "the crate" — Week 3 added Can/Box alongside it, and this
@@ -1731,6 +1789,10 @@ func _ready() -> void:
 	endless = EndlessScript.new()
 	endless.name = "Endless"
 	add_child(endless)
+	# OCT 2026 PHASE 3D. Explicit name: its Sync's path must match on every peer.
+	store_rating = StoreRatingScript.new()
+	store_rating.name = "StoreRating"
+	add_child(store_rating)
 	# WEEK 23 — break room furniture + the coffee machine. Explicit name (its
 	# CoffeeSync's path must match on every peer); under Players in draw order.
 	break_room = BreakRoomScript.new()
@@ -1778,7 +1840,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover", ".:money", ".:lifetime_earned", ".:sections_owned", ".:complication_stage", ".:shelf_rows", ".:stage_banner", ".:endless_active"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover", ".:money", ".:lifetime_earned", ".:sections_owned", ".:complication_stage", ".:shelf_rows", ".:stage_banner", ".:endless_active", ".:bounced_today", ".:bounced_week", ".:rating_sales_today", ".:rating_sales_week"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1857,6 +1919,10 @@ func _parse_cli_args() -> void:
 			debug_day = int(arg.substr("--day=".length()))
 		elif arg.begins_with("--money="):
 			debug_money = int(arg.substr("--money=".length()))
+		elif arg.begins_with("--rating="):
+			debug_rating = float(arg.substr("--rating=".length()))
+		elif arg == "--rating-frozen":
+			rating_frozen = true
 	# Only ever switches it ON: test harnesses set it before this runs.
 	if "--endless" in args:
 		legacy_endless_route = true
@@ -2051,6 +2117,8 @@ func _on_host_pressed() -> void:
 	var resume := _load_progress()
 	if debug_money >= 0:
 		money = debug_money
+	if debug_rating > 0.0:
+		store_rating.set_rating(debug_rating)
 	shelf_rows = _shelf_rows_for_open_sections()
 	_spawn_player(multiplayer.get_unique_id())
 	if bot_mode:
@@ -2272,6 +2340,9 @@ func _start_shift() -> void:
 	clocked_out_by = -1
 	writeups_today = 0
 	writeups_by_peer = {}
+	bounced_today = 0
+	rating_sales_today = 0
+	_bounce_times = []
 	break_room.reset_for_new_shift() # WEEK 23: a fresh pot, nobody's had a cup
 	staff.reset_for_new_shift() # OCT 2026 PHASE 3: who's on the books, empty back rooms
 	sold_by_section_today = {}
@@ -2434,7 +2505,7 @@ func _update_store_sign(delta: float) -> void:
 	_sign_board.color = Color(0.75, 0.12, 0.1) if closed else Color(0.1, 0.55, 0.2)
 	_sign_text.text = "CLOSED" if closed else "OPEN"
 	var me := multiplayer.get_unique_id() if Net.is_active() else 0
-	_sign_hint.visible = closed and not cleanup_active and players.has(me) and near_store_sign(players[me].global_position)
+	_sign_hint.visible = closed and not cleanup_active and players.has(me) and is_instance_valid(players[me]) and near_store_sign(players[me].global_position)
 	_open_banner_t = maxf(0.0, _open_banner_t - delta)
 	_update_time_clock(me)
 	_update_gate_hint(me)
@@ -2619,7 +2690,7 @@ func _update_gate_hint(me: int) -> void:
 	_gate_hint.add_theme_color_override("font_color", Color(1, 0.9, 0.3) if h[2] else Color(0.85, 0.85, 0.85))
 
 func _update_time_clock(me: int) -> void:
-	_clock_hint.visible = cleanup_active and not _day_report_active and players.has(me) and near_time_clock(players[me].global_position)
+	_clock_hint.visible = cleanup_active and not _day_report_active and players.has(me) and is_instance_valid(players[me]) and near_time_clock(players[me].global_position)
 
 ## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
 ## nothing previously reset shelf-fill state or the physical product pool
@@ -2770,6 +2841,9 @@ func _load_progress() -> String:
 	complication_stage = shop["stage"]
 	sold_carryover = shop["lifetime_sold"]
 	staff.staff = d["staff"] # OCT 2026 PHASE 3 (none in a version-2 save)
+	# OCT 2026 PHASE 3D (3 stars and empty cans in a version-2/3 save).
+	store_rating.set_rating(d["upkeep"]["rating"])
+	cleanup.set_cans(d["upkeep"]["cans"])
 	var e: Dictionary = d["endless"]
 	story_complete = e["unlocked"]
 	endless.wallet = e["wallet"]
@@ -2785,7 +2859,7 @@ func _load_progress() -> String:
 		current_day = LEGACY_WEEK_DAYS
 	else:
 		current_day = completed_story_day + 1
-	print("[Save] Loaded %s — completed day %d, resuming: %s, bank %s, lifetime earned $%d, %d section(s), stage %d%s" % [save_path, completed_story_day, ("Day %d" % current_day) if resume == "story" else resume, _format_money(money), lifetime_earned, sections_owned, complication_stage, (", endless wallet %d" % endless.wallet) if story_complete else ""])
+	print("[Save] Loaded %s — completed day %d, resuming: %s, bank %s, lifetime earned $%d, %d section(s), stage %d, rating %.2f, cans %s%s" % [save_path, completed_story_day, ("Day %d" % current_day) if resume == "story" else resume, _format_money(money), lifetime_earned, sections_owned, complication_stage, store_rating.rating, str(cleanup.cans), (", endless wallet %d" % endless.wallet) if story_complete else ""])
 	show_toast(("Welcome back — Endless Mode, %d Bucks" % endless.wallet) if story_complete else ("Welcome back — Day %d  ·  Bank %s" % [current_day, _format_money(money)]), Color(0.55, 1, 0.6), 4.0)
 	return resume
 
@@ -2889,6 +2963,8 @@ func _finish_story() -> void:
 	priority_sales_week = 0
 	cleanup.clean_bonus_week = 0
 	cleanup.litter_pay_week = 0
+	bounced_week = 0
+	rating_sales_week = 0
 	break_room.reset_week()
 	endless.screen = EndlessScript.SCREEN_WEEK_COMPLETE
 	completed_story_day = LEGACY_WEEK_DAYS
@@ -3079,16 +3155,20 @@ func player_display_name(peer_id: int) -> String:
 ## PLAYTEST FIX (Oct 2026): + litter picked up, $1 a piece (Cleanup.gd's
 ## LITTER_PAY_PER_PIECE) — outside the gross, so the cleanliness bonus (a
 ## share of the gross) is exactly what it was.
+## OCT 2026 PHASE 3D: + troublemakers thrown out (BOUNCE_PAY each), outside
+## the gross like the trash pay. The live "Today" counter on the HUD
+## (StoreRating.gd) is exactly this number, all shift long.
 func _pay_today() -> int:
-	return _gross_pay_today() + cleanup.clean_bonus_today + cleanup.litter_pay_today() - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
+	return _gross_pay_today() + cleanup.clean_bonus_today + cleanup.litter_pay_today() + bounced_today * BOUNCE_PAY - writeups_today * WRITEUP_PENALTY - break_room.dollars_today()
 
 func _pay_week() -> int:
-	return _total_sold() * PAY_PER_SALE + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week + cleanup.litter_pay_week - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
+	return _total_sold() * PAY_PER_SALE + rating_sales_week + _priority_bonus(priority_sales_week) + cleanup.clean_bonus_week + cleanup.litter_pay_week + bounced_week * BOUNCE_PAY - writeups_week * WRITEUP_PENALTY - break_room.dollars_week()
 
 ## Sales plus the priority-order extra — the day's pay before write-ups and
-## before the cleanup bonus (which is a share of this).
+## before the cleanup bonus (which is a share of this). PHASE 3D: sales at
+## the store rating's prices (rating_sales_today is the difference).
 func _gross_pay_today() -> int:
-	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE + _priority_bonus(priority_sales_today)
+	return (_total_sold() - _sold_at_day_start) * PAY_PER_SALE + rating_sales_today + _priority_bonus(priority_sales_today)
 
 func _priority_bonus(sales: int) -> int:
 	return int(round(sales * PAY_PER_SALE * (PRIORITY_ORDER_MULTIPLIER - 1.0)))
@@ -3209,6 +3289,10 @@ var sold_by_section_today := {}
 func note_sale(item: Node) -> void:
 	if not multiplayer.is_server():
 		return
+	# OCT 2026 PHASE 3D: the sale pays at the store rating's price right now.
+	var extra := sale_price() - PAY_PER_SALE
+	rating_sales_today += extra
+	rating_sales_week += extra
 	# OCT 2026 PHASE 3: sales by section (host diagnostic — the staff tests
 	# read what a staffed section actually sold).
 	var visual := item.get_node_or_null("Polygon2D")
@@ -3563,11 +3647,12 @@ func _is_out_of_bounds(world_pos: Vector2) -> bool:
 ## comes back in (and Customer.gd jitters each one's lifetime, so they stop
 ## leaving in lockstep waves).
 func _restock_customers() -> void:
-	var cap: int = _customer_baseline() + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	var cap := customer_cap()
 	var live := get_tree().get_nodes_in_group("customer").filter(func(c): return not c.is_queued_for_deletion())
 	var current := live.size()
 	var live_disruptive := live.filter(func(c): return c.role == "disruptive").size()
-	var want_disruptive := roundi(cap * CUSTOMER_DISRUPTIVE_RATIO)
+	# OCT 2026 PHASE 3D: each troublemaker thrown out lately keeps one away.
+	var want_disruptive := maxi(0, roundi(cap * CUSTOMER_DISRUPTIVE_RATIO) - recent_bounces())
 	var roles := []
 	while current < cap:
 		var role := "disruptive" if live_disruptive < want_disruptive else "shopper"
@@ -3578,6 +3663,128 @@ func _restock_customers() -> void:
 	roles.shuffle() # an opening wave walks in mixed, not reds first
 	for role in roles:
 		_spawn_customer(role)
+
+## The crowd the store holds right now: the tier's cap (+ per extra player),
+## times the store rating's crowd multiplier (PHASE 3D, RATING_CROWD_MULT).
+func customer_cap() -> int:
+	var base: int = _customer_baseline() + CUSTOMER_PER_EXTRA_PLAYER * max(0, players.size() - 1)
+	return maxi(1, roundi(base * store_rating.crowd_mult()))
+
+## PHASE 3D: what one sale pays at the store rating right now.
+func sale_price() -> int:
+	return roundi(PAY_PER_SALE * store_rating.price_mult())
+
+## --- OCT 2026 PHASE 3D: throwing out a troublemaker (Customer.gd's
+## escorted_by) — any peer asks, the host decides ---------------------------
+
+## Host: bounces in the last BOUNCE_CALM_SECONDS.
+func recent_bounces() -> int:
+	var now := Time.get_ticks_msec()
+	_bounce_times = _bounce_times.filter(func(t): return now - int(t) < BOUNCE_CALM_SECONDS * 1000.0)
+	return _bounce_times.size()
+
+## Any peer: E on a troublemaker (Player.gd's grabbable_customer()).
+func request_grab_customer(c: Node) -> void:
+	if multiplayer.is_server():
+		grab_customer(multiplayer.get_unique_id(), c.name)
+	else:
+		_request_grab.rpc_id(1, String(c.name))
+
+@rpc("any_peer", "reliable")
+func _request_grab(customer_name: String) -> void:
+	if multiplayer.is_server():
+		grab_customer(multiplayer.get_remote_sender_id(), customer_name)
+
+## Host: checked against the host's own view — a disruptive customer, nobody
+## hauling them, in reach, and the player's hands empty and not already
+## hauling one. Two players grabbing the same one: the first request wins.
+## Returns whether it happened (tests).
+func grab_customer(peer: int, customer_name: String) -> bool:
+	var p = players.get(peer)
+	var c := customers_root.get_node_or_null(NodePath(customer_name))
+	if p == null or not is_instance_valid(p) or c == null or c.is_queued_for_deletion():
+		return false
+	if not shift_active or cleanup_active or _day_report_active:
+		return false
+	if c.role != "disruptive" or c.escorted_by != 0 or p.escorting():
+		return false
+	if not cleanup._hands_free(peer):
+		return false
+	if p.global_position.distance_to(c.global_position) > p.GRAB_RANGE + GRAB_NET_SLACK:
+		return false
+	c.start_escort(peer)
+	manager.note_work(peer)
+	_announce_grab.rpc(peer, customer_name)
+	print("[Main] %s grabbed %s — out you go" % [player_display_name(peer), customer_name])
+	return true
+
+@rpc("authority", "call_local", "reliable")
+func _announce_grab(_peer: int, customer_name: String) -> void:
+	var c := customers_root.get_node_or_null(NodePath(customer_name))
+	if c == null:
+		return
+	Sfx.play_at("pickup", c.global_position, 2.0, 0.7)
+	if juice:
+		juice.popup(c.global_position + Vector2(0, -44), 0, "HEY!", juice.C_LOSS, null, false, 0.9)
+
+## Any peer: E (let go) or F (toss) while hauling one.
+func request_release_customer(toss: bool) -> void:
+	if multiplayer.is_server():
+		_release_by(multiplayer.get_unique_id(), toss)
+	else:
+		_request_release.rpc_id(1, toss)
+
+@rpc("any_peer", "reliable")
+func _request_release(toss: bool) -> void:
+	if multiplayer.is_server():
+		_release_by(multiplayer.get_remote_sender_id(), toss)
+
+func _release_by(peer: int, toss: bool) -> void:
+	for c in get_tree().get_nodes_in_group("customer"):
+		if c.escorted_by == peer:
+			release_customer(c, toss, "tossed" if toss else "let go")
+			return
+
+## Host: the hauler let go, tossed them, or they got loose.
+func release_customer(c: Node, toss: bool, why: String) -> void:
+	if not multiplayer.is_server() or c.escorted_by == 0:
+		return
+	var peer: int = c.escorted_by
+	c.end_escort(toss)
+	print("[Main] %s's hold on %s ended: %s" % [player_display_name(peer), c.name, why])
+	check_bounce(c, peer)
+
+## Out the front door: in the Sidewalk, past the store's south wall.
+func is_outside_door(pos: Vector2) -> bool:
+	return _grid_cell_of(pos) == SIDEWALK_GRID_POS and pos.y > SIDEWALK_GRID_POS.y * ROOM_HEIGHT + 24.0
+
+## Host, every tick a customer is hauled or flying from a toss: out the door
+## -> BOUNCED. They leave, the crew is paid, and the next one in is calmer.
+func check_bounce(c: Node, peer: int) -> void:
+	if not multiplayer.is_server() or c.is_queued_for_deletion() or not is_outside_door(c.global_position):
+		return
+	if c.escorted_by != 0:
+		c.escorted_by = 0
+	var at: Vector2 = c.global_position
+	if not tutorial.active:
+		bounced_today += 1
+		bounced_week += 1
+	_bounce_times.append(Time.get_ticks_msec())
+	cleanup._bump_stat(peer, "bounced", 1)
+	print("[Main] %s BOUNCED %s out the door (+$%d)" % [player_display_name(peer), c.name, BOUNCE_PAY])
+	c.force_leave()
+	_announce_bounce.rpc(peer, at)
+
+@rpc("authority", "call_local", "reliable")
+func _announce_bounce(peer: int, at: Vector2) -> void:
+	Sfx.play_at("forklift_bonk", at, -2.0, 1.3)
+	Sfx.play_at("throw_whoosh", at)
+	if juice:
+		juice.burst(at + Vector2(0, -10), 46.0)
+		juice.popup(at + Vector2(0, -50), BOUNCE_PAY, "BOUNCED!  +$%d" if not tutorial.active else "BOUNCED!", juice.C_MONEY, null, true, 1.6)
+		juice.shake_at(at, 0.25)
+	if peer == multiplayer.get_unique_id():
+		show_toast("Troublemaker thrown out!" + ("  +$%d" % BOUNCE_PAY if not tutorial.active else ""), Color(0.55, 1, 0.6), 2.0)
 
 ## --- Week 6 Part 1: section helpers --------------------------------------
 
@@ -4010,7 +4217,11 @@ func _process(delta: float) -> void:
 		if staff.wages_today > 0 and not is_endless():
 			report_pay_label.text += "\nStaff wages: -%s (%s)  →  bank %s%s" % [_format_money(staff.wages_today), staff.wages_detail, "+" if _pay_today() - staff.wages_today >= 0 else "", _format_money(_pay_today() - staff.wages_today)]
 		report_order_label.visible = lv["orders"] > 0
-		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  ·  +%s trash picked up (%d)  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), _format_money(cleanup.litter_pay_today()), cleanup.litter_collected_today, ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
+		report_cleanup_label.text = "Cleanup: spills & knockovers %d/%d (%d%%)  ·  litter %d/%d (%d%%)\n+%s cleanliness bonus  ·  +%s trash binned (%d)  ·  %d bag(s) to the dumpster  (%s)" % [cleanup.mop_total - cleanup.mop_left, cleanup.mop_total, roundi(cleanup.mop_fraction() * 100.0), cleanup.litter_total - cleanup.litter_left, cleanup.litter_total, roundi(cleanup.litter_fraction() * 100.0), _format_money(cleanup.clean_bonus_today), _format_money(cleanup.litter_pay_today()), cleanup.trash_binned_today, cleanup.bags_dumped_today, ("clocked out by %s" % player_display_name(clocked_out_by)) if clocked_out_by > 0 else "auto clock-out"]
+		# OCT 2026 PHASE 3D: the store rating, what it did to prices, the
+		# troublemakers thrown out, and the cans left full for tomorrow.
+		var full_left: int = cleanup.full_cans()
+		report_cleanup_label.text += "\nStore rating %s %.1f  ·  prices %s%s  ·  %d troublemaker(s) thrown out (+%s)%s" % [store_rating.star_text(store_rating.rating), store_rating.rating, "+" if rating_sales_today >= 0 else "", _format_money(rating_sales_today), bounced_today, _format_money(bounced_today * BOUNCE_PAY), ("  ·  %d can(s) still FULL" % full_left) if full_left > 0 else ""]
 		report_order_label.text = "Priority orders: %d/%d filled  —  %d sold at %sx (+%s)" % [orders_filled_today, orders_called_today, priority_sales_today, str(PRIORITY_ORDER_MULTIPLIER), _format_money(_priority_bonus(priority_sales_today))]
 		report_bucks_label.visible = is_endless()
 		report_run_label.visible = is_endless()
@@ -4048,7 +4259,6 @@ func _process(delta: float) -> void:
 			start_cleanup()
 	if multiplayer.is_server() and cleanup_active:
 		cleanup_time_left = maxf(0.0, cleanup_time_left - delta)
-		cleanup.tick_cleanup(delta)
 		if cleanup_time_left <= 0.0:
 			clock_out(0)
 	# Population maintenance — only the host actually spawns anything (both
@@ -4057,6 +4267,8 @@ func _process(delta: float) -> void:
 	# harmless to tick on every peer, so it's not worth an extra guard here.
 	if shift_active and multiplayer.is_server():
 		tutorial.tick_host() # practice shift: the clock stays pinned
+		# OCT 2026 PHASE 3D: the mop and broom work all day, not just at close.
+		cleanup.tick_tools(delta)
 		# WEEK 16: the prep ceiling — the store opens on its own when it runs
 		# out, whether or not anyone flipped the sign.
 		if not store_open:
@@ -4079,6 +4291,8 @@ func _process(delta: float) -> void:
 		if store_open and not cleanup_active:
 			ambience.tick_host(delta)
 			cleanup.tick_selling(delta)
+			if not rating_frozen:
+				store_rating.tick_host(delta) # PHASE 3D: customers are here to judge it
 		delivery.tick_host(delta)
 	# Only currently-unlocked shelves count below (log, HUD, and the
 	# stocked/sold totals) — a locked section's shelves physically exist

@@ -255,6 +255,28 @@ const LIST_BUBBLE_Y := -44.0 # above the head (a person's art tops out ~-24)
 ## sees the same face on the same customer.
 @export var look_index := 1
 const LOOK_COUNT := 6
+## OCT 2026 PHASE 3D — THROWN OUT. A player grabs a troublemaker by the collar
+## (E, Main.gd's grab — disruptive customers only, one hauler each) and walks
+## them to the front door; past it, into the Sidewalk, they're BOUNCED (they
+## leave; Main.gd pays BOUNCE_PAY and the next customer through the door is a
+## shopper). While held they ride ESCORT_OFFSET in front of their hauler —
+## moved with move_and_slide(), so a shelf or wall still stops them: dragged
+## more than ESCORT_BREAK_DIST behind (a corner, a forklift hit), or held past
+## ESCORT_MAX_TIME, they wriggle free. E lets go; F tosses them (a hard
+## knockback + stun — toss them through the door and it counts). Host-written,
+## replicated (ON_CHANGE). Every peer drops collisions between the hauler and
+## the hauled while it lasts (a client's own player would otherwise bump into
+## its lagging copy of the customer in front of it — Player.gd's N0 note).
+## FLAGGED placeholders.
+var escorted_by := 0
+const ESCORT_OFFSET := 36.0
+const ESCORT_BREAK_DIST := 90.0
+const ESCORT_MAX_TIME := 25.0
+const TOSS_SPEED := 560.0
+const TOSS_STUN := 1.3
+var _escort_t := 0.0
+var _tossed_by := 0 # host: who tossed us, while the toss's stun lasts
+var _excepted_peer := 0 # every peer: the hauler we're ignoring collisions with
 const CharacterSpriteScript := preload("res://CharacterSprite.gd")
 var body_sprite: Sprite2D
 
@@ -332,6 +354,15 @@ var _detour_episodes_on_side := 0 # consecutive episodes spent on _detour_side w
 
 func _ready() -> void:
 	add_to_group("customer")
+	# OCT 2026 PHASE 3D (the Phase 3C push-ride bug, Player.gd's _ready()):
+	# customers are grounded-mode bodies too, so an item a disruptive customer
+	# pushed DOWN the screen became a moving floor it rode at up to ~1000px/s.
+	# Same fix: nothing is a platform or a floor in a top-down store.
+	# tools/upkeep_test.gd --test=customer-ride.
+	floor_snap_length = 0.0
+	platform_floor_layers = 0
+	platform_wall_layers = 0
+	platform_on_leave = CharacterBody2D.PLATFORM_ON_LEAVE_DO_NOTHING
 	reset_physics_interpolation()
 	set_physics_process(true)
 	target_position = position
@@ -382,6 +413,9 @@ func _ready() -> void:
 	var list_path := NodePath(".:shopping_list")
 	config.add_property(list_path)
 	config.property_set_replication_mode(list_path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
+	var esc_path := NodePath(".:escorted_by")
+	config.add_property(esc_path)
+	config.property_set_replication_mode(esc_path, SceneReplicationConfig.REPLICATION_MODE_ON_CHANGE)
 	sync.replication_config = config
 	sync.name = "Sync" # explicit, identical name on every peer — see Player.gd's note on why an auto-generated name breaks replication
 	sync.set_multiplayer_authority(1)
@@ -406,8 +440,17 @@ func _physics_process(delta: float) -> void:
 	if get_tree().current_scene.is_day_report_active():
 		return
 
+	# OCT 2026 PHASE 3D: hauled out by a player — no AI, no clock, no pushing.
+	if escorted_by != 0:
+		_escort_physics(delta)
+		return
+
 	if _stun_timer > 0.0:
 		_stun_timer -= delta
+		if _tossed_by != 0:
+			get_tree().current_scene.check_bounce(self, _tossed_by)
+			if _stun_timer <= 0.0:
+				_tossed_by = 0
 		velocity = _knockback_velocity
 		_knockback_velocity = _knockback_velocity.move_toward(Vector2.ZERO, DEFEND_KNOCKBACK_DECEL * delta)
 		move_and_slide()
@@ -540,6 +583,12 @@ func _apply_stuck_avoidance(dir: Vector2, delta: float) -> Vector2:
 func _process(delta: float) -> void:
 	if not Net.is_active():
 		return
+	_sync_escort_exception()
+	# PHASE 3D: hauled out — flailing and complaining (cosmetic, every peer),
+	# so it reads in a clip.
+	if body_sprite != null:
+		body_sprite.rotation = sin(Time.get_ticks_msec() * 0.025) * 0.35 if escorted_by != 0 else 0.0
+	_update_shout()
 	if _cart != null:
 		_update_cart(delta)
 	if _bubble != null and shopping_list != _bubble_list:
@@ -651,13 +700,113 @@ func _push_rigid_bodies(delta: float) -> void:
 ## position-sync packet which just gets superseded by the next one.
 @rpc("any_peer", "reliable")
 func request_shove(from_position: Vector2) -> void:
-	if not is_multiplayer_authority():
+	if not is_multiplayer_authority() or escorted_by != 0:
 		return
 	var dir := global_position - from_position
 	if dir.length() < 0.01:
 		dir = Vector2.RIGHT.rotated(randf_range(0.0, TAU)) # shover standing exactly on top of us — pick an arbitrary direction rather than dividing by ~zero
 	_knockback_velocity = dir.normalized() * DEFEND_KNOCKBACK_SPEED
 	_stun_timer = DEFEND_STUN_DURATION
+
+## --- OCT 2026 PHASE 3D: thrown out (see escorted_by) ------------------------
+
+## Host-only (Main.gd's grab, already validated).
+func start_escort(peer: int) -> void:
+	escorted_by = peer
+	# Hauled past a shelf they'd otherwise snag on its stock (a disruptive
+	# customer's mask has the shelved-stock layer — knocking it is their job).
+	collision_mask &= ~CarryableScript.LAYER_SHELF_STOCK
+	_escort_t = 0.0
+	_tossed_by = 0
+	_stun_timer = 0.0
+	_detour_dir = Vector2.ZERO
+	_stall_count = 0
+
+## Host-only: let go. toss = thrown (F) along the hauler's facing.
+func end_escort(toss: bool) -> void:
+	var peer := escorted_by
+	if peer == 0:
+		return
+	escorted_by = 0
+	if role == "disruptive":
+		collision_mask |= CarryableScript.LAYER_SHELF_STOCK
+	var p = get_tree().current_scene.players.get(peer)
+	var dir := Vector2.RIGHT.rotated(p.facing_angle) if p != null and is_instance_valid(p) else Vector2.DOWN
+	_knockback_velocity = dir * (TOSS_SPEED if toss else DEFEND_KNOCKBACK_SPEED * 0.4)
+	_stun_timer = TOSS_STUN if toss else DEFEND_STUN_DURATION
+	_tossed_by = peer if toss else 0
+	_replan_t = 0.0
+	_retarget_timer = 0.0
+
+## Host, every physics tick while hauled.
+func _escort_physics(delta: float) -> void:
+	var main = get_tree().current_scene
+	var p = main.players.get(escorted_by)
+	if p == null or not is_instance_valid(p) or main.cleanup_active or not main.shift_active:
+		main.release_customer(self, false, "hauler gone")
+		return
+	_escort_t += delta
+	_sync_escort_exception()
+	var want: Vector2 = p.global_position + Vector2.RIGHT.rotated(p.facing_angle) * ESCORT_OFFSET
+	var to := want - global_position
+	if to.length() > ESCORT_BREAK_DIST or _escort_t > ESCORT_MAX_TIME:
+		main.release_customer(self, false, "wriggled free" if _escort_t > ESCORT_MAX_TIME else "pulled loose")
+		return
+	velocity = to / maxf(delta, 0.001)
+	if velocity.length() > 900.0:
+		velocity = velocity.normalized() * 900.0
+	move_and_slide()
+	_push_rigid_bodies(delta) # loose stock gets shoved aside, as a walking player does
+	facing_angle = p.facing_angle
+	$Polygon2D.rotation = facing_angle
+	target_position = position
+	main.check_bounce(self, escorted_by)
+
+const SHOUTS := ["HEY!", "LET GO!", "I KNOW THE MANAGER!", "MY RIGHTS!", "UNHAND ME!", "I'M A CUSTOMER!"]
+var _shout: Label
+func _update_shout() -> void:
+	if escorted_by == 0:
+		if _shout != null:
+			_shout.visible = false
+		return
+	if _shout == null:
+		_shout = Label.new()
+		_shout.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_shout.size = Vector2(200, 20)
+		_shout.position = Vector2(-100, -58)
+		_shout.z_index = 30
+		_shout.add_theme_font_size_override("font_size", 14)
+		_shout.add_theme_color_override("font_color", Color(1, 0.35, 0.25))
+		_shout.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		_shout.add_theme_constant_override("outline_size", 4)
+		add_child(_shout)
+	_shout.visible = true
+	# A new line every 1.2s, the same on every peer (the clock and the name).
+	var k := int(Time.get_ticks_msec() / 1200) + name.hash()
+	_shout.text = SHOUTS[absi(k) % SHOUTS.size()]
+	# Above their head — or under their feet when the hauler's above them
+	# (hauled down the screen), so it never sits on the hauler.
+	var hp = get_tree().current_scene.players.get(escorted_by)
+	var below: bool = hp != null and is_instance_valid(hp) and hp.global_position.y < global_position.y - 12.0
+	_shout.position = Vector2(-100, 18) if below else Vector2(-100, -58)
+
+## Every peer: no collisions between the hauler and the hauled while it lasts.
+func _sync_escort_exception() -> void:
+	if _excepted_peer == escorted_by:
+		return
+	var main = get_tree().current_scene
+	if _excepted_peer != 0:
+		var old = main.players.get(_excepted_peer)
+		if old != null and is_instance_valid(old):
+			remove_collision_exception_with(old)
+			old.remove_collision_exception_with(self)
+	_excepted_peer = 0
+	if escorted_by != 0:
+		var p = main.players.get(escorted_by)
+		if p != null and is_instance_valid(p):
+			add_collision_exception_with(p)
+			p.add_collision_exception_with(self)
+			_excepted_peer = escorted_by
 
 ## --- Shopper -------------------------------------------------------------
 

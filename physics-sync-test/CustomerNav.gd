@@ -108,6 +108,10 @@ func _build() -> void:
 		_solid_body(cashier_body)
 	for d in main.displays:
 		_solid_circle(d.global_position, DISPLAY_RADIUS + CLEARANCE)
+	# OCT 2026 PHASE 3D: anything solid placed in code (the dumpster,
+	# Cleanup.gd) joins "nav_obstacle". Trash cans have no collision.
+	for body in main.get_tree().get_nodes_in_group("nav_obstacle"):
+		_solid_body(body)
 	# Loose stock and delivery boxes on the floor (a shopper never pushes them).
 	for obj in main.get_tree().get_nodes_in_group("carryable"):
 		var c: Node = obj.get_node("Carryable")

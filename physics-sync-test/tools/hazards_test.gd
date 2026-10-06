@@ -74,6 +74,11 @@ func _initialize() -> void:
 	# Day N -> N+1 rollover hands the crew old Day N+1's sections and earnings
 	# (Main.gd's test_follow_old_calendar), so each day keeps its old meaning.
 	main.test_follow_old_calendar = true
+	# OCT 2026 PHASE 3D: these tests were written against the pre-rating
+	# economy — 3 stars is exactly it — so the store rating stays put here
+	# (a clean test floor would otherwise drift it up and grow the crowd).
+	# tools/upkeep_test.gd tests the rating itself.
+	main.rating_frozen = true
 	var mode := "interact"
 	for a in args:
 		if a.begins_with("--test="):
@@ -709,6 +714,8 @@ func _run_solo() -> void:
 	finish()
 
 ## stop: when to hand control back (default: the shift ends).
+var upkeep_hook := Callable()
+
 func _play_shift(stop: Callable = func(): return not main.shift_active or main.cleanup_active) -> void:
 	var p := player()
 	var obj: Node2D = null
@@ -756,6 +763,12 @@ func _play_shift(stop: Callable = func(): return not main.shift_active or main.c
 			if o.get_node("Carryable").carrier_id == me:
 				my_carry = o
 		_track_haul(p, my_carry)
+		# OCT 2026 PHASE 3D: a bot that keeps the store clean (staff_test.gd's
+		# income --upkeep) breaks off between jobs to do it.
+		if upkeep_hook.is_valid() and my_carry == null and main.store_open and await upkeep_hook.call():
+			obj = null
+			job = {}
+			continue
 		# bookkeeping
 		var stunned: bool = p._stun_timer > 0.0
 		if stunned and not prev_stun:
@@ -4125,6 +4138,8 @@ func mop_messes_view() -> Array:
 	var out := []
 	for s in amb().spills:
 		out.append({"pos": s["pos"], "r": float(s["r"])})
+	for s in cl().puddles: # OCT 2026 PHASE 3D: sticky drink puddles
+		out.append({"pos": s["pos"], "r": float(s["r"])})
 	for d in main.displays:
 		if d.get_node("Display").toppled:
 			out.append({"pos": d.global_position, "r": 24.0})
@@ -4247,7 +4262,11 @@ func _run_cleanup() -> void:
 	await walk_to(cl().TOOL_SPOTS[0], 4.0)
 	await tap(act + "interact")
 	await wait(0.4)
-	check(cl().tool_of(me) < 0, "CL1: a tool can't be taken while the store is open")
+	# OCT 2026 PHASE 3D: the tools are out all day now (they were cleanup-only).
+	check(cl().tool_of(me) >= 0, "CL1: a tool can be taken while the store is open (Phase 3D)")
+	await tap(act + "interact") # and put back
+	await wait(0.4)
+	check(cl().tool_of(me) < 0, "CL1: ...and put back down")
 	await wait_until(func(): return cl().litter.size() >= 3, 40.0)
 	check(cl().litter.size() >= 3, "CL1: customers dropped litter during the shift: %d on the floor at %.0fs left" % [cl().litter.size(), main.shift_time_left])
 	var in_store: bool = cl().litter.all(func(l): return cl()._litter_zone_ok(l["pos"]))
@@ -4410,7 +4429,7 @@ func _run_cleanup() -> void:
 	check(cl().clean_bonus_today == want_bonus, "CL5: bonus %s = %d%% of gross %s x (mop %d%% + litter %d%%)/2" % [main._format_money(cl().clean_bonus_today), int(cl().CLEAN_BONUS_MAX * 100), main._format_money(gross), roundi(cl().mop_fraction() * 100), roundi(cl().litter_fraction() * 100)])
 	# (Not mop_left_before: walking to the clock can bump stock off a shelf —
 	# that's new mess, and it counts.)
-	check(cl().mop_left == cl()._mop_messes().size() and cl().mop_left >= mop_left_before and cl().litter_left == litter_left, "CL5: tally matches the floor at clock-out: spills & knockovers left %d (was %d before the walk to the clock), litter left %d" % [cl().mop_left, mop_left_before, cl().litter_left])
+	check(cl().mop_left == cl()._mop_messes(true).size() and cl().mop_left >= mop_left_before and cl().litter_left == litter_left, "CL5: tally matches the floor at clock-out: spills & knockovers left %d (was %d before the walk to the clock), litter left %d" % [cl().mop_left, mop_left_before, cl().litter_left])
 	# Oct 2026: + $1 a piece of litter picked up (Cleanup.gd's LITTER_PAY_PER_PIECE), its own line.
 	check(main._pay_today() == gross + cl().clean_bonus_today + cl().litter_pay_today() - main.writeups_today * main.WRITEUP_PENALTY, "CL5: Pay Today includes the bonus (and the trash pay, %s): %s" % [main._format_money(cl().litter_pay_today()), main.report_pay_label.text])
 	await wait(0.2)
@@ -4623,19 +4642,51 @@ func _brain_until_empty(broom_first: bool, watch_clock := false) -> Dictionary:
 	steer(Vector2.ZERO)
 	return st
 
+## OCT 2026 PHASE 3D: into the nearest can WITH ROOM (a full can won't take
+## it — E there would put the broom down). If every open can is full, empty
+## one first, as a player would: broom down, the can's bag out to the
+## dumpster, back for the broom.
 func _empty_pan() -> void:
 	var p := player()
-	var bin_pos := Vector2.ZERO
+	var best := -1
 	var bd := INF
 	for i in cl().BINS.size():
-		if cl()._bin_open(i):
+		if cl()._bin_open(i) and not cl().can_full(i):
 			var d := route_len(p.global_position, cl().BINS[i]["pos"])
 			if d < bd:
 				bd = d
-				bin_pos = cl().BINS[i]["pos"]
-	await walk_to(bin_pos + Vector2(0, 30), 12.0, 30.0)
+				best = i
+	if best < 0:
+		await _dump_a_can()
+		return
+	await walk_to(cl().BINS[best]["pos"] + Vector2(0, 30), 12.0, 30.0)
 	await tap(act + "interact")
 	await wait_until(func(): return cl().tool_of(me) >= 0 and int(cl().tools[cl().tool_of(me)]["pan"]) == 0, 2.0)
+
+## OCT 2026 PHASE 3D: hands free (a tool goes down here), the nearest full
+## can's bag out, into the dumpster.
+func _dump_a_can() -> bool:
+	if cl().tool_of(me) >= 0:
+		await tap(act + "interact")
+		await wait_until(func(): return cl().tool_of(me) < 0, 2.0)
+	var p := player()
+	var best := -1
+	var bd := INF
+	for i in cl().BINS.size():
+		if cl()._bin_open(i) and int(cl().cans[i]) > 0:
+			var d := route_len(p.global_position, cl().BINS[i]["pos"]) - (1000.0 if cl().can_full(i) else 0.0)
+			if d < bd:
+				bd = d
+				best = i
+	if best < 0:
+		return false
+	await walk_to(cl().BINS[best]["pos"] + Vector2(0, 30), 12.0, 30.0)
+	await tap(act + "interact")
+	if not await wait_until(func(): return cl().bag_of(me) >= 0, 2.0):
+		return false
+	await walk_to(cl().DUMPSTER_POS + Vector2(0, -75), 16.0, 40.0)
+	await tap(act + "interact")
+	return await wait_until(func(): return cl().bag_of(me) < 0, 2.0)
 
 ## JSON hands numbers back as floats: compare 4 and 4.0 (and arrays of them)
 ## as the same value.
@@ -4767,7 +4818,11 @@ func _po_static_checks(who: String) -> Dictionary:
 	var c := cl()
 	# --- PO1: the station.
 	var sp: Vector2 = c.STATION_POS
-	check(main._grid_cell_of(sp) == main.BREAK_ROOM_GRID_POS and c.TOOL_SPOTS.all(func(s): return main._grid_cell_of(s) == main.BREAK_ROOM_GRID_POS), "%sPO1: tool station + all %d tool spots in the Break Room (station %s)" % [who, c.TOOL_SPOTS.size(), str(sp)])
+	# OCT 2026 PHASE 3D: the station's tools in the Break Room; one mop and one
+	# broom on the hub rack (tools are out all day now).
+	var room_spots: Array = c.TOOL_SPOTS.filter(func(s): return main._grid_cell_of(s) == main.BREAK_ROOM_GRID_POS)
+	var hub_spots: Array = c.TOOL_SPOTS.filter(func(s): return main._grid_cell_of(s) == main.ENTRANCE_GRID_POS)
+	check(main._grid_cell_of(sp) == main.BREAK_ROOM_GRID_POS and room_spots.size() == 4 and hub_spots.size() == 2, "%sPO1: tool station + its 4 tool spots in the Break Room, 2 on the hub rack (station %s)" % [who, str(sp)])
 	var nearest: float = c.TOOL_SPOTS.map(func(s): return s.distance_to(main.TIME_CLOCK_POS)).min()
 	check(sp.distance_to(main.TIME_CLOCK_POS) < 250.0, "%sPO1: station is next to the time clock (%.0fpx)" % [who, sp.distance_to(main.TIME_CLOCK_POS)])
 	check(nearest > c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE, "%sPO1: no spot in reach of both a tool and the clock (nearest spot %.0fpx > %.0f)" % [who, nearest, c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE])

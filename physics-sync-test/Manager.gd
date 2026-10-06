@@ -528,6 +528,11 @@ func _is_carrying(peer_id: int) -> bool:
 	for obj in get_tree().get_nodes_in_group("carryable"):
 		if obj.get_node("Carryable").carrier_id == peer_id:
 			return true
+	# OCT 2026 PHASE 3D: a mop, a broom, trash, a bin bag or a troublemaker in
+	# hand is carrying too (scrubbing a puddle in place isn't standing around).
+	var main = get_tree().current_scene
+	if main.cleanup.holds_anything(peer_id) or main.cleanup._carries_other(peer_id):
+		return true
 	return false
 
 func _at_register(p: Node2D, main) -> bool:

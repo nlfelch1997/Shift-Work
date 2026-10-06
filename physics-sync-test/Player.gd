@@ -330,7 +330,12 @@ func _apply_move_input(dir: Vector2, delta: float) -> void:
 ## multiplier — 1 + 0.08 x level + 0.20 with a cup — not multiplied with it.
 func speed() -> float:
 	var main = get_tree().current_scene
-	return SPEED * (main.endless.speed_mult() + main.break_room.speed_bonus(get_multiplayer_authority()))
+	var me := get_multiplayer_authority()
+	# OCT 2026 PHASE 3D: a full bin bag, or a troublemaker dragging their feet,
+	# slows you a little (Cleanup.gd's BAG_SPEED_MULT, Main.gd's
+	# ESCORT_SPEED_MULT) — multiplied on top.
+	var load_mult: float = main.cleanup.speed_mult(me) * (main.ESCORT_SPEED_MULT if escorting() else 1.0)
+	return SPEED * (main.endless.speed_mult() + main.break_room.speed_bonus(me)) * load_mult
 
 ## True while this player's movement is on low traction (on a spill or just
 ## off one) — read by the test harness.
@@ -655,17 +660,29 @@ func _try_interact() -> void:
 		_interact_with(carried, my_id)
 		return
 	var main = get_tree().current_scene
+	var cl: Node = main.cleanup
 	# WEEK 19: the time clock in the break room ends the day — first, so a
 	# tool still in hand doesn't turn the press into "put it down" (tools go
 	# back to the station at clock-out anyway)...
 	if main.cleanup_active and main.near_time_clock(global_position):
 		main.try_clock_out()
 		return
-	# ...then a cleanup tool in hand (put it down / empty the pan), or one
-	# within reach once the store's closed — before stock, so a product lying
-	# at the tool station can't swallow the press.
-	if main.cleanup.wants_interact(my_id, global_position):
-		main.cleanup.try_interact()
+	# OCT 2026 PHASE 3D: hauling a troublemaker out — E lets go of them.
+	if escorting():
+		main.request_release_customer(false)
+		return
+	# ...then whatever's in your hands from the upkeep loop (Cleanup.gd's
+	# action_for(): a tool, trash, a bin bag). Holding one, E is always about
+	# it — never stock.
+	if cl.holds_anything(my_id):
+		cl.request(cl.action_for(my_id, global_position, false))
+		return
+	# Empty-handed: a tool off the rack/station comes first, as before, so a
+	# product lying there can't swallow the press (but loose stock in reach
+	# wins mid-shift — action_for()'s stock rule).
+	var upkeep: String = cl.action_for(my_id, global_position, loose_stock_in_reach())
+	if upkeep == "tool_pick":
+		cl.request(upkeep)
 		return
 	# WEEK 16: empty-handed at the Store sign while the store is still closed
 	# -> flip it open (Main.gd decides on the host). Checked before picking
@@ -697,13 +714,20 @@ func _try_interact() -> void:
 		if main.purchase_blocker(for_sale) == "":
 			main.try_buy_section(for_sale)
 			return
-		if _find_nearest_free_carryable() == null and not litter_beats_stock():
+		if _find_nearest_free_carryable() == null and upkeep == "":
 			main.show_toast("%s: %s" % [for_sale, main.purchase_blocker(for_sale)], Color(1, 0.85, 0.3), 2.5)
 			return
+	# OCT 2026 PHASE 3D: a troublemaker (red ring) in reach, closer than any
+	# loose stock -> grab them by the collar (Main.gd's grab, host decides).
+	var trouble := grabbable_customer()
+	if trouble != null:
+		main.request_grab_customer(trouble)
+		return
 	# PLAYTEST FIX: trash by hand, any time — when litter is in reach and no
-	# loose stock is (Cleanup.gd's LITTER_PAY_PER_PIECE).
-	if litter_beats_stock():
-		main.cleanup.try_pick_litter()
+	# loose stock is. PHASE 3D: and a loose bin bag, or a can's bag to take
+	# out (Cleanup.gd's action_for(), same stock rule).
+	if upkeep != "":
+		cl.request(upkeep)
 		return
 	var nearest := _find_nearest_free_carryable()
 	if nearest:
@@ -725,6 +749,11 @@ func _interact_with(obj: Node2D, my_id: int) -> void:
 ## actually being carried.
 func _try_throw() -> void:
 	var my_id := multiplayer.get_unique_id()
+	# OCT 2026 PHASE 3D: F while hauling a troublemaker — toss them (out the
+	# door, ideally).
+	if escorting():
+		get_tree().current_scene.request_release_customer(true)
+		return
 	var obj := _target_obj if (bot_mode and bot_role == "contest") else _find_carried_object(my_id)
 	if obj == null:
 		return
@@ -925,6 +954,49 @@ func litter_beats_stock() -> bool:
 		return false
 	var nearest := _find_nearest_free_carryable()
 	return nearest == null or nearest.get_node("Carryable").shelved
+
+## OCT 2026 PHASE 3D: loose (not shelved) stock within E reach — the upkeep
+## actions (Cleanup.gd's action_for()) and a customer grab never steal an E
+## press meant for it.
+func loose_stock_in_reach() -> bool:
+	var nearest := _find_nearest_free_carryable()
+	return nearest != null and not nearest.get_node("Carryable").shelved
+
+## OCT 2026 PHASE 3D: am I hauling a customer out (Customer.gd's replicated
+## escorted_by)? Every peer.
+func escorting() -> bool:
+	if not is_inside_tree():
+		return false # leaving (a disconnect, the scene closing)
+	var me := get_multiplayer_authority()
+	for c in get_tree().get_nodes_in_group("customer"):
+		if int(c.escorted_by) == me:
+			return true
+	return false
+
+## OCT 2026 PHASE 3D: the troublemaker an empty-handed E would grab here, or
+## null: a disruptive customer nobody's hauling, within GRAB_RANGE, closer
+## than any loose stock. Every peer (the hint uses it); the host re-checks.
+## The store's shared E radius (Carryable.PICKUP_RANGE, the sign, the clock).
+const GRAB_RANGE := 70.0
+func grabbable_customer() -> Node2D:
+	var main = get_tree().current_scene
+	if not main.shift_active or main.cleanup_active or main.is_day_report_active():
+		return null
+	var best: Node2D = null
+	var best_d := GRAB_RANGE
+	for c in get_tree().get_nodes_in_group("customer"):
+		if c.role != "disruptive" or int(c.escorted_by) != 0 or c.is_queued_for_deletion():
+			continue
+		var d := global_position.distance_to(c.global_position)
+		if d <= best_d:
+			best_d = d
+			best = c
+	if best == null:
+		return null
+	var stock := _find_nearest_free_carryable()
+	if stock != null and not stock.get_node("Carryable").shelved and global_position.distance_to(stock.global_position) < best_d:
+		return null
+	return best
 
 ## The item E picks up: the nearest free one within Carryable.PICKUP_RANGE
 ## (see that constant for the playtest fix). PLAYTEST FIX: loose stock wins
