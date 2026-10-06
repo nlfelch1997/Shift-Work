@@ -63,6 +63,7 @@ var _shown_stars := -1
 var _shown_pay := 0
 var _pay_pop := 0.0
 var hud_visible := false # tests read it
+var star_changes := 0 # tests read it
 
 func _ready() -> void:
 	main = get_parent()
@@ -237,9 +238,13 @@ func _process(delta: float) -> void:
 	_why.text = ("Dragging it down: " + " · ".join(bits)) if not bits.is_empty() else "Clean store: more customers, better prices"
 	# A whole star crossed: say so (every peer, on its own screen).
 	var whole := clampi(roundi(rating), 1, 5)
-	if _shown_stars > 0 and whole != _shown_stars and main.store_open:
+	# (Under the panel, not on the toast row — that's the write-ups'.)
+	if _shown_stars > 0 and whole != _shown_stars and main.store_open and main.juice:
+		var vp := get_viewport().get_visible_rect().size
+		var at := Vector2(vp.x - 120.0, _panel.get_global_rect().end.y + 26.0)
 		if whole < _shown_stars:
-			main.show_toast("Store rating down to %d★ — clean up!" % whole, Color(1, 0.4, 0.3), 3.0)
+			main.juice.ui_popup(at, "▼ %d★ — clean up!" % whole, Color(1, 0.4, 0.3), false, 2.6)
 		else:
-			main.show_toast("Store rating up to %d★!" % whole, Color(0.55, 1, 0.6), 2.5)
+			main.juice.ui_popup(at, "▲ %d★!" % whole, Color(0.55, 1, 0.6), false, 2.2)
+		star_changes += 1
 	_shown_stars = whole

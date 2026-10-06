@@ -32,4 +32,17 @@ TESTS+=(
 "p2-ride|playtest2|0|0|0|--server --day=5 --no-save --test=ride|"
 "p2-cashier-walls|playtest2|0|0|0|--server --day=1 --no-save --test=cashier-walls|"
 "p2-net-ride|playtest2|0|2|0|--server --day=5 --players=3 --no-save --test=net-ride|"
+# OCT 2026 PHASE 3D (store upkeep + the store rating) — tools/upkeep_test.gd.
+# Real wall-clock time throughout.
+"up-customer-ride|upkeep|0|0|0|--server --day=5 --no-save --test=customer-ride|"
+"up-trash|upkeep|0|0|0|--server --day=3 --no-save --test=trash|"
+"up-tools|upkeep|0|0|0|--server --day=6 --no-save --test=tools|"
+"up-rating|upkeep|0|0|0|--server --day=7 --no-save --test=rating|"
+"up-earnings|upkeep|0|0|0|--server --day=3 --no-save --test=earnings|"
+"up-bounce|upkeep|0|0|0|--server --day=3 --no-save --test=bounce|"
+"up-net|upkeep|0|2|0|--server --players=3 --day=3 --no-save --test=net-upkeep|"
+"save-upkeep-1|upkeep|0|0|0|--server --save-file=user://upkeep_test/save.json --test=save --phase=1|"
+"save-upkeep-2|upkeep|0|0|0|--server --save-file=user://upkeep_test/save.json --test=save --phase=2|"
+"save-upkeep-3|upkeep|0|0|0|--server --save-file=user://upkeep_test/save.json --test=save --phase=3|"
+"save-upkeep-4|upkeep|0|0|0|--server --save-file=user://upkeep_test/save.json --test=save --phase=4|"
 )

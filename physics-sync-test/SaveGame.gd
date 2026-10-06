@@ -74,7 +74,9 @@ static func snapshot(main: Node) -> Dictionary:
 		# OCT 2026 PHASE 3D.
 		"upkeep": {
 			"rating": snappedf(main.store_rating.rating, 0.001),
-			"cans": main.cleanup.cans.duplicate(),
+			# A bag out of its can mid-shift (a purchase checkpoint) is saved
+			# back in it — the save never holds a shift in flight.
+			"cans": main.cleanup.cans_with_bags_returned(),
 		},
 		"endless": {
 			"unlocked": main.story_complete,

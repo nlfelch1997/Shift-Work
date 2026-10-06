@@ -777,6 +777,15 @@ func _bin_open(i: int) -> bool:
 			return main.is_section_open(s) # WEEK 21: story day or endless posting
 	return false
 
+## The cans as they'd be with every bag back in its can (the save).
+func cans_with_bags_returned() -> Array:
+	var out := cans.duplicate()
+	for b in bags:
+		var i: int = b["can"]
+		if i >= 0 and i < out.size():
+			out[i] = mini(can_capacity(), int(out[i]) + int(b["n"]))
+	return out
+
 ## Practice shift / tests: set a can's fill directly (host).
 func set_can(i: int, n: int) -> void:
 	if not multiplayer.is_server():

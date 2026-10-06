@@ -410,6 +410,7 @@ func _run_solo() -> void:
 	for s in amb().spills.duplicate():
 		amb().remove_spill(s["id"])
 	main.cleanup.litter = []
+	main.cleanup.puddles = [] # OCT 2026 PHASE 3D: drink puddles are mop mess too
 	for d in main.displays:
 		d.get_node("Display").toppled = false
 	for p in get_nodes_in_group("carryable"):

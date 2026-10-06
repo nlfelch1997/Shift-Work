@@ -709,6 +709,8 @@ func _run_solo() -> void:
 	finish()
 
 ## stop: when to hand control back (default: the shift ends).
+var upkeep_hook := Callable()
+
 func _play_shift(stop: Callable = func(): return not main.shift_active or main.cleanup_active) -> void:
 	var p := player()
 	var obj: Node2D = null
@@ -756,6 +758,12 @@ func _play_shift(stop: Callable = func(): return not main.shift_active or main.c
 			if o.get_node("Carryable").carrier_id == me:
 				my_carry = o
 		_track_haul(p, my_carry)
+		# OCT 2026 PHASE 3D: a bot that keeps the store clean (staff_test.gd's
+		# income --upkeep) breaks off between jobs to do it.
+		if upkeep_hook.is_valid() and my_carry == null and main.store_open and await upkeep_hook.call():
+			obj = null
+			job = {}
+			continue
 		# bookkeeping
 		var stunned: bool = p._stun_timer > 0.0
 		if stunned and not prev_stun:
@@ -4124,6 +4132,8 @@ func _wall() -> float:
 func mop_messes_view() -> Array:
 	var out := []
 	for s in amb().spills:
+		out.append({"pos": s["pos"], "r": float(s["r"])})
+	for s in cl().puddles: # OCT 2026 PHASE 3D: sticky drink puddles
 		out.append({"pos": s["pos"], "r": float(s["r"])})
 	for d in main.displays:
 		if d.get_node("Display").toppled:
