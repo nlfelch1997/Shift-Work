@@ -35,10 +35,12 @@ extends "res://tools/staff_test.gd"
 ## hands; the wage on every peer's report; a client lets them go:
 ##   godot ... -- --server --port=8979 --players=3 --day=5 --no-save --money=3000 --test=jan-net &
 ##   (x2) godot ... -- --client --connect-port=8979 --no-save --test=jan-net
-## EVENTS (how the janitor meets Leaky Roof and Surprise Inspection): leaks
-## are mopped, at LEAK_MOP_TIME each, and count for the event as anyone's
-## mop does; the inspection's mess comes down while it runs; with nobody else
-## on it a three-leak roof isn't finished by the janitor alone:
+## EVENTS (how the janitor meets Leaky Roof and Surprise Inspection): with a
+## janitor on staff the roof drops LEAK_PER_JANITOR more leaks; they mop them
+## at LEAK_MOP_TIME each, counted for the event like anyone's mop, and alone
+## don't finish the roof; janitor + crew do. An inspection with a janitor on
+## staff has the tighter bar and the janitor walking the inspector round (off
+## the floor, tag says so): the crew cleans, passes, and Pat goes back to work:
 ##   godot --headless --path . --script res://tools/janitor_test.gd -- --server --day=7 --shift-seconds=1200 --no-save --events=on --test=jan-events
 ## SMOKE (the janitor on the floor for a few minutes of a real crowd; prints
 ## what they're doing every 5 s):
@@ -145,7 +147,7 @@ func _run_jan_events_alone() -> void:
 		var entry: Array = ev.log_today[-1] if ev.log_today.size() > n0 else ["?", false, 0]
 		if entry[1]:
 			won += 1
-		print("JANEV event=%s janitor=%d round=%d outcome=%s | leaks mopped by the janitor %d | data at end: %s | rating %.2f, mess %.1f (bar %.1f)" % [k, 1 if with_j else 0, r + 1, "won" if entry[1] else "missed", jan().leaks_mopped_today - leaks0, ev.result_text, main.store_rating.rating, main.store_rating.mess_points(), main.store_rating.mess_per_star() * ev.INSPECTION_PASS_STARS])
+		print("JANEV event=%s janitor=%d round=%d outcome=%s | leaks mopped by the janitor %d | data at end: %s | rating %.2f, mess %.1f (bar %.1f)" % [k, 1 if with_j else 0, r + 1, "won" if entry[1] else "missed", jan().leaks_mopped_today - leaks0, ev.result_text, main.store_rating.rating, main.store_rating.mess_points(), float(ev.data.get("pass_at", ev._inspection_bar()))])
 		await wait(25.0)
 	print("JANEV SUMMARY event=%s janitor=%d won %d/%d" % [k, 1 if with_j else 0, won, rounds])
 	finish()
@@ -444,6 +446,10 @@ func _run_jan_chores() -> void:
 	# --- C6 a spill (stage 4's hazard) counts only while spills are on; mopped then
 	var sid: int = main.ambience.spawn_spill(Vector2(1500, 900), 40.0)
 	if main.ambience.spills_enabled():
+		# Litter before a spill, even a farther piece (spills dry on their own).
+		var far: int = cl.drop_litter(Vector2(1000, 950))
+		await wait(0.8)
+		check(jan()._job.get("key", "") == "l%d" % far, "C6: litter first, though the spill's nearer (job %s)" % str(jan()._job.get("key", "-")))
 		var gone := await wait_until(func(): return not main.ambience.spills.any(func(x): return x["id"] == sid), 40.0)
 		check(gone, "C6: a stage-4 spill (it counts on the rating at this stage) is mopped too")
 	else:
@@ -812,13 +818,18 @@ func _run_jan_events() -> void:
 		main.ambience.remove_spill(int(sp["id"]))
 	var cl: Node = main.cleanup
 	main.money = 5000
+	var bar0: float = ev._inspection_bar()
+	check(int(ev._plan("leak")["total"]) == ev.LEAK_COUNT, "E0: no janitor -> a solo roof drops LEAK_COUNT (%d)" % ev.LEAK_COUNT)
 	check(st().do_action(JK, "hire", 1), "E0: hired the janitor")
+	await physics_frame
+	check(is_equal_approx(ev._inspection_bar(), snappedf(main.store_rating.mess_per_star() * ev.INSPECTION_PASS_STARS_JANITOR, 0.1)) and ev._inspection_bar() <= bar0, "E0: the inspection bar with a janitor: %.1f (without: %.1f)" % [ev._inspection_bar(), bar0])
 	main.open_store(1)
 	await wait(1.0)
 	# --- E1 Leaky Roof: the janitor goes for the leaks; each takes LEAK_MOP_TIME
 	var n0: int = ev.log_today.size()
 	ev.force_next("leak", 0.5)
 	await wait_until(func(): return ev.active() and ev.key == "leak", 20.0)
+	var total0: int = int(ev.data.get("total", -1))
 	var mop_frames := 0
 	var leak_frames := []
 	var was_mopping := false
@@ -834,6 +845,7 @@ func _run_jan_events() -> void:
 		was_mopping = on_leak
 	var entry: Array = ev.log_today[-1]
 	var mopped: int = jan().leaks_mopped_today - leaks0
+	check(total0 == ev.LEAK_COUNT + ev.LEAK_PER_JANITOR, "E1: with a janitor working, a solo crew's roof drops %d leaks (LEAK_COUNT %d + LEAK_PER_JANITOR %d)" % [total0, ev.LEAK_COUNT, ev.LEAK_PER_JANITOR])
 	check(mopped >= 1, "E1: the janitor mopped %d of the %d leaks" % [mopped, int(LeakTotal())])
 	var times: Array = leak_frames.map(func(f): return snappedf(f / float(Engine.physics_ticks_per_second), 0.01))
 	check(not times.is_empty() and times.all(func(t): return absf(t - jan().LEAK_MOP_TIME) < 0.3 or t < jan().LEAK_MOP_TIME), "E1: ...each one a slow job: %s s of mopping (LEAK_MOP_TIME %.0f)" % [str(times), jan().LEAK_MOP_TIME])
@@ -862,22 +874,37 @@ func _run_jan_events() -> void:
 	await wait_until(func(): return ev.log_today.size() > n0, 30.0)
 	check(ev.log_today.size() > n0 and ev.log_today[-1][1], "E2: janitor + crew together finish it (%s)" % ev.result_text)
 	await wait(4.0)
-	# --- E3 Surprise Inspection: the mess comes down while it runs
+	# --- E3 Surprise Inspection with a janitor on staff: they walk the
+	# inspector round (off the floor), the bar is tighter, the crew cleans
 	await _until_idle(30.0)
-	for i in 20:
-		cl.drop_litter(Vector2(1150 + (i % 10) * 60, 880 + (i / 10) * 60 + (i % 3) * 20))
-	cl.drop_puddle(Vector2(1300, 650))
-	cl.drop_puddle(Vector2(1600, 950))
+	for i in 8:
+		cl.drop_litter(Vector2(1150 + i * 60, 900 + (i % 3) * 20))
 	n0 = ev.log_today.size()
 	ev.force_next("inspection", 0.5)
-	await wait_until(func(): return ev.active() and ev.key == "inspection", 20.0)
-	var mess0: float = main.store_rating.mess_points()
-	check(mess0 > float(ev.data["pass_at"]), "E3: the inspection starts with the store over the bar (%.0f > %.0f)" % [mess0, float(ev.data["pass_at"])])
+	await wait_until(func(): return ev.busy() and ev.key == "inspection", 20.0)
+	await wait(0.5)
+	check(ev.data.get("escort", false) and ev.janitor_escorting(), "E3: the inspection knows the janitor's on staff (escort)")
+	check(is_equal_approx(float(ev.data["pass_at"]), snappedf(main.store_rating.mess_per_star() * ev.INSPECTION_PASS_STARS_JANITOR, 0.1)), "E3: the tighter bar: %.1f (INSPECTION_PASS_STARS_JANITOR %.2f)" % [float(ev.data["pass_at"]), ev.INSPECTION_PASS_STARS_JANITOR])
+	check(ev._how_text().begins_with("Pat is showing the inspector round"), "E3: the banner says so: '%s'" % ev._how_text())
+	var picked0: int = jan().litter_picked_today
+	var litter0: int = cl.litter.size()
+	await wait_until(func(): return ev.active(), 15.0)
+	await wait(6.0)
+	check(jan().status == "with the inspector" and jan().litter_picked_today == picked0 and cl.litter.size() >= litter0, "E3: Pat stopped cleaning to walk the inspector round ('%s', %d picked, litter %d)" % [jan().status, jan().litter_picked_today - picked0, cl.litter.size()])
+	await process_frame
+	check(jan()._tag.text == "Pat · with the inspector", "E3: their tag says where they are: '%s'" % jan()._tag.text)
+	# The crew cleans it up (by hand here) — and passes.
+	cl.litter = []
+	for pd in cl.puddles.duplicate():
+		cl.remove_puddle(int(pd["id"]))
 	await wait_until(func(): return ev.log_today.size() > n0, 60.0)
-	var mess1: float = float(ev.data.get("mess", main.store_rating.mess_points())) if ev.active() else main.store_rating.mess_points()
-	check(mess1 < mess0, "E3: during the inspection the janitor brought the mess down (%.0f -> %.0f points)" % [mess0, mess1])
-	print("INFO E3 inspection: %s (bar %.1f)" % [ev.result_text, main.store_rating.mess_per_star() * ev.INSPECTION_PASS_STARS])
+	check(ev.log_today.size() > n0 and ev.log_today[-1][1], "E3: the crew got it under the bar -> passed (%s)" % ev.result_text)
+	await wait(1.0)
+	check(jan().status != "with the inspector", "E3: the inspector's gone: Pat's back to work")
+	cl.drop_litter(jan().position + Vector2(60, 0))
+	var back := await wait_until(func(): return jan().litter_picked_today > picked0, 20.0)
+	check(back, "E3: ...and picking up litter again")
 	finish()
 
 func LeakTotal() -> int:
-	return main.events.LEAK_COUNT + main.events.LEAK_PER_EXTRA * (main.events.crew() - 1)
+	return main.events.LEAK_COUNT + main.events.LEAK_PER_EXTRA * (main.events.crew() - 1) + main.events.LEAK_PER_JANITOR

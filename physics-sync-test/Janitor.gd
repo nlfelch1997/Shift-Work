@@ -18,15 +18,20 @@ extends "res://Helper.gd"
 ##   2. a FULL CAN anywhere open: walk over, lift its bag out (any trash in
 ##      hand goes in the bag too), and carry it to the dumpster — a full can
 ##      is the worst thing on the rating (StoreRating.MESS_FULL_CAN);
-##   3. WET MESS — sticky drink puddles, roof leaks (Events.gd), and the stage-4
-##      spills while they count: walk to the nearest, mop it (their own mop;
-##      the crew's mops stay on the racks). A leak takes LEAK_MOP_TIME — a slow
-##      job (see EVENTS below);
+##   3. WET MESS — sticky drink puddles and roof leaks (Events.gd): walk to the
+##      nearest, mop it (their own mop; the crew's mops stay on the racks). A
+##      leak takes LEAK_MOP_TIME — a slow job (see the NUMBERS block);
 ##   4. LITTER: pick up the nearest piece, then the next nearest, up to
 ##      HAND_MAX in hand, then into the nearest can with room (each piece pays
 ##      the crew's usual Cleanup.LITTER_PAY_PER_PIECE as it goes in);
 ##   5. trash in hand and nothing left on the floor: into the nearest can;
-##   6. otherwise wait at home (by the hub's tool rack).
+##   6. the stage-4 hazard SPILLS (Ambience.gd), while they count on the
+##      rating — LAST: they dry on their own in ~40 s and litter never does.
+##      FOUND BY THE INCOME SIMS: with spills ahead of litter, a Day-7
+##      janitor spent the whole shift crossing the store to mop spills that
+##      were about to dry (5-9 mopped, 0-2 pieces of litter picked up), and
+##      the slip hazard — the crew's to dodge — all but went away;
+##   7. otherwise wait at home (by the hub's tool rack).
 ## Displays knocked over and stock knocked off shelves are NOT theirs — the
 ## crew's mop/hands (cut for simplicity; flagged in the Phase 4B report).
 ##
@@ -269,6 +274,19 @@ func _physics_process(delta: float) -> void:
 		work = -1.0
 		_walk_toward(home(), delta)
 		return
+	# A Surprise Inspection with a janitor on staff (Events.gd): they walk the
+	# inspector round (from the warning on) — off the floor, the cleaning is
+	# the crew's until it's over. Whatever's in hand stays in hand.
+	if main.events.janitor_escorting():
+		_pause = 0.0
+		_pause_action = ""
+		_job = {"kind": "home", "at": home(), "reach": 2.0}
+		work = -1.0
+		status = "with the inspector"
+		_walk_toward(home(), delta)
+		return
+	if status == "with the inspector":
+		status = ""
 	var flee := _forklift_step(delta)
 	if flee != Vector2.INF:
 		if _pause > 0.0:
@@ -357,7 +375,7 @@ func _choose_job() -> void:
 		if c >= 0:
 			job = {"kind": "bag", "key": "can%d" % c, "can": c, "at": _can_stand(c), "reach": CAN_REACH}
 	if job.is_empty():
-		var m := _nearest_wet()
+		var m := _nearest_wet(false)
 		if not m.is_empty():
 			job = m
 	if job.is_empty() and hand < HAND_MAX:
@@ -377,6 +395,10 @@ func _choose_job() -> void:
 		if c >= 0:
 			job = {"kind": "bin", "key": "bin%d" % c, "can": c, "at": _can_stand(c), "reach": CAN_REACH}
 	if job.is_empty():
+		var m := _nearest_wet(true)
+		if not m.is_empty():
+			job = m
+	if job.is_empty():
 		job = {"kind": "home", "at": home(), "reach": 2.0}
 	_job = job
 	# A target the grid can't get to at all: skip it now, not after a timeout.
@@ -386,10 +408,11 @@ func _choose_job() -> void:
 			unreachable_skips += 1
 			_give_up("unreachable")
 
-func _nearest_wet() -> Dictionary:
+## The nearest puddle/leak (spills = false) or stage-4 hazard spill (true).
+func _nearest_wet(spills: bool) -> Dictionary:
 	var best := {}
 	var best_d := INF
-	for pd in main.cleanup.puddles:
+	for pd in ([] if spills else main.cleanup.puddles):
 		var k := "u%d" % pd["id"]
 		if _skipped(k) or not _reachable_zone(pd["pos"]):
 			continue
@@ -398,7 +421,7 @@ func _nearest_wet() -> Dictionary:
 			best_d = dd
 			var water: bool = pd.get("water", false)
 			best = {"kind": "mop", "key": k, "ref": pd["id"], "what": "leak" if water else "puddle", "at": pd["pos"], "reach": MOP_REACH + float(pd["r"]) * 0.5, "time": LEAK_MOP_TIME if water else MOP_TIME_PUDDLE}
-	if main.ambience.spills_enabled():
+	if spills and main.ambience.spills_enabled():
 		for sp in main.ambience.spills:
 			var k := "s%d" % sp["id"]
 			if _skipped(k) or not _reachable_zone(sp["pos"]):
