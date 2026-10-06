@@ -974,7 +974,8 @@ func escorting() -> bool:
 ## OCT 2026 PHASE 3D: the troublemaker an empty-handed E would grab here, or
 ## null: a disruptive customer nobody's hauling, within GRAB_RANGE, closer
 ## than any loose stock. Every peer (the hint uses it); the host re-checks.
-const GRAB_RANGE := 60.0
+## The store's shared E radius (Carryable.PICKUP_RANGE, the sign, the clock).
+const GRAB_RANGE := 70.0
 func grabbable_customer() -> Node2D:
 	var main = get_tree().current_scene
 	if not main.shift_active or main.cleanup_active or main.is_day_report_active():

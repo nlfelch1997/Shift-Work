@@ -46,6 +46,8 @@ func _initialize() -> void:
 	var client := "--client" in args
 	if OS.get_environment("SW_NET_DIR") == "":
 		NET_DIR = NET_DIR_DEFAULT
+	if _mode == "save":
+		_prepare_save_phase()
 	if _mode == "net-upkeep" and not client:
 		var d := DirAccess.open(NET_DIR)
 		if d:
@@ -212,8 +214,11 @@ func clear_floor() -> void:
 
 ## Faces a direction by tapping toward it.
 func face(dir: Vector2) -> void:
-	steer(dir * 0.2)
-	await physics_frame
+	if me == 1:
+		player().facing_angle = dir.angle()
+		await physics_frame
+		return
+	steer(dir)
 	await physics_frame
 	steer(Vector2.ZERO)
 	await physics_frame
@@ -320,6 +325,68 @@ func _run_trash() -> void:
 	check(int(cl().cans[0]) == 4 and int(cl().cans[1]) == 7, "T11: still there next shift (cans %s)" % str(cl().cans))
 	finish()
 
+## Drops `n` pieces in a tight pile at `pile`, then clears it by hand, HAND_MAX
+## a trip, into the hub can. Returns the seconds it took.
+func _clear_by_hand(pile: Vector2, n: int) -> float:
+	cl().litter = []
+	for k in n:
+		cl().drop_litter(pile + Vector2((k % 4) * 12 - 18, (k / 4) * 12 - 12))
+	var can_spot: Vector2 = cl().BINS[0]["pos"] + Vector2(0, 30)
+	await at(pile + Vector2(0, -120))
+	var t0 := Time.get_ticks_msec()
+	while not cl().litter.is_empty() or cl().hand_count(1) > 0:
+		if cl().hand_count(1) < cl().HAND_MAX and not cl().litter.is_empty():
+			var nxt: Vector2 = cl().litter[0]["pos"]
+			if player().global_position.distance_to(nxt) > 40.0:
+				await walk_to(nxt, 20.0, 15.0)
+			await press_e(0.1)
+		else:
+			await walk_to(can_spot, 14.0, 15.0)
+			_make_room()
+			await press_e(0.1)
+		if Time.get_ticks_msec() - t0 > 60000:
+			break
+	return (Time.get_ticks_msec() - t0) / 1000.0
+
+## The timed runs measure picking up, not the dumpster run: a teammate's
+## taken the hub can's bag whenever it's full.
+func _make_room() -> void:
+	if cl().can_full(0):
+		cl().set_can(0, 0)
+
+## Same pile, with the broom (fetched from the hub rack first if `fetch`):
+## sweep (HOLD place), empty the pan at the can, repeat until it's gone.
+func _clear_by_broom(pile: Vector2, n: int, fetch: bool) -> float:
+	if fetch:
+		cl().litter = []
+		for k in n:
+			cl().drop_litter(pile + Vector2((k % 4) * 12 - 18, (k / 4) * 12 - 12))
+	elif cl().litter.is_empty():
+		for k in n:
+			cl().drop_litter(pile + Vector2((k % 3) * 14 - 14, (k / 3) * 14 - 7))
+	var can_spot: Vector2 = cl().BINS[0]["pos"] + Vector2(0, 30)
+	var t0 := Time.get_ticks_msec()
+	if fetch:
+		await walk_to(cl().TOOL_SPOTS[5] + Vector2(0, 26), 12.0, 15.0)
+		await press_e(0.1)
+	while not cl().litter.is_empty() or (cl().tool_of(1) >= 0 and int(cl().tools[cl().tool_of(1)]["pan"]) > 0):
+		var held: int = cl().tool_of(1)
+		if held < 0:
+			break
+		if not cl().litter.is_empty() and not cl().tools[held]["full"]:
+			await walk_to(pile - Vector2(cl().BROOM_HEAD_OFFSET, 0), 10.0, 15.0)
+			await face(Vector2.RIGHT)
+			press("host_place")
+			await wait_until(func(): return cl().litter.is_empty() or cl().tools[cl().tool_of(1)]["full"], 3.0)
+			press("host_place", 0.0)
+		else:
+			await walk_to(can_spot, 14.0, 15.0)
+			_make_room()
+			await press_e(0.1)
+		if Time.get_ticks_msec() - t0 > 60000:
+			break
+	return (Time.get_ticks_msec() - t0) / 1000.0
+
 func _can_heap_visible(i: int) -> bool:
 	return cl()._can_fx[i].get_node("Heap").visible
 
@@ -336,23 +403,506 @@ func _dumpster_blocks() -> bool:
 
 ## --- (stubs filled in below) ---
 func _run_tools() -> void:
-	print("FAIL  not written yet")
+	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
+	park_world()
+	clear_hub_stock()
+	clear_floor()
+	cl().set_cans([0, 0, 0, 0, 0])
+	await wait(0.3)
+	# M0: tools are out during prep (they were cleanup-only).
+	check(not main.store_open and not main.cleanup_active, "M0: prep, store closed")
+	await at(cl().TOOL_SPOTS[2] + Vector2(0, 26))
+	await press_e()
+	var held: int = cl().tool_of(1)
+	check(held == 2 and cl().tools[held]["kind"] == "mop", "M0: E at the hub rack picks up its mop during prep (holding %d)" % held)
+	main.open_store(1)
+	await wait(0.3)
+	main.test_hold_customers = true
+	# M1: a sticky puddle: hands can't take it.
+	await press_e() # put the mop down
+	check(cl().tool_of(1) < 0, "M1: E puts the mop down")
+	var ppos := Vector2(1500, 760)
+	cl().drop_puddle(ppos, 18.0)
+	await at(ppos + Vector2(-20, 0))
+	await press_e()
+	check(cl().puddles.size() == 1 and cl().hand_count(1) == 0 and not cl().holds_anything(1), "M1: E on a puddle with empty hands does nothing — liquids need the mop")
+	# M2: the mop takes it, mid-shift, by holding the place key.
+	await at(cl().TOOL_SPOTS[2] + Vector2(0, 26))
+	await press_e()
+	check(cl().tool_of(1) >= 0, "M2: mop back in hand (store open)")
+	await at(ppos - Vector2(cl().MOP_HEAD_OFFSET, 0), 0.0)
+	await face(Vector2.RIGHT)
+	var t0 := Time.get_ticks_msec()
+	press("host_place")
+	var gone := await wait_until(func(): return cl().puddles.is_empty(), 5.0)
+	press("host_place", 0.0)
+	check(gone and cl().stat(1, "mopped") == 1, "M2: held C on it: mopped up in %.1fs" % ((Time.get_ticks_msec() - t0) / 1000.0))
+	check(main.manager._is_carrying(1), "M2: holding a mop counts as busy for the manager")
+	# M3: a floor spill (stage 4) too.
+	var sid: int = main.ambience.spawn_spill(Vector2(1500, 640), 40.0)
+	await wait(0.2)
+	await at(Vector2(1500, 640) - Vector2(cl().MOP_HEAD_OFFSET + 20, 0), 0.0)
+	await face(Vector2.RIGHT)
+	press("host_place")
+	gone = await wait_until(func(): return not main.ambience.spills.any(func(sp): return sp["id"] == sid), 6.0)
+	press("host_place", 0.0)
+	check(gone, "M3: a floor spill mopped mid-shift")
+	# M4: knocked stock mid-shift is just stock to put back — the mop leaves it.
+	var prod := _loose_product()
+	move_body(prod, player().global_position + Vector2(cl().MOP_HEAD_OFFSET, 0))
+	prod.set_meta("knocked", true)
+	press("host_place")
+	await wait(1.6)
+	press("host_place", 0.0)
+	check(is_instance_valid(prod) and not prod.is_queued_for_deletion(), "M4: the mop doesn't bin knocked stock mid-shift")
+	if is_instance_valid(prod):
+		prod.remove_meta("knocked")
+		move_body(prod, Vector2(2400, 1500))
+	await press_e() # mop down
+	# B1: a pile — the broom takes it all in one pass; hands take three a trip.
+	# Two timed cases, real keys, the hub can ~260px from the pile:
+	# (a) 6 pieces, broom already in hand vs by hand (2 trips);
+	# (b) 12 pieces, broom FETCHED from the hub rack vs by hand (4 trips).
+	var pile := Vector2(1300, 820)
+	var can_spot: Vector2 = cl().BINS[0]["pos"] + Vector2(0, 30)
+	var hand6 := await _clear_by_hand(pile, 6)
+	check(cl().litter.is_empty() and cl().stat(1, "binned") >= 6, "B1: by hand: 6 pieces, 2 trips, %.1fs" % hand6)
+	await walk_to(cl().TOOL_SPOTS[5] + Vector2(0, 26), 12.0, 15.0)
+	await press_e(0.12)
+	var b_held: int = cl().tool_of(1)
+	check(b_held >= 0 and cl().tools[b_held]["kind"] == "broom", "B2: broom from the hub rack")
+	cl().set_can(0, 0)
+	var pay_before: int = cl().litter_pay_today()
+	var can_before: int = cl().cans[0]
+	var broom6 := await _clear_by_broom(pile, 6, false)
+	check(cl().stat(1, "swept") == 6 and int(cl().cans[0]) == can_before + 6 and cl().litter_pay_today() == pay_before + 6, "B2: one pass swept all 6 into the pan; emptied into the can, paid then (+$%d)" % (cl().litter_pay_today() - pay_before))
+	check(broom6 < hand6, "B2: broom in hand beats hands on a 6-piece pile (%.1fs vs %.1fs)" % [broom6, hand6])
+	await at(cl().TOOL_SPOTS[5] + Vector2(0, 26))
+	await press_e() # broom down at the rack
+	cl().tools = cl()._fresh_tools()
+	cl().set_can(0, 0)
+	var hand12 := await _clear_by_hand(pile, 12)
+	cl().set_can(0, 0)
+	await at(Vector2(1300, 700))
+	var broom12 := await _clear_by_broom(pile, 12, true)
+	print("INFO  BROOM VS HANDS (pile 260px from the can, rack ~540px away): 6 pieces — hands %.1fs, broom in hand %.1fs; 12 pieces — hands %.1fs, broom fetched from the rack %.1fs" % [hand6, broom6, hand12, broom12])
+	check(broom12 < hand12, "B3: a 12-piece mess: fetching the broom still wins (%.1fs vs %.1fs by hand)" % [broom12, hand12])
+	await at(cl().TOOL_SPOTS[5] + Vector2(0, 60))
+	if cl().tool_of(1) < 0:
+		await walk_to(cl().TOOL_SPOTS[5] + Vector2(0, 26), 12.0, 15.0)
+		await press_e(0.12)
+	# B4: the pan won't go into a full can.
+	cl().set_can(0, cl().CAN_CAPACITY)
+	cl().drop_litter(pile)
+	await walk_to(pile - Vector2(cl().BROOM_HEAD_OFFSET, 0), 10.0, 15.0)
+	await face(Vector2.RIGHT)
+	press("host_place")
+	await wait_until(func(): return cl().litter.is_empty(), 3.0)
+	press("host_place", 0.0)
+	await walk_to(can_spot, 12.0, 15.0)
+	check(cl().action_for(1, player().global_position, false) == "tool_put", "B4: at a full can the pan can't be emptied (E would put the broom down)")
+	await press_e()
+	# S1: loose stock beside the rack: E is about the stock, not the tool.
+	await at(cl().TOOL_SPOTS[2] + Vector2(0, 26))
+	var p2 := _loose_product()
+	move_body(p2, player().global_position + Vector2(0, 40))
+	await wait(0.2)
+	await press_e()
+	check(p2.get_node("Carryable").carrier_id == 1 and cl().tool_of(1) < 0, "S1: loose stock in reach of the rack: E grabs the stock, not a tool")
 	finish()
 
 func _run_rating() -> void:
-	print("FAIL  not written yet")
+	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
+	park_world()
+	clear_floor()
+	cl().set_cans([0, 0, 0, 0, 0])
+	await at(Vector2(480, 270))
+	var n_sec: int = main._unlocked_sections().size()
+	var per_star: float = rt().mess_per_star()
+	check(n_sec == 4 and is_equal_approx(per_star, rt().MESS_PER_STAR_BASE + rt().MESS_PER_STAR_PER_SECTION * 3), "R1: whole store open: %.0f mess points a star" % per_star)
+	# R0: the rating doesn't move in prep (no customers to judge it).
+	rt().set_rating(4.0)
+	for k in 30:
+		cl().drop_litter(Vector2(1100 + k * 20, 700))
+	await wait(2.0)
+	check(is_equal_approx(rt().rating, 4.0), "R0: prep: 30 litter on the floor, the rating holds (%.2f)" % rt().rating)
+	main.open_store(1)
+	main.test_hold_customers = true
+	await wait(0.2)
+	# R1: the target formula, piece by piece.
+	clear_floor()
+	await wait(0.2)
+	check(is_equal_approx(rt().target_for(rt().mess_points()), 5.0), "R1: a clean store targets 5 stars")
+	for k in 12:
+		cl().drop_litter(Vector2(1100 + k * 30, 700))
+	cl().drop_puddle(Vector2(1300, 820), 18.0)
+	cl().set_can(0, cl().CAN_CAPACITY)
+	await wait(0.2)
+	var mess: float = rt().mess_points()
+	check(is_equal_approx(mess, 12.0 + 3.0 + 4.0), "R1: 12 litter + a puddle + a full can = %.0f points (1 / 3 / 4 each)" % mess)
+	check(is_equal_approx(rt().target, 5.0 - mess / per_star), "R1: target %.2f = 5 - %.0f / %.0f" % [rt().target, mess, per_star])
+	# R2: smoothing — falls at most a star a minute, rises slower.
+	rt().set_rating(5.0)
+	clear_floor()
+	for k in 40:
+		cl().drop_litter(Vector2(1000 + (k % 20) * 40, 640 + (k / 20) * 40))
+	var t0 := Time.get_ticks_msec()
+	await wait(6.0)
+	var secs := (Time.get_ticks_msec() - t0) / 1000.0
+	var fell: float = 5.0 - rt().rating
+	check(fell > 0.0 and fell <= secs * rt().FALL_PER_SEC + 0.02, "R2: a big mess: fell %.3f in %.1fs (cap %.3f) — no whiplash" % [fell, secs, secs * rt().FALL_PER_SEC])
+	check(rt().trend() == -1, "R2: trend arrow: falling")
+	clear_floor()
+	cl().set_cans([0, 0, 0, 0, 0])
+	rt().set_rating(2.0)
+	t0 = Time.get_ticks_msec()
+	await wait(6.0)
+	secs = (Time.get_ticks_msec() - t0) / 1000.0
+	var rose: float = rt().rating - 2.0
+	check(rose > 0.0 and rose <= secs * rt().RISE_PER_SEC + 0.02 and rt().RISE_PER_SEC < rt().FALL_PER_SEC, "R2: clean again: rose %.3f in %.1fs (slower than it falls)" % [rose, secs])
+	check(rt().trend() == 1, "R2: trend arrow: rising")
+	# R3/R4: what it DOES — the crowd and the price, measured with real
+	# shoppers buying off stocked shelves (rating frozen at each level).
+	main.rating_frozen = true
+	main.test_hold_customers = false
+	var results := {}
+	for r in [1.0, 3.0, 5.0]:
+		rt().set_rating(r)
+		for c in get_nodes_in_group("customer"):
+			c.force_leave()
+		await wait(0.5)
+		var sold0: int = main._total_sold()
+		var gross0: int = main._gross_pay_today()
+		var prio0: int = main.priority_sales_today
+		var peak := 0
+		var samples := 0
+		var total := 0
+		var t := 0.0
+		while t < 40.0:
+			if fmod(t, 3.0) < 0.5:
+				_stock_all()
+			await wait(0.5)
+			t += 0.5
+			var live := get_nodes_in_group("customer").filter(func(c): return not c.is_queued_for_deletion()).size()
+			peak = maxi(peak, live)
+			if t > 6.0:
+				samples += 1
+				total += live
+		var sold: int = main._total_sold() - sold0
+		var paid: int = main._gross_pay_today() - gross0 - main._priority_bonus(main.priority_sales_today - prio0)
+		results[r] = {"cap": main.customer_cap(), "peak": peak, "avg": float(total) / maxi(1, samples), "sold": sold, "per_sale": float(paid) / maxi(1, sold)}
+		print("INFO  RATING %.0f★: cap %d, customers in store peak %d avg %.1f, %d sales paid $%d ($%.2f each)" % [r, main.customer_cap(), peak, results[r]["avg"], sold, paid, results[r]["per_sale"]])
+	var base: int = main._customer_baseline()
+	for r in results:
+		var want_cap := roundi(base * rt().lerp3(r, main.RATING_CROWD_MULT))
+		check(results[r]["cap"] == want_cap and results[r]["peak"] == want_cap, "R3: %.0f★: the store fills to %d customers (cap %d = %d x %.2f)" % [r, results[r]["peak"], results[r]["cap"], base, rt().lerp3(r, main.RATING_CROWD_MULT)])
+		check(results[r]["sold"] > 0 and is_equal_approx(results[r]["per_sale"], float(roundi(main.PAY_PER_SALE * rt().lerp3(r, main.RATING_PRICE_MULT)))), "R4: %.0f★: every sale paid $%.2f (%d sales)" % [r, results[r]["per_sale"], results[r]["sold"]])
+	main.rating_frozen = false
+	# R5: it carries into the next shift.
+	rt().set_rating(4.3)
+	main.shift_time_left = 0.3
+	await wait_until(func(): return main.is_day_report_active(), 10.0)
+	var at_close: float = rt().rating
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 10.0)
+	check(is_equal_approx(rt().rating, at_close) and absf(at_close - 4.3) < 0.05, "R5: the rating carries into the next shift (%.3f at close, %.3f now)" % [at_close, rt().rating])
 	finish()
 
+## Every empty slot of every open section gets a fresh unit (a perfect crew).
+func _stock_all() -> void:
+	for sec in main._unlocked_sections():
+		for sb in main.shelves:
+			if main._grid_cell_of(sb.global_position) != sec["grid_pos"]:
+				continue
+			var shelf: Node = sb.get_node("Shelf")
+			if shelf.wrecked:
+				continue
+			for i in shelf.slots.size():
+				var occ = shelf._occupant[i]
+				if occ == null or not is_instance_valid(occ) or occ.is_queued_for_deletion():
+					main.spawn_product_at(sec["name"], shelf.slots[i].global_position)
+
 func _run_earnings() -> void:
-	print("FAIL  not written yet")
+	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
+	await at(Vector2(1440, 700))
+	_stock_all()
+	await wait(0.5)
+	main.open_store(1)
+	main.forklift._pause_timer = 1.0e9
+	await wait(0.5)
+	check(rt().hud_visible and rt().today_text == "TODAY  $0", "N1: the HUD counter is up from the start: '%s'" % rt().today_text)
+	# N2: a live shift — sales, trash binned, a bounce — and the counter
+	# equals Pay Today on every frame.
+	var mismatches := 0
+	var samples := 0
+	var rises := 0
+	var last := 0
+	var t := 0.0
+	var bounced := false
+	var lagged := 0
+	var t_start := Time.get_ticks_msec()
+	var next_stock := 0.0
+	while t < 45.0:
+		t = (Time.get_ticks_msec() - t_start) / 1000.0
+		if t >= next_stock:
+			next_stock = t + 2.0
+			_stock_all()
+		if t > 6.0 and not bounced and cl().hand_count(1) == 0:
+			bounced = true
+			var red := await pinned_customer("disruptive", Vector2(1440, 1030))
+			_pin_ai(red)
+			await at(Vector2(1440, 994), PI * 0.5)
+			await press_e(0.1)
+			await press_f(0.8)
+		elif t > 10.0 and cl().hand_count(1) == 0 and cl().litter.size() < 3:
+			cl().drop_litter(cl().BINS[0]["pos"] + Vector2(40, 30))
+			await at(cl().BINS[0]["pos"] + Vector2(40, 30))
+			await press_e(0.05)
+			await at(cl().BINS[0]["pos"] + Vector2(0, 30))
+			await press_e(0.05)
+		await process_frame
+		await process_frame
+		samples += 1
+		var shown: String = rt().today_text
+		var pay: int = main._pay_today()
+		# The HUD redraws in _process; a sale can land in the physics step
+		# after it. One frame behind is a redraw, two in a row is a wrong
+		# number.
+		if shown != "TODAY  %s" % main._format_money(pay):
+			await process_frame
+			if rt().today_text != "TODAY  %s" % main._format_money(main._pay_today()):
+				mismatches += 1
+			else:
+				lagged += 1
+		if pay > last:
+			rises += 1
+		last = pay
+	check(samples > 100 and mismatches == 0, "N2: counter == Pay Today on all %d samples of a live shift (pay %s; went up %d times; %d samples a frame behind, caught up the next frame)" % [samples, main._format_money(main._pay_today()), rises, lagged])
+	check(main.bounced_today >= 1 and cl().trash_binned_today >= 1 and main._total_sold() - main._sold_at_day_start > 0, "N2: ...with sales (%d), trash binned (%d) and a bounce (%d) in it" % [main._total_sold() - main._sold_at_day_start, cl().trash_binned_today, main.bounced_today])
+	# N3: cleanup: the counter carries the bonus the floor would earn now.
+	for k in 4:
+		cl().drop_litter(Vector2(1300 + k * 30, 760))
+	main.shift_time_left = 0.2
+	await wait_until(func(): return main.cleanup_active, 5.0)
+	await wait(0.4)
+	var gross: int = main._gross_pay_today()
+	var live_bonus: int = cl().bonus_for(gross)
+	check(rt().today_text == "TODAY  %s" % main._format_money(main._pay_today() + live_bonus), "N3: during cleanup the counter shows pay + the cleanliness bonus so far (%s, bonus %s)" % [rt().today_text, main._format_money(live_bonus)])
+	# Clean some up: the counter climbs.
+	await at(Vector2(1300, 760))
+	await press_e(0.1)
+	await press_e(0.1)
+	await at(cl().BINS[0]["pos"] + Vector2(0, 30))
+	await press_e(0.3)
+	var shown_before_out: String = rt().today_text
+	var money0: int = main.money
+	main.clock_out(1)
+	await wait_until(func(): return main.is_day_report_active(), 5.0)
+	await process_frame
+	await process_frame
+	var report_pay: int = main._pay_today()
+	check(shown_before_out == "TODAY  %s" % main._format_money(report_pay), "N4: the last counter before clock-out (%s) == the report's Pay Today (%s)" % [shown_before_out, main._format_money(report_pay)])
+	check(main.money - money0 == report_pay - main.staff.wages_today, "N4: and that's what went in the bank (+%s, wages %s)" % [main._format_money(main.money - money0), main._format_money(main.staff.wages_today)])
+	check(not rt().hud_visible, "N4: the counter steps aside for the report")
 	finish()
 
 func _run_bounce() -> void:
-	print("FAIL  not written yet")
+	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
+	park_world()
+	clear_hub_stock()
+	main.open_store(1)
+	await wait(0.3)
+	main.test_hold_customers = true
+	for c in get_nodes_in_group("customer"):
+		c.force_leave()
+	await wait(0.3)
+	var spot := Vector2(1440, 700)
+	# E1: refusals. A shopper can't be grabbed (paying customers stay).
+	var shopper := await pinned_customer("shopper", spot + Vector2(40, 0))
+	await at(spot)
+	check(player().grabbable_customer() == null, "E1: a shopper isn't grabbable (E does nothing to them)")
+	await press_e()
+	check(shopper.escorted_by == 0, "E1: E next to a shopper: not grabbed")
+	check(not main.grab_customer(1, shopper.name), "E1: the host refuses a grab on a shopper (a forged request)")
+	shopper.force_leave()
+	var red := await pinned_customer("disruptive", spot + Vector2(40, 0))
+	_pin_ai(red)
+	# Out of reach (host check, forged).
+	red.position = spot + Vector2(200, 0)
+	await physics_frame
+	check(not main.grab_customer(1, red.name), "E1: out of reach (200px): refused")
+	red.position = spot + Vector2(40, 0)
+	await physics_frame
+	# Hands full (stock): refused.
+	var prod := _loose_product()
+	move_body(prod, spot + Vector2(0, 40))
+	await wait(0.1)
+	prod.get_node("Carryable").try_pickup(1, player().global_position)
+	await wait(0.2)
+	check(not main.grab_customer(1, red.name) and red.escorted_by == 0, "E1: holding stock: refused")
+	prod.get_node("Carryable").try_drop(1)
+	await wait(0.1)
+	move_body(prod, Vector2(2400, 1500))
+	# E2: grabbed by real E.
+	red.position = player().global_position + Vector2(40, 0)
+	await wait(0.1)
+	await press_e()
+	check(red.escorted_by == 1, "E2: E on a red-ringed customer grabs them")
+	check(player().escorting() and main.manager._is_carrying(1), "E2: hauling counts as carrying (manager)")
+	check(player().speed() < 220.0 * 0.85, "E2: hauling slows you (%.0fpx/s)" % player().speed())
+	# Pinned in front of us as we walk.
+	await walk_to(spot + Vector2(0, 120), 10.0, 6.0)
+	await wait(0.2)
+	var off: float = red.global_position.distance_to(player().global_position)
+	check(off < red.ESCORT_OFFSET + 12.0, "E2: they come along, held in front (%.0fpx away)" % off)
+	check(main.cleanup.action_for(1, player().global_position, false) == "" and not main.cleanup._hands_free(1), "E2: hands are full while hauling")
+	# E3: E lets go — stunned, then they carry on.
+	await press_e()
+	check(red.escorted_by == 0 and red._stun_timer > 0.0, "E3: E lets go (stunned %.1fs)" % red._stun_timer)
+	await wait(1.0)
+	# E4: walked out the front door: bounced, paid, gone.
+	await at(red.global_position + Vector2(0, -36), PI * 0.5)
+	await press_e()
+	check(red.escorted_by == 1, "E4: grabbed again")
+	var pay0: int = main._pay_today()
+	var name_before := String(red.name)
+	var walked := await walk_to(Vector2(1440, 1060), 12.0, 15.0)
+	steer(Vector2.DOWN)
+	var out := await wait_until(func(): return main.bounced_today >= 1, 6.0)
+	steer(Vector2.ZERO)
+	check(walked and out, "E4: walked them out the front door: BOUNCED (bounced %d)" % main.bounced_today)
+	check(main._pay_today() == pay0 + main.BOUNCE_PAY and cl().stat(1, "bounced") == 1, "E4: +$%d on Pay Today (%s -> %s)" % [main.BOUNCE_PAY, main._format_money(pay0), main._format_money(main._pay_today())])
+	await wait(0.3)
+	check(customers_root_has(name_before) == false, "E4: they're gone")
+	# E5: the next one through the door is a shopper.
+	check(main.recent_bounces() == 1, "E5: the bounce is remembered for %.0fs" % main.BOUNCE_CALM_SECONDS)
+	main.test_hold_customers = false
+	main._restock_customers()
+	var cap: int = main.customer_cap()
+	var want: int = roundi(cap * main.CUSTOMER_DISRUPTIVE_RATIO)
+	await wait(0.3)
+	var reds := get_nodes_in_group("customer").filter(func(c): return c.role == "disruptive" and not c.is_queued_for_deletion()).size()
+	check(reds == maxi(0, want - 1), "E5: restock let in %d troublemaker(s), one fewer than usual (%d)" % [reds, want])
+	main.test_hold_customers = true
+	for c in get_nodes_in_group("customer"):
+		c.force_leave()
+	await wait(0.3)
+	# E6: tossed (F) through the door from just inside it counts too.
+	await at(Vector2(1440, 1020), PI * 0.5)
+	red = await pinned_customer("disruptive", Vector2(1440, 1050))
+	_pin_ai(red)
+	await press_e()
+	check(red.escorted_by == 1, "E6: grabbed one by the door")
+	await face(Vector2.DOWN)
+	var b0: int = main.bounced_today
+	await press_f()
+	var tossed := await wait_until(func(): return main.bounced_today > b0, 3.0)
+	check(tossed, "E6: F tossed them out the door: BOUNCED (bounced %d)" % main.bounced_today)
+	# E7: held too long, they wriggle free.
+	red = await pinned_customer("disruptive", Vector2(1300, 700))
+	_pin_ai(red)
+	await at(Vector2(1300, 664), PI * 0.5)
+	await press_e()
+	check(red.escorted_by == 1, "E7: grabbed")
+	red._escort_t = red.ESCORT_MAX_TIME - 0.2
+	await wait(0.5)
+	check(red.escorted_by == 0 and not player().escorting(), "E7: past ESCORT_MAX_TIME (%.0fs) they wriggle free" % red.ESCORT_MAX_TIME)
+	# E8: dragged behind a shelf corner — pulled loose, never through it.
+	await wait(1.0)
+	var shelf_body: Node2D = main.shelves.filter(func(sb): return main._grid_cell_of(sb.global_position) == Vector2i(1, 0))[0]
+	await at(red.global_position + Vector2(0, -36), PI * 0.5)
+	await press_e()
+	player().teleport_to(shelf_body.global_position + Vector2(0, 0) + Vector2(140, 0))
+	await wait(0.4)
+	check(red.escorted_by == 0, "E8: yanked far away (teleport): they're pulled loose, not dragged through walls")
+	# E9: a shove (Space) on someone being hauled doesn't knock them free.
 	finish()
 
+func customers_root_has(n: String) -> bool:
+	var c: Node = main.customers_root.get_node_or_null(NodePath(n))
+	return c != null and not c.is_queued_for_deletion()
+
+## Keeps a disruptive customer's own AI still (it would chase players and
+## shelves) — between grabs it just stands.
+func _pin_ai(c: Node2D) -> void:
+	c._retarget_pos = c.global_position
+	c._retarget_timer = 1.0e9
+
+## SAVES (v4: the store rating and the cans' fill):
+## 1: a fresh file; set the rating and the cans, save -> on disk as v4.
+## 2: relaunch -> the same rating and cans.
+## 3: a version-3 save (pre-3D) -> loads, 3 stars, every can empty, the rest
+##    of the shop intact.
+## 4: a v4 save with a damaged upkeep block -> cleaned up on load; and the
+##    rating/cans written back out are sane.
+const V3_SAVE := {
+	"version": 3, "saved_at": "2026-10-04T20:00:00",
+	"shop": {"completed_day": 4, "money": 640, "lifetime_earned": 1300, "sections_owned": 2, "stage": 2, "lifetime_sold": 180},
+	"staff": {},
+	"endless": {"unlocked": false, "wallet": 0, "upgrades": {}, "shift_number": 0, "run_stats": {"shifts": 0, "sold": 0, "bucks": 0, "medals": [0, 0, 0, 0]}, "week_summary": {}},
+}
+
+func _save_file() -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--save-file="):
+			return a.substr(12)
+	return "user://upkeep_test/save.json"
+
+func _save_phase() -> int:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--phase="):
+			return int(a.substr(8))
+	return 1
+
+func _prepare_save_phase() -> void:
+	var path := _save_file()
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	match _save_phase():
+		1:
+			for f in [path, path + ".tmp", path + ".bad"]:
+				if FileAccess.file_exists(f):
+					DirAccess.remove_absolute(f)
+		3, 4:
+			var data: Dictionary = V3_SAVE.duplicate(true)
+			if _save_phase() == 4:
+				data["version"] = 4
+				data["upkeep"] = {"rating": "five", "cans": [99, -5, "x", 4.6]}
+			var f := FileAccess.open(path, FileAccess.WRITE)
+			f.store_string(JSON.stringify(data, "\t"))
+			f.close()
+
+func _disk() -> Dictionary:
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(_save_file()))
+	return parsed if parsed is Dictionary else {}
+
 func _run_save() -> void:
-	print("FAIL  not written yet")
+	await wait_until(func(): return main.shift_active and main.players.has(1), 20.0)
+	await wait(0.5)
+	var SG = load("res://SaveGame.gd")
+	match _save_phase():
+		1:
+			check(main.load_status == SG.LOAD_NONE and is_equal_approx(rt().rating, main.RATING_START), "S1: a new shop starts at %.1f stars" % rt().rating)
+			rt().set_rating(4.25)
+			cl().set_cans([3, 10, 0, 7, 0])
+			main.save_progress("upkeep test")
+			var d := _disk()
+			check(int(d.get("version", 0)) == 4 and SG.VERSION == 4, "S1: the save on disk is version %d" % int(d.get("version", 0)))
+			var up: Dictionary = d.get("upkeep", {})
+			check(is_equal_approx(float(up.get("rating", 0)), 4.25) and (up.get("cans", []) as Array).map(func(v): return int(v)) == [3, 10, 0, 7, 0], "S1: with the rating and the cans in it (%s)" % str(up))
+		2:
+			check(main.load_status == SG.LOAD_OK and is_equal_approx(rt().rating, 4.25), "S2: relaunch: the rating is back (%.2f)" % rt().rating)
+			check(cl().cans == [3, 10, 0, 7, 0], "S2: the cans are as full as they were (%s)" % str(cl().cans))
+		3:
+			check(main.load_status == SG.LOAD_OK and main.money == 640 and main.sections_owned == 2 and main.current_day == 5, "S3: a version-3 (pre-3D) save loads: Day %d, bank %s, %d sections" % [main.current_day, main._format_money(main.money), main.sections_owned])
+			check(is_equal_approx(rt().rating, 3.0) and cl().cans == [0, 0, 0, 0, 0], "S3: ...at 3 stars (the old economy exactly) with every can empty (%.1f, %s)" % [rt().rating, str(cl().cans)])
+			check(is_equal_approx(rt().crowd_mult(), 1.0) and main.sale_price() == main.PAY_PER_SALE, "S3: 3 stars = crowd x1.00, $%d a sale" % main.sale_price())
+		4:
+			check(main.load_status == SG.LOAD_OK, "S4: a damaged upkeep block doesn't stop the save loading")
+			check(is_equal_approx(rt().rating, 3.0), "S4: a rating that isn't a number -> 3 stars (%.2f)" % rt().rating)
+			check(cl().cans == [cl().CAN_CAPACITY, 0, 0, 4, 0], "S4: cans clamped to 0..%d, junk -> 0 (%s)" % [cl().CAN_CAPACITY, str(cl().cans)])
+			main.save_progress("upkeep test")
+			var up: Dictionary = _disk().get("upkeep", {})
+			check(float(up.get("rating", 0)) >= 1.0 and float(up.get("rating", 0)) <= 5.0 and (up.get("cans", []) as Array).size() == 5, "S4: written back out clean (%s)" % str(up))
 	finish()
 
 func _run_shots() -> void:
