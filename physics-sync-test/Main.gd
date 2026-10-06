@@ -2799,11 +2799,14 @@ func _load_progress() -> String:
 	cleanup.set_cans(d["upkeep"]["cans"])
 	# OCT 2026 PHASE 4: the crew's gear (a v2-v4 save's Endless upgrades
 	# carry over — SaveGame.gd), and which events this crew has met.
-	shop.upgrades = d["gear"]
+	# (self.: the save's "shop" block is a local named shop just above —
+	# assigning through it put the gear in that Dictionary, found by the
+	# Phase 4 regression's save phases.)
+	self.shop.upgrades = d["gear"]
 	events.seen = d["events"]["seen"]
 	events.completed_total = d["events"]["completed"]
 	current_day = completed_story_day + 1
-	print("[Save] Loaded %s — completed day %d, resuming Day %d, bank %s, lifetime earned $%d, %d section(s), stage %d, rating %.2f, cans %s, gear %s, events seen %s" % [save_path, completed_story_day, current_day, _format_money(money), lifetime_earned, sections_owned, complication_stage, store_rating.rating, str(cleanup.cans), str(shop.upgrades), str(events.seen.keys())])
+	print("[Save] Loaded %s — completed day %d, resuming Day %d, bank %s, lifetime earned $%d, %d section(s), stage %d, rating %.2f, cans %s, gear %s, events seen %s" % [save_path, completed_story_day, current_day, _format_money(money), lifetime_earned, sections_owned, complication_stage, store_rating.rating, str(cleanup.cans), str(self.shop.upgrades), str(events.seen.keys())])
 	show_toast("Welcome back — Day %d  ·  Bank %s" % [current_day, _format_money(money)], Color(0.55, 1, 0.6), 4.0)
 	return "story"
 

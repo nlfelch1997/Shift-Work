@@ -107,8 +107,13 @@ func force(k: String, wait_active := true) -> bool:
 
 ## Ends the running event by running its clock out.
 func time_out() -> void:
-	ev().time_left = 0.05
-	await wait_until(func(): return not ev().busy(), 3.0)
+	# (A warning cut short just goes active with a full clock — keep cutting
+	# until it's over.)
+	for i in 8:
+		if not ev().busy():
+			break
+		ev().time_left = 0.05
+		await wait_until(func(): return not ev().busy() or ev().time_left > 0.1, 1.0)
 	await physics_frame
 
 ## `n` real sales of `sec`'s stock: shelved, taken off by a "shopper", rung up
@@ -515,7 +520,7 @@ func _run_interactions() -> void:
 	check(not ev().busy(), "X1: an event due now waits while the order is open")
 	main._close_priority_order(false)
 	check(await wait_until(func(): return ev().warning(), 5.0), "X1: ...and comes once it closes")
-	await wait_until(func(): return ev().active(), 10.0)
+	await wait_until(func(): return ev().active(), 15.0)
 	await time_out()
 	# --- X2 an event due soon keeps a new order from being called.
 	ev()._countdown = 20.0
