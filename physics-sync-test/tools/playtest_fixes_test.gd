@@ -672,7 +672,11 @@ func _run_trash() -> void:
 	for o in get_nodes_in_group("carryable"):
 		if o.global_position.distance_to(hub) < 400.0:
 			move_body(o, o.global_position + Vector2(0, 400))
+	# OCT 2026 PHASE 3D: trash goes in your hand (HAND_MAX at a time) and pays
+	# when it goes in a can — so two trips to the hub's can for five pieces.
 	var hinted := 0
+	var can_at: Vector2 = cl.BINS[0]["pos"] + Vector2(0, 30)
+	var binned_trips := 0
 	for i in ids.size():
 		var at: Vector2 = hub + Vector2(i * 120.0 - 240.0, 40.0)
 		p.teleport_to(at + Vector2(-35, 30))
@@ -682,14 +686,21 @@ func _run_trash() -> void:
 		if i == 0:
 			await shot("trash_hint")
 		await tap("host_interact")
-		if i == 0:
-			await wait(0.12)
-			await shot("trash_popup")
 		await wait(0.3)
-	check(cl.litter.size() == 0, "T1: 5 pieces picked up by hand mid-shift (%d left)" % cl.litter.size())
-	check(cl.litter_collected_today == 5 and main._pay_today() - pay0 == 5, "T1: +$1 each — collected %d, pay +$%d" % [cl.litter_collected_today, main._pay_today() - pay0])
+		if cl.hand_count(1) >= cl.HAND_MAX or i == ids.size() - 1:
+			check(main._pay_today() - pay0 == binned_trips * cl.HAND_MAX, "T1: in hand, not paid yet (pay +$%d)" % (main._pay_today() - pay0))
+			p.teleport_to(can_at)
+			await wait(0.3)
+			await tap("host_interact")
+			await wait(0.12)
+			if binned_trips == 0:
+				await shot("trash_popup")
+			await wait(0.3)
+			binned_trips += 1
+	check(cl.litter.size() == 0 and cl.hand_count(1) == 0, "T1: 5 pieces picked up by hand mid-shift and binned in %d trips (%d left)" % [binned_trips, cl.litter.size()])
+	check(cl.litter_collected_today == 5 and cl.trash_binned_today == 5 and main._pay_today() - pay0 == 5, "T1: +$1 each, paid at the can — binned %d, pay +$%d" % [cl.trash_binned_today, main._pay_today() - pay0])
 	check(hinted == 5, "T1: the 'E: pick up trash' hint showed at every piece (%d/5)" % hinted)
-	check(pops.size() == 5, "T2: a +$1 popup at every piece (%d)" % pops.size())
+	check(pops.size() == binned_trips, "T2: a +$ popup over the can each time trash went in (%d)" % pops.size())
 	await wait(1.4)
 	check(juice.popups.filter(func(x): return x["text"].begins_with("+$")).is_empty(), "T2: and they've all faded after %.1fs (none left)" % (juice.POPUP_LIFE + 0.3))
 	# 2. E near trash AND near stock: the nearer one wins; shelved stock never.
@@ -714,7 +725,11 @@ func _run_trash() -> void:
 	await wait(0.3)
 	await tap("host_interact")
 	await wait(0.3)
-	check(cl.litter.size() == 0, "T3: no loose stock in reach -> E picks up the trash")
+	check(cl.litter.size() == 0 and cl.hand_count(1) == 1, "T3: no loose stock in reach -> E picks up the trash")
+	p.teleport_to(can_at)
+	await wait(0.3)
+	await tap("host_interact")
+	await wait(0.3)
 	# 3. A burst: 12 pieces swept together at close coalesce, no clutter.
 	var before_pops := pops.size()
 	for i in 12:
@@ -754,7 +769,14 @@ func _run_trash() -> void:
 	steer(Vector2.ZERO)
 	var swept: int = cl.litter_collected_today - collected0
 	check(swept >= 8, "T4: the broom swept %d pieces (pan holds %d)" % [swept, cl.pan_capacity()])
-	check(pops.size() - before_pops == swept, "T4: one +$ per swept piece counted (%d)" % (pops.size() - before_pops))
+	check(pops.size() == before_pops, "T4: sweeping alone pays nothing yet (no +$ until the can)")
+	cl.set_can(0, 0) # (a teammate took the bag out: room for the whole pan)
+	p.teleport_to(can_at)
+	await wait(0.3)
+	var binned_before: int = cl.trash_binned_today
+	await tap("host_interact")
+	await wait(0.3)
+	check(cl.trash_binned_today - binned_before == swept and pops.size() - before_pops == 1, "T4: the pan into the can: +$%d, one coalesced popup" % (cl.trash_binned_today - binned_before))
 	var live_litter_pops: int = juice.popups.filter(func(x): return String(x["key"]).begins_with("litter")).size()
 	print("TRASH  sweep of %d pieces: %d live +$ popup(s) at once (coalesced), %d popups peak overall, cap %d, dropped by cap %d" % [swept, live_litter_pops, peak, juice.MAX_POPUPS, juice.dropped])
 	check(peak <= 3, "T4: a sweep coalesces into at most 3 popups on screen (peak %d)" % peak)
@@ -765,12 +787,12 @@ func _run_trash() -> void:
 	await wait(0.3)
 	var expect := int(round(maxf(0.0, float(main._gross_pay_today())) * cl.CLEAN_BONUS_MAX * (0.5 * cl.mop_fraction() + 0.5 * cl.litter_fraction())))
 	check(cl.clean_bonus_today == expect and expect > 0, "T5: cleanliness bonus is the unchanged formula on the gross ($%d == $%d, gross $%d, litter %d%%) — trash pay isn't in it" % [cl.clean_bonus_today, expect, main._gross_pay_today(), roundi(cl.litter_fraction() * 100)])
-	check(main._pay_today() == main._gross_pay_today() + cl.clean_bonus_today + cl.litter_collected_today - main.writeups_today * main.WRITEUP_PENALTY - main.break_room.dollars_today(), "T5: pay = gross + bonus + $1 x %d pieces" % cl.litter_collected_today)
-	check(main.report_cleanup_label.text.contains("trash picked up (%d)" % cl.litter_collected_today), "T5: the report shows the trash line: %s" % main.report_cleanup_label.text.replace("\n", " / "))
+	check(main._pay_today() == main._gross_pay_today() + cl.clean_bonus_today + cl.trash_binned_today - main.writeups_today * main.WRITEUP_PENALTY - main.break_room.dollars_today(), "T5: pay = gross + bonus + $1 x %d pieces binned" % cl.trash_binned_today)
+	check(main.report_cleanup_label.text.contains("trash binned (%d)" % cl.trash_binned_today), "T5: the report shows the trash line: %s" % main.report_cleanup_label.text.replace("\n", " / "))
 	# OCT 2026 PHASE 2: there's no week in the save any more — the day's pay
 	# (trash pay included) goes into the bank, and the bank is what's saved.
 	var snap: Dictionary = load("res://SaveGame.gd").snapshot(main)
-	check(main.money == main._pay_today() and snap["shop"]["money"] == main.money and cl.litter_pay_week == cl.litter_collected_today, "T6: the day's pay, $%d trash included, went into the bank (%s) and the bank is in the save" % [cl.litter_collected_today, main._format_money(main.money)])
+	check(main.money == main._pay_today() and snap["shop"]["money"] == main.money and cl.litter_pay_week == cl.trash_binned_today, "T6: the day's pay, $%d trash included, went into the bank (%s) and the bank is in the save" % [cl.litter_collected_today, main._format_money(main.money)])
 	var round_trip: Dictionary = load("res://SaveGame.gd").sanitize({"version": 2, "shop": {"completed_day": 3}})
 	check(round_trip["shop"]["money"] == 0, "T6: a save without a bank loads as $0")
 	finish()
@@ -966,9 +988,94 @@ func _run_practice(net := false) -> void:
 	var fk_d: float = player().global_position.distance_to(main.delivery_forklift.global_position)
 	check(tut.current_id() != "forklift", "PR7: watched the delivery forklift -> step done (%.0fs, %.0fpx from it)" % [tw, fk_d])
 	await _shot_tutorial("07_forklift")
+	# OCT 2026 PHASE 3D — the upkeep steps.
+	var cl: Node = main.cleanup
+	# 7b. Trash into a can.
+	check(tut.current_id() == "trash", "PR7b: next step: trash (%s)" % tut.current_id())
+	await wait(1.2) # the host's props: litter in the hub
+	await _shot_tutorial("07b_trash")
+	var tt := 0.0
+	while tut.current_id() == "trash" and tt < 60.0:
+		var goal: Vector2 = tut._marker_pos
+		if goal == Vector2.INF:
+			await wait(0.5)
+			tt += 0.5
+			continue
+		await _walk_to(goal, 20.0, 30.0)
+		if player().global_position.distance_to(goal) > 40.0:
+			player().teleport_to(goal + Vector2(0, 26))
+			await wait(0.3)
+		await tap("host_interact")
+		await wait(0.4)
+		tt += 2.0
+	check(tut.current_id() != "trash" and cl.stat(1, "binned") > 0, "PR7b: picked up trash and binned it -> step done (binned %d)" % cl.stat(1, "binned"))
+	# Anything still in hand goes in too.
+	if cl.hand_count(1) > 0:
+		player().teleport_to(cl.BINS[0]["pos"] + Vector2(0, 30))
+		await wait(0.3)
+		await tap("host_interact")
+		await wait(0.3)
+	# 7c. The mop.
+	check(tut.current_id() == "mop" and tut._marker_pos == cl.TOOL_SPOTS[2], "PR7c: next: the mop — the marker points at the hub rack's mop")
+	await _shot_tutorial("07c_mop")
+	await _walk_to(cl.TOOL_SPOTS[2] + Vector2(0, 26), 20.0, 14.0)
+	await tap("host_interact")
+	await wait(0.3)
+	check(cl.tool_of(1) >= 0 and cl.tools[cl.tool_of(1)]["kind"] == "mop", "PR7c: mop in hand")
+	await wait(0.2)
+	var pud: Vector2 = tut._marker_pos
+	check(not cl.puddles.is_empty() and pud == cl.puddles[0]["pos"], "PR7c: with the mop, the marker moves to the puddle")
+	await _walk_to(pud - Vector2(cl.MOP_HEAD_OFFSET, 0), 20.0, 10.0)
+	player().facing_angle = 0.0
+	press("host_place")
+	await wait_until(func(): return tut.current_id() != "mop", 6.0)
+	press("host_place", 0.0)
+	check(tut.current_id() != "mop", "PR7c: held C on the puddle -> mopped -> step done")
+	await tap("host_interact") # mop down
+	await wait(0.3)
+	# 7d. A can's bag to the dumpster.
+	check(tut.current_id() == "dumpster", "PR7d: next: empty a can (%s)" % tut.current_id())
+	await wait(1.2)
+	var can_goal: Vector2 = tut._marker_pos
+	await _walk_to(can_goal + Vector2(0, 30), 20.0, 20.0)
+	if player().global_position.distance_to(can_goal) > 60.0:
+		player().teleport_to(can_goal + Vector2(0, 30))
+		await wait(0.3)
+	await tap("host_interact")
+	await wait(0.3)
+	check(cl.bag_of(1) >= 0 and tut._marker_pos == cl.DUMPSTER_POS, "PR7d: lifted the can's bag out; the marker points at the dumpster")
+	await _shot_tutorial("07d_bag")
+	await _walk_to(cell_center(Vector2i(1, 2)), 20.0, 60.0)
+	await _walk_to(cl.DUMPSTER_POS + Vector2(0, -75), 25.0, 20.0)
+	if not cl.near_dumpster(player().global_position):
+		player().teleport_to(cl.DUMPSTER_POS + Vector2(0, -75))
+		await wait(0.3)
+	await tap("host_interact")
+	check(await _await_step("dumpster", 3.0), "PR7d: tipped it into the dumpster -> step done")
+	# 7e. A troublemaker, out the door.
+	check(tut.current_id() == "bounce", "PR7e: next: a troublemaker (%s)" % tut.current_id())
+	var red: Node2D = null
+	await wait_until(func(): return get_nodes_in_group("customer").any(func(c): return c.role == "disruptive"), 15.0)
+	for c in get_nodes_in_group("customer"):
+		if c.role == "disruptive":
+			red = c
+	check(red != null, "PR7e: one walked in for practice")
+	await _shot_tutorial("07e_troublemaker")
+	var tb := 0.0
+	while red != null and is_instance_valid(red) and red.escorted_by != 1 and tb < 40.0:
+		await _walk_to(red.global_position, 3.0, 40.0)
+		await tap("host_interact")
+		await wait(0.3)
+		tb += 3.5
+	check(red != null and is_instance_valid(red) and red.escorted_by == 1, "PR7e: grabbed them (E)")
+	await _walk_to(Vector2(1440, 1050), 25.0, 20.0)
+	steer(Vector2.DOWN)
+	await wait_until(func(): return tut.current_id() != "bounce", 6.0)
+	steer(Vector2.ZERO)
+	check(tut.current_id() != "bounce" and main.bounced_today == 0, "PR7e: walked them out the door -> step done (no pay in practice)")
 	# 8. Open: flip the sign.
 	check(tut.current_id() == "open" and tut._marker_pos == main.STORE_SIGN_POS, "PR8: last step points at the Store sign")
-	await _card_clear("the delivery forklift", main.delivery_forklift.global_position)
+	check(tut._body.text.contains("STORE RATING"), "PR8: and its card explains the store rating")
 	await _shot_tutorial("08_open")
 	if net:
 		_net_write("host_at_sign.json", {"ok": true})
@@ -984,6 +1091,7 @@ func _run_practice(net := false) -> void:
 	check(main.hazard_levels()["manager"] == 0 and not main.manager.active, "PR9: manager off again (Day 1)")
 	check(get_nodes_in_group("carryable").filter(func(o): return o.get_node("Carryable").shelved).is_empty(), "PR9: practice stock cleared off the shelves")
 	check(not tut._card.visible, "PR9: card gone")
+	check(main.cleanup.cans == [0, 0, 0, 0, 0] and get_nodes_in_group("customer").is_empty(), "PR9: practice props gone (cans back as the save had them, no practice troublemaker)")
 	print("PRACTICE  played through in %.0fs (wall), steps %s" % [_wall() - t0, str(tut.completed)])
 	finish()
 
