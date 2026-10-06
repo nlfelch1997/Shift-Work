@@ -1062,7 +1062,14 @@ func _run_practice(net := false) -> void:
 	check(red != null, "PR7e: one walked in for practice")
 	await _shot_tutorial("07e_troublemaker")
 	var tb := 0.0
-	while red != null and is_instance_valid(red) and red.escorted_by != 1 and tb < 40.0:
+	while tb < 40.0:
+		# (A practice troublemaker leaves after its 27-45s and another walks
+		# in: always go for the one that's here now.)
+		for c in get_nodes_in_group("customer"):
+			if c.role == "disruptive" and not c.is_queued_for_deletion():
+				red = c
+		if red == null or not is_instance_valid(red) or red.escorted_by == 1:
+			break
 		await _walk_to(red.global_position, 3.0, 40.0)
 		if tb > 14.0:
 			# The walking bot keeps losing a customer who keeps moving: stand
@@ -1072,7 +1079,9 @@ func _run_practice(net := false) -> void:
 		await tap("host_interact")
 		await wait(0.3)
 		tb += 3.5
-	check(red != null and is_instance_valid(red) and red.escorted_by == 1, "PR7e: grabbed them (E)")
+	# (Grabbed in the doorway they're held past the door line at once: bounced
+	# on the spot, which counts.)
+	check((red != null and is_instance_valid(red) and red.escorted_by == 1) or cl.stat(1, "bounced") > 0, "PR7e: grabbed them (E)")
 	await _walk_to(Vector2(1440, 1050), 25.0, 20.0)
 	steer(Vector2.DOWN)
 	await wait_until(func(): return tut.current_id() != "bounce", 6.0)

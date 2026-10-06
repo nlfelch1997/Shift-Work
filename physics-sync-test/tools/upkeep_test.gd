@@ -119,7 +119,10 @@ func customer_push(c: Node2D, obj: RigidBody2D, dir: Vector2, seconds: float) ->
 
 ## --- customer ride ---------------------------------------------------------------
 
-const CUSTOMER_CAP_MULT := 1.3 # Customer.SPEED is 90; a frame of jitter on top, never a ride
+## Customer.SPEED is 90. The ride bug: a SUSTAINED 1.4-2x mean and ~1000px/s
+## peaks. A single frame's depenetration on first contact can read ~3x (seen
+## once under load, mean still 89), so the peak cap only catches the ride.
+const CUSTOMER_PEAK_MULT := 4.0
 
 func _run_customer_ride() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
@@ -153,7 +156,7 @@ func _run_customer_ride() -> void:
 		var c := await pinned_customer("disruptive", start)
 		await physics_frame
 		var r: Array = await customer_push(c, obj, dir, 1.5)
-		check(r[0] <= speed * CUSTOMER_CAP_MULT and r[1] <= speed * 1.05, "C%d customer pushing a %s %s: never rides it (peak %.0fpx/s, mean %.0f, walk %.0f; object moved %.0fpx)" % [i, cs[0], cs[1], r[0], r[1], speed, r[2]])
+		check(r[0] <= speed * CUSTOMER_PEAK_MULT and r[1] <= speed * 1.05, "C%d customer pushing a %s %s: never rides it (peak %.0fpx/s, mean %.0f, walk %.0f; object moved %.0fpx)" % [i, cs[0], cs[1], r[0], r[1], speed, r[2]])
 		c.force_leave()
 		if cs[0] == "product":
 			move_body(obj, Vector2(1400 + i * 30, 1300))

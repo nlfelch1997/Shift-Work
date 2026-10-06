@@ -2505,7 +2505,7 @@ func _update_store_sign(delta: float) -> void:
 	_sign_board.color = Color(0.75, 0.12, 0.1) if closed else Color(0.1, 0.55, 0.2)
 	_sign_text.text = "CLOSED" if closed else "OPEN"
 	var me := multiplayer.get_unique_id() if Net.is_active() else 0
-	_sign_hint.visible = closed and not cleanup_active and players.has(me) and near_store_sign(players[me].global_position)
+	_sign_hint.visible = closed and not cleanup_active and players.has(me) and is_instance_valid(players[me]) and near_store_sign(players[me].global_position)
 	_open_banner_t = maxf(0.0, _open_banner_t - delta)
 	_update_time_clock(me)
 	_update_gate_hint(me)
@@ -2690,7 +2690,7 @@ func _update_gate_hint(me: int) -> void:
 	_gate_hint.add_theme_color_override("font_color", Color(1, 0.9, 0.3) if h[2] else Color(0.85, 0.85, 0.85))
 
 func _update_time_clock(me: int) -> void:
-	_clock_hint.visible = cleanup_active and not _day_report_active and players.has(me) and near_time_clock(players[me].global_position)
+	_clock_hint.visible = cleanup_active and not _day_report_active and players.has(me) and is_instance_valid(players[me]) and near_time_clock(players[me].global_position)
 
 ## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
 ## nothing previously reset shelf-fill state or the physical product pool

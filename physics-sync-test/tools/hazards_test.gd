@@ -74,6 +74,11 @@ func _initialize() -> void:
 	# Day N -> N+1 rollover hands the crew old Day N+1's sections and earnings
 	# (Main.gd's test_follow_old_calendar), so each day keeps its old meaning.
 	main.test_follow_old_calendar = true
+	# OCT 2026 PHASE 3D: these tests were written against the pre-rating
+	# economy — 3 stars is exactly it — so the store rating stays put here
+	# (a clean test floor would otherwise drift it up and grow the crowd).
+	# tools/upkeep_test.gd tests the rating itself.
+	main.rating_frozen = true
 	var mode := "interact"
 	for a in args:
 		if a.begins_with("--test="):
