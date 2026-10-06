@@ -43,6 +43,8 @@ func _initialize() -> void:
 	main.opening_stock_fraction = 1.0
 	if not _mode in ["earnings", "net-upkeep"]:
 		main.cleanup_ceiling_override = 0.0
+	if _mode == "income-crew":
+		main.opening_stock_fraction = 0.0
 	var client := "--client" in args
 	if OS.get_environment("SW_NET_DIR") == "":
 		NET_DIR = NET_DIR_DEFAULT
@@ -62,6 +64,7 @@ func _initialize() -> void:
 		"bounce": _run_bounce.call_deferred()
 		"save": _run_save.call_deferred()
 		"shots": _run_shots.call_deferred()
+		"income-crew": _run_income_crew.call_deferred()
 		"net-upkeep": (_run_net_client if client else _run_net_host).call_deferred()
 		_:
 			print("FAIL  unknown --test=%s" % _mode)
@@ -1157,3 +1160,64 @@ func _press_at(t: float) -> void:
 	while _now_s() < t:
 		await process_frame
 	await press_e(0.3)
+
+## --- INCOME (crew) -----------------------------------------------------------------
+## What the store rating is worth when stocking ISN'T the bottleneck: a perfect
+## crew refills every open shelf every 2s from the moment the shift starts
+## (spawned straight onto the slots), and the store opens at once — so sales
+## are bound by the crowd and the price, the two things the rating moves.
+## --clean=instant: an invisible cleaner clears every piece of litter and
+## puddle and empties every can every 3s (a store kept spotless, its time cost
+## not counted); --clean=none: nobody ever cleans, not even at close.
+## Combine with --rating=X --rating-frozen to measure one level. One CREW line
+## per shift:
+##   godot --headless --path . --script res://tools/upkeep_test.gd -- --server --no-save --day=7 --prep-seconds=1 --test=income-crew --shifts=6 --clean=none [--rating=5 --rating-frozen]
+func _run_income_crew() -> void:
+	var shifts := 3
+	var clean := "none"
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shifts="):
+			shifts = int(a.substr(9))
+		if a.begins_with("--clean="):
+			clean = a.substr(8)
+	await wait_until(func(): return main.players.has(1), 20.0)
+	me = 1
+	var pays := []
+	for n in shifts:
+		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 60.0)
+		player().teleport_to(Vector2(480, 270))
+		main.forklift._pause_timer = 0.0
+		_stock_all()
+		await wait(0.5)
+		if not main.store_open:
+			main.open_store(1)
+		var r0: float = rt().rating
+		var sold0: int = main._sold_at_day_start
+		var samples := 0
+		var crowd := 0
+		var next_clean := 0.0
+		var t0 := Time.get_ticks_msec()
+		while main.shift_active and not main.cleanup_active:
+			_stock_all()
+			var t := (Time.get_ticks_msec() - t0) / 1000.0
+			if clean == "instant" and t >= next_clean:
+				next_clean = t + 3.0
+				cl().litter = []
+				cl().puddles = []
+				cl().set_cans([0, 0, 0, 0, 0])
+				for sp in main.ambience.spills.duplicate():
+					main.ambience.remove_spill(int(sp["id"]))
+			await wait(2.0)
+			samples += 1
+			crowd += get_nodes_in_group("customer").filter(func(c): return not c.is_queued_for_deletion()).size()
+		var mess_close: float = rt().mess_points()
+		await wait_until(func(): return main.is_day_report_active(), 60.0)
+		await wait(0.3)
+		var sold: int = main._total_sold() - sold0
+		var pay: int = main._pay_today()
+		pays.append(pay)
+		print("CREW day=%d clean=%s frozen=%d shift=%d | rating %.2f -> %.2f | crowd avg %.1f (cap %d) | sold %d, price-adjust %s, trash %s, bonus %s | mess at close %.0f, cans %s | pay %s" % [main.debug_day, clean, 1 if main.rating_frozen else 0, n + 1, r0, rt().rating, float(crowd) / maxi(1, samples), main.customer_cap(), sold, main._format_money(main.rating_sales_today), main._format_money(cl().litter_pay_today()), main._format_money(cl().clean_bonus_today), mess_close, str(cl().cans), main._format_money(pay)])
+		if n < shifts - 1:
+			main._on_continue_pressed()
+	print("CREW SUMMARY clean=%s frozen=%d: avg pay $%.0f over %d shifts %s" % [clean, 1 if main.rating_frozen else 0, float(pays.reduce(func(a, b): return a + b, 0)) / maxi(1, pays.size()), pays.size(), str(pays)])
+	finish()
