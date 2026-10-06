@@ -713,6 +713,9 @@ func request_shove(from_position: Vector2) -> void:
 ## Host-only (Main.gd's grab, already validated).
 func start_escort(peer: int) -> void:
 	escorted_by = peer
+	# Hauled past a shelf they'd otherwise snag on its stock (a disruptive
+	# customer's mask has the shelved-stock layer — knocking it is their job).
+	collision_mask &= ~CarryableScript.LAYER_SHELF_STOCK
 	_escort_t = 0.0
 	_tossed_by = 0
 	_stun_timer = 0.0
@@ -725,6 +728,8 @@ func end_escort(toss: bool) -> void:
 	if peer == 0:
 		return
 	escorted_by = 0
+	if role == "disruptive":
+		collision_mask |= CarryableScript.LAYER_SHELF_STOCK
 	var p = get_tree().current_scene.players.get(peer)
 	var dir := Vector2.RIGHT.rotated(p.facing_angle) if p != null and is_instance_valid(p) else Vector2.DOWN
 	_knockback_velocity = dir * (TOSS_SPEED if toss else DEFEND_KNOCKBACK_SPEED * 0.4)
@@ -751,6 +756,7 @@ func _escort_physics(delta: float) -> void:
 	if velocity.length() > 900.0:
 		velocity = velocity.normalized() * 900.0
 	move_and_slide()
+	_push_rigid_bodies(delta) # loose stock gets shoved aside, as a walking player does
 	facing_angle = p.facing_angle
 	$Polygon2D.rotation = facing_angle
 	target_position = position
