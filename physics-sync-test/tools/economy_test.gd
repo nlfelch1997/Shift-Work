@@ -52,6 +52,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	careless = true
 	main.cleanup_ceiling_override = 5.0 if _mode == "soak" else 0.0
 	var client := "--client" in args
@@ -214,7 +217,7 @@ func _run_economy() -> void:
 	check(main.report_shop_label.text.contains("You own the whole store.") and not main.report_shop_label.text.contains("Coming up"), "E10: the report has nothing left to forecast ('%s')" % main.report_shop_label.text.replace("\n", " / "))
 	check(main.continue_button.text == "Continue", "E10: no 'Finish the Week' — the game goes on")
 	await next_day()
-	check(main.current_day > main.LEGACY_WEEK_DAYS and main.shift_active, "E10: Day %d — past the old Day 7, still going" % main.current_day)
+	check(main.current_day > 7 and main.shift_active, "E10: Day %d — past the old Day 7, still going" % main.current_day)
 	# --- E11 a bad day can cost money; lifetime earnings never go down
 	var m0: int = main.money
 	var l0: int = main.lifetime_earned

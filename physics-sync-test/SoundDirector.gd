@@ -57,8 +57,6 @@ var _was_active := false
 var _shift_active := false
 var _store_open := false
 var _report_shown := false
-var _screen := 0
-var _wallet := 0
 var _orders_called := 0
 var _spill_ids := {}
 var _lights_id := 0
@@ -122,9 +120,8 @@ func _physics_process(delta: float) -> void:
 
 ## --- Music ----------------------------------------------------------------------
 
-## Calm loop for the menu, prep, cleanup and the report/hub; the upbeat one
-## while the store's open (a touch faster on the finale day / the hardest
-## endless postings).
+## Calm loop for the menu, prep, cleanup and the report; the upbeat one
+## while the store's open (a touch faster at the top complication tier).
 func _update_music() -> void:
 	if not Net.is_active():
 		Sfx.set_music("prep")
@@ -151,15 +148,6 @@ func _watch_report(quiet: bool) -> void:
 		Sfx.play("clock_out")
 		get_tree().create_timer(0.55).timeout.connect(func(): Sfx.play("paycheck"))
 	_report_shown = shown
-	var screen: int = main.endless.screen
-	if screen != _screen and screen == main.endless.SCREEN_WEEK_COMPLETE and not quiet:
-		Sfx.play("final_shift")
-		get_tree().create_timer(0.9).timeout.connect(func(): Sfx.play("paycheck"))
-	_screen = screen
-	var wallet: int = main.endless.wallet
-	if wallet < _wallet and screen == main.endless.SCREEN_HUB and not quiet:
-		Sfx.play("ui_buy")
-	_wallet = wallet
 
 ## --- Priority orders ------------------------------------------------------------
 

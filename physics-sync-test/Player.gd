@@ -312,19 +312,19 @@ func _physics_process(delta: float) -> void:
 ## (movement is client-authoritative), against the replicated spill list.
 func _apply_move_input(dir: Vector2, delta: float) -> void:
 	var ambience: Node = get_tree().current_scene.ambience
-	var endless: Node = get_tree().current_scene.endless
+	var gear: Node = get_tree().current_scene.shop
 	var on_spill: bool = ambience.slippery_at(global_position)
 	if on_spill:
 		_slip_timer = ambience.SPILL_SLIDE_OUT
 	if _slip_timer > 0.0:
 		if not on_spill:
 			_slip_timer -= delta
-		var top: float = speed() * (endless.spill_speed_factor(ambience.SPILL_SPEED_FACTOR) if on_spill else 1.0)
-		velocity = velocity.move_toward(dir * top, ambience.SPILL_TRACTION * endless.spill_traction_mult() * delta)
+		var top: float = speed() * (gear.spill_speed_factor(ambience.SPILL_SPEED_FACTOR) if on_spill else 1.0)
+		velocity = velocity.move_toward(dir * top, ambience.SPILL_TRACTION * gear.spill_traction_mult() * delta)
 	else:
 		velocity = dir * speed()
 
-## WEEK 21: SPEED x the Break Room's Comfy Sneakers (Endless.gd, replicated to
+## WEEK 21: SPEED x the Break Room's Comfy Sneakers (Shop.gd since PHASE 4, replicated to
 ## every peer; movement runs on the owner, which reads its own copy).
 ## WEEK 23: + the coffee machine's cup (BreakRoom.gd), ADDED to the sneakers'
 ## multiplier — 1 + 0.08 x level + 0.20 with a cup — not multiplied with it.
@@ -335,7 +335,7 @@ func speed() -> float:
 	# slows you a little (Cleanup.gd's BAG_SPEED_MULT, Main.gd's
 	# ESCORT_SPEED_MULT) — multiplied on top.
 	var load_mult: float = main.cleanup.speed_mult(me) * (main.ESCORT_SPEED_MULT if escorting() else 1.0)
-	return SPEED * (main.endless.speed_mult() + main.break_room.speed_bonus(me)) * load_mult
+	return SPEED * (main.shop.speed_mult() + main.break_room.speed_bonus(me)) * load_mult
 
 ## True while this player's movement is on low traction (on a spill or just
 ## off one) — read by the test harness.
@@ -345,8 +345,8 @@ func is_slipping() -> bool:
 ## Runs in _process (tied to actual render rate) rather than
 ## _physics_process (fixed 60Hz) — see the matching comment in Carryable.gd.
 func _process(delta: float) -> void:
-	# WEEK 21 — the Employee of the Month star (cosmetic, Endless.gd), every peer.
-	_badge.visible = get_tree().current_scene.endless.has_badge()
+	# WEEK 21 — the Employee of the Month star (cosmetic, Shop.gd), every peer.
+	_badge.visible = get_tree().current_scene.shop.has_badge()
 	_coffee_cup.visible = get_tree().current_scene.break_room.has_coffee(get_multiplayer_authority())
 	if not Net.is_active() or is_multiplayer_authority():
 		return
@@ -654,7 +654,7 @@ func _try_interact() -> void:
 			_interact_with(more, my_id)
 			return
 		var count := carried_count(my_id)
-		if count > 1 and count >= get_tree().current_scene.endless.carry_capacity():
+		if count > 1 and count >= get_tree().current_scene.shop.carry_capacity():
 			_set_down_armful(my_id)
 			return
 		_interact_with(carried, my_id)
@@ -702,8 +702,13 @@ func _try_interact() -> void:
 		return
 	# OCT 2026 PHASE 3: empty-handed at the staff board -> this player's staff
 	# panel opens (or closes); its buttons ask the host (Staff.gd).
-	if main.shift_active and main.staff.near_board(global_position) and not main.is_endless() and not main.tutorial.active:
+	if main.shift_active and main.staff.near_board(global_position) and not main.tutorial.active:
 		main.staff.toggle_panel()
+		return
+	# OCT 2026 PHASE 4: empty-handed at the gear lockers -> this player's
+	# Break Room Shop panel (Shop.gd); its buttons ask the host.
+	if main.shift_active and main.shop.near_lockers(global_position) and not main.tutorial.active:
+		main.shop.toggle_panel()
 		return
 	# OCT 2026 PHASE 2: empty-handed at a for-sale section's gate -> buy it
 	# (the host decides: prep only, next in line, enough in the bank). When it
@@ -879,7 +884,7 @@ func forklift_hit(from_position: Vector2) -> void:
 		dir = Vector2.RIGHT.rotated(randf_range(0.0, TAU))
 	dir = dir.normalized()
 	_knockback_velocity = dir * FORKLIFT_KNOCKBACK_SPEED
-	_stun_timer = FORKLIFT_STUN_DURATION * get_tree().current_scene.endless.forklift_stun_mult() # WEEK 21: Steel-Toe Boots
+	_stun_timer = FORKLIFT_STUN_DURATION * get_tree().current_scene.shop.forklift_stun_mult() # WEEK 21: Steel-Toe Boots
 	var my_id := multiplayer.get_unique_id()
 	# WEEK 21: the whole stack goes flying, not just the top of it.
 	var fumbled := 0
@@ -925,7 +930,7 @@ func carried_count(my_id: int) -> int:
 func _stackable_in_reach(carried: Node2D, my_id: int) -> Node2D:
 	if carried.is_in_group("delivery_box"):
 		return null
-	if carried_count(my_id) >= get_tree().current_scene.endless.carry_capacity():
+	if carried_count(my_id) >= get_tree().current_scene.shop.carry_capacity():
 		return null
 	var best: Node2D = null
 	var best_dist := CarryableScript.PICKUP_RANGE

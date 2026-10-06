@@ -11,11 +11,11 @@ extends RefCounted
 ##   is up — quitting mid-day replays that day from its start), the crew's
 ##   bank, lifetime earnings, sections owned, the complication stage, and the
 ##   lifetime sales count.
-## - endless (only reachable through the debug --endless route until Phase 4):
-##   the Bucks wallet, every upgrade level, the run's totals, the shift
-##   counter, the old week's results and whether it was unlocked.
-## NOT saved: anything inside a shift (stock, customers, hazards, the clock),
-## the shift board's postings and the coffee machine's per-shift cups.
+## - (VERSION 5, PHASE 4) "gear": the Break Room Shop's upgrade levels
+##   (Shop.gd), and "events": which random events this crew has met (the
+##   first one ever gets the long explainer) and how many it's completed.
+## NOT saved: anything inside a shift (stock, customers, hazards, the clock,
+## an event in progress) and the coffee machine's per-shift cups.
 ##
 ## VERSION 1 SAVES (the 7-day story) are LOAD_LEGACY: story-day progress has no
 ## honest translation into "owns N sections with $X", so they are NOT migrated.
@@ -42,7 +42,15 @@ extends RefCounted
 ## each trash can is (cans aren't emptied overnight). A version 2/3 save loads
 ## with the rating at Main.RATING_START (3 stars: the economy exactly as it
 ## was) and every can empty.
-const VERSION := 4
+## OCT 2026 PHASE 4: version 5 retires Week 21's Endless Mode. The "endless"
+## block (Bucks wallet, upgrades, shift board run stats — only ever reachable
+## through the debug --endless route since Phase 2) is gone; its UPGRADES
+## carry over into "gear" (the same seven upgrades, now bought with the bank
+## at the Break Room Shop — a crew keeps what it bought), and the Bucks
+## wallet, run stats and week summary are dropped: the Bucks currency is
+## retired, and there's no honest exchange rate for a debug-only wallet. A
+## v2-v4 save loads with that gear, no events seen yet.
+const VERSION := 5
 const LEGACY_VERSION := 1
 const RATING_DEFAULT := 3.0 # Main.RATING_START (not preloaded: Main preloads this file) # the 7-day story's saves
 const DEFAULT_PATH := "user://shiftwork_save.json"
@@ -55,7 +63,6 @@ const LOAD_LEGACY := 3 # a pre-shopkeeper save: kept aside, a fresh start
 
 ## The save as plain data, from the host's live state.
 static func snapshot(main: Node) -> Dictionary:
-	var en: Node = main.endless
 	return {
 		"version": VERSION,
 		"saved_at": Time.get_datetime_string_from_system(),
@@ -78,13 +85,11 @@ static func snapshot(main: Node) -> Dictionary:
 			# back in it — the save never holds a shift in flight.
 			"cans": main.cleanup.cans_with_bags_returned(),
 		},
-		"endless": {
-			"unlocked": main.story_complete,
-			"wallet": en.wallet,
-			"upgrades": en.upgrades.duplicate(),
-			"shift_number": en.shift_number,
-			"run_stats": en.run_stats.duplicate(true),
-			"week_summary": en.week_summary.duplicate(true),
+		# OCT 2026 PHASE 4.
+		"gear": main.shop.upgrades.duplicate(),
+		"events": {
+			"seen": main.events.seen.keys(),
+			"completed": main.events.completed_total,
 		},
 	}
 
@@ -131,20 +136,18 @@ static func legacy_backup_path(path: String) -> String:
 ## Every field cast and clamped; anything missing gets its fresh-game value.
 static func sanitize(raw: Dictionary) -> Dictionary:
 	var shop: Dictionary = _dict(raw.get("shop"))
-	var en: Dictionary = _dict(raw.get("endless"))
 	var sections := int(clampf(_num(shop.get("sections_owned"), 1), 1, 4))
-	var upgrades := {}
-	var raw_up: Dictionary = _dict(en.get("upgrades"))
-	for u in preload("res://Endless.gd").UPGRADES:
-		var lvl := int(clampf(_num(raw_up.get(u["key"]), 0), 0, u["costs"].size()))
-		if lvl > 0:
-			upgrades[u["key"]] = lvl
-	var rs: Dictionary = _dict(en.get("run_stats"))
-	var medals := [0, 0, 0, 0]
-	var raw_medals = rs.get("medals")
-	if raw_medals is Array:
-		for i in mini(4, raw_medals.size()):
-			medals[i] = _count(raw_medals[i])
+	# OCT 2026 PHASE 4: the gear — a v5 save's "gear", or (v2-v4) the old
+	# endless block's upgrades, carried over. Known keys only, clamped.
+	var raw_gear: Dictionary = _dict(raw.get("gear")) if raw.has("gear") else _dict(_dict(raw.get("endless")).get("upgrades"))
+	var gear: Dictionary = preload("res://Shop.gd").clean_upgrades(raw_gear)
+	var ev: Dictionary = _dict(raw.get("events"))
+	var seen := {}
+	var raw_seen = ev.get("seen")
+	if raw_seen is Array:
+		for k in raw_seen:
+			if k is String and preload("res://Events.gd").EVENTS.has(k):
+				seen[k] = true
 	# OCT 2026 PHASE 3: only hireable sections the shop owns, levels clamped.
 	var staff := {}
 	var raw_staff: Dictionary = _dict(raw.get("staff"))
@@ -166,11 +169,6 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 	for i in cleanup_script.BINS.size():
 		var v = raw_cans[i] if raw_cans is Array and i < raw_cans.size() else 0
 		cans.append(int(clampf(_num(v, 0), 0, cleanup_script.CAN_CAPACITY)))
-	var ws: Dictionary = _dict(en.get("week_summary"))
-	var week_summary := {}
-	for k in ["sold", "pay", "writeups", "priority_sales", "clean_bonus"]:
-		if ws.has(k):
-			week_summary[k] = int(clampf(_num(ws[k], 0), -1e9, 1e9)) # pay can be negative
 	return {
 		"shop": {
 			"completed_day": int(clampf(_num(shop.get("completed_day"), 0), 0, MAX_DAY)),
@@ -185,19 +183,8 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 			"rating": clampf(_num(up.get("rating"), RATING_DEFAULT), 1.0, 5.0),
 			"cans": cans,
 		},
-		"endless": {
-			"unlocked": bool(en.get("unlocked")) if en.get("unlocked") is bool else false,
-			"wallet": _count(en.get("wallet")),
-			"upgrades": upgrades,
-			"shift_number": _count(en.get("shift_number")),
-			"run_stats": {
-				"shifts": _count(rs.get("shifts")),
-				"sold": _count(rs.get("sold")),
-				"bucks": _count(rs.get("bucks")),
-				"medals": medals,
-			},
-			"week_summary": week_summary,
-		},
+		"gear": gear,
+		"events": {"seen": seen, "completed": _count(ev.get("completed"))},
 	}
 
 static func _dict(v) -> Dictionary:

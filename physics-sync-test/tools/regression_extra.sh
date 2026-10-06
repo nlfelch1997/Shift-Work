@@ -46,3 +46,13 @@ TESTS+=(
 "save-upkeep-3|upkeep|0|0|0|--server --save-file=user://upkeep_test/save.json --test=save --phase=3|"
 "save-upkeep-4|upkeep|0|0|0|--server --save-file=user://upkeep_test/save.json --test=save --phase=4|"
 )
+# OCT 2026 PHASE 4 (random events + the Break Room Shop; Endless Mode
+# retired) — tools/events_test.gd. Real wall-clock time throughout. The
+# FEASIBLE bot sim is a measurement, run on demand (see its header).
+TESTS+=(
+"ev-gating|events|0|0|0|--server --day=1 --no-save --test=gating|"
+"ev-each|events|0|0|0|--server --day=7 --no-save --test=each|"
+"ev-interactions|events|0|0|0|--server --day=7 --no-save --test=interactions|"
+"ev-shop|events|0|0|0|--server --day=1 --no-save --test=shop|"
+"ev-net|events|0|2|0|--server --players=3 --day=7 --no-save --test=net-events|"
+)

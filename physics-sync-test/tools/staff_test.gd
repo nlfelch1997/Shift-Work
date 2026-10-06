@@ -13,6 +13,9 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	careless = true
 	var client := "--client" in args
 	if _mode == "soak":
@@ -103,6 +106,11 @@ func _staffed_color(obj: Node) -> bool:
 	var visual := obj.get_node_or_null("Polygon2D")
 	if visual == null:
 		return false
+	# PHASE 4 (--event-brain): a section a running event asks for is fair game,
+	# staffed or not — a player helps out where the order/rush is.
+	for sec in _event_focus():
+		if visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
+			return false
 	for sec in _hire_spec:
 		if visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
 			return true
@@ -185,6 +193,9 @@ func _upkeep_due() -> bool:
 	if not main.store_open or main.cleanup_active:
 		return false
 	var cl: Node = main.cleanup
+	# PHASE 4: an inspection wants every last piece (the --event-brain bot).
+	if event_aware and main.events.active() and main.events.key == "inspection":
+		return cl.litter.size() > 0 or not cl.puddles.is_empty() or cl.full_cans() > 0
 	return cl.litter.size() >= UPKEEP_LITTER or not cl.puddles.is_empty() or cl.full_cans() > 0 or (main.ambience.spills_enabled() and main.ambience.spills.any(func(sp): return sp["phase"] == 1))
 
 func _upkeep_pass() -> bool:
@@ -194,6 +205,12 @@ func _upkeep_pass() -> bool:
 	var t0 := _wall()
 	_upkeep_passes += 1
 	steer(Vector2.ZERO)
+	# PHASE 4: a Leaky Roof running -> the ringed leaks, nearest first, and
+	# nothing else (a player follows the markers; the rest can wait).
+	if event_aware and main.events.active() and main.events.key == "leak":
+		await _mop_leaks()
+		_upkeep_s += _wall() - t0
+		return true
 	# Full cans first: their bags out back.
 	var guard := 0
 	while cl.full_cans() > 0 and guard < 3 and main.store_open and not main.cleanup_active:
@@ -247,10 +264,45 @@ func _upkeep_pass() -> bool:
 	_upkeep_s += _wall() - t0
 	return true
 
+## OCT 2026 PHASE 4 — with --event-brain the bot also answers the cleaning
+## events: during a Surprise Inspection or a Leaky Roof it runs the cleaning
+## pass (whatever --upkeep says); otherwise only --upkeep cleans mid-shift.
+func _event_upkeep() -> bool:
+	if main.events.active() and main.events.key in ["inspection", "leak"]:
+		return await _upkeep_pass()
+	if "--upkeep" in OS.get_cmdline_user_args():
+		return await _upkeep_pass()
+	return false
+
+func _mop_leaks() -> void:
+	var cl: Node = main.cleanup
+	if not await get_tool("mop"):
+		return
+	var guard := 0
+	while main.events.active() and main.events.key == "leak" and guard < 12:
+		guard += 1
+		var ids: Array = main.events.data.get("leaks", [])
+		var live: Array = cl.puddles.filter(func(pd): return int(pd["id"]) in ids)
+		if live.is_empty():
+			if int(main.events.data.get("to_drop", 0)) <= 0:
+				break
+			await wait(0.5) # the next one's coming down
+			continue
+		live.sort_custom(func(a, b): return route_len(player().global_position, a["pos"]) < route_len(player().global_position, b["pos"]))
+		var m := {"pos": live[0]["pos"], "r": float(live[0]["r"])}
+		if await face_target(m["pos"], mop_stand(m)):
+			press(act + "place")
+			await wait_until(func(): return not mop_messes_view().any(func(q): return q["pos"].distance_to(m["pos"]) < 12.0), 5.0)
+			press(act + "place", 0.0)
+	if cl.tool_of(me) >= 0:
+		await tap(act + "interact")
+
 func _run_income() -> void:
 	_hire_spec = _parse_hire()
 	if "--upkeep" in OS.get_cmdline_user_args():
 		upkeep_hook = _upkeep_pass
+	if event_aware:
+		upkeep_hook = _event_upkeep
 	_open_after = float(_arg_int("--open-after=", -1))
 	var afk := "--afk" in OS.get_cmdline_user_args()
 	var shifts := _arg_int("--shifts=", 1)
@@ -289,6 +341,7 @@ func _run_income() -> void:
 		var pay: int = main._pay_today()
 		var cl: Node = main.cleanup
 		print("UPKEEP day=%d upkeep=%d frozen=%d shift=%d | rating %.2f -> %.2f | sold %d, customer cap %d, price $%d | rating on prices %s, trash %s (%d binned), bounced %d | cleaning passes %d, %.0fs | litter dropped %d, puddles %d, cans %s, bags dumped %d | pay %s" % [main.debug_day, 1 if upkeep_hook.is_valid() else 0, 1 if main.rating_frozen else 0, n + 1, rating0, main.store_rating.rating, sold, main.customer_cap(), main.sale_price(), main._format_money(main.rating_sales_today), main._format_money(cl.litter_pay_today()), cl.trash_binned_today, main.bounced_today, _upkeep_passes, _upkeep_s, cl.litter_dropped_today, cl.puddles_dropped_today, str(cl.cans), cl.bags_dumped_today, main._format_money(pay)])
+		print("EVENTS day=%d shift=%d on=%d brain=%d | %s | bonus %s" % [main.debug_day, n + 1, 1 if main.events_on else 0, 1 if event_aware else 0, str(main.events.log_today), main._format_money(main.events.bonus_today)])
 		print("INCOME day=%d open_after=%d stage=%d sections=%d hire=%s afk=%d share=%d shift=%d | sold %d by %s | pay %s, wages %s, net %s | bank %s -> %s, lifetime +%d | opened at %.0fs by %s, prep ceiling %.0fs | boxes diverted %d (skipped %d), bot placed %d | %s | wall %.0fs" % [main.debug_day, int(_open_after), main.complication_stage, main.sections_owned, str(_hire_spec).replace(" ", ""), 1 if afk else 0, 1 if _share else 0, n + 1, sold, str(main.sold_by_section_today).replace(" ", ""), main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(pay - main.staff.wages_today), main._format_money(money0), main._format_money(main.money), main.lifetime_earned - life0, stats.get("opened_at", -1.0), stats.get("opened_by", "ceiling" if afk else "?"), stats["grace"], main.staff.boxes_diverted_today, main.staff.boxes_skipped_today, stats["placed"], "; ".join(helper_bits), _wall() - t0])
 		check(main.money == money0 + pay - main.staff.wages_today, "shift %d: bank moved by pay - wages exactly (%s -> %s)" % [n + 1, main._format_money(money0), main._format_money(main.money)])
 		check(main.lifetime_earned == life0 + maxi(0, pay), "shift %d: lifetime earned grew by the pay alone (wages don't touch it)" % (n + 1))
@@ -353,10 +406,6 @@ func _run_hire() -> void:
 	var why_practice: String = st().blocker("Produce", "speed")
 	main.tutorial.active = false
 	check(why_practice.begins_with("practice shift"), "H5: practice shift: '%s'" % why_practice)
-	main.endless_active = true
-	var why_endless: String = st().blocker("Produce", "speed")
-	main.endless_active = false
-	check(why_endless == "not in Endless Mode", "H5: endless: '%s'" % why_endless)
 	# --- H6 the two upgrades, and what they set
 	var m0: int = main.money
 	await press_button("Produce:speed")
@@ -915,6 +964,10 @@ func _counts() -> Dictionary:
 		c["bags"] = main.cleanup.bags.size()
 		c["rating"] = snappedf(main.store_rating.rating, 0.01)
 		c["cap"] = main.customer_cap()
+	# OCT 2026 PHASE 4: the shift's random events (when they're on).
+	if main.get("events") != null and main.events_on:
+		c["events"] = main.events.log_today.map(func(e): return "%s%s" % [e[0], "+" if e[1] else "-"])
+		c["event_bonus"] = main.events.bonus_today
 	return c
 
 func _run_staff_soak() -> void:

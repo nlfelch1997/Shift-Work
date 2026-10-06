@@ -35,14 +35,10 @@ extends Node2D
 ##   + coffee) vs 1.488x multiplicative; additive keeps each source's number
 ##   honest ("+20%" really is +20 points) and the top end tamer.
 ## - COST, charged when the shift is paid, not now — you don't know yet what
-##   the shift will pay:
-##     story days: COFFEE_COST_DOLLARS per cup off Pay Today (and the week's
-##       pay). Pay is the crew's, so every cup comes off the same number.
-##     endless shifts: COFFEE_COST_BUCKS per cup off the shift's Bucks,
-##       PER HEAD (cups x cost / crew, like sales/orders/write-ups in
-##       Endless.compute_payout()), after the star multiplier, never below 0.
-##       The shift's Pay ($) — the medal score — is untouched: coffee costs
-##       Bucks there, not medal progress.
+##   the shift will pay: COFFEE_COST_DOLLARS per cup off Pay Today. Pay is
+##   the crew's, so every cup comes off the same number. (OCT 2026 PHASE 4:
+##   Week 21's endless shifts charged Bucks instead; that mode and its
+##   currency are retired — see Shop.gd.)
 ## - MULTIPLAYER (design call, flagged): PER PLAYER, SHARED TAB. A cup boosts
 ##   only whoever drank it; its cost comes out of the crew's shared payout.
 ##   So one player's coffee is the whole crew's bill — the comedic version of
@@ -58,9 +54,8 @@ extends Node2D
 ##   no state, no effect on anything.
 
 ## Placeholder numbers — FLAGGED for a playtest. A solo day pays ~$150-370 at
-## $10 a sale; a cup is four sales. A solo endless shift pays ~25-80 Bucks.
+## $10 a sale; a cup is four sales.
 const COFFEE_COST_DOLLARS := 40
-const COFFEE_COST_BUCKS := 5
 const COFFEE_SPEED_BONUS := 0.2
 const COFFEE_TOAST := Color(1, 0.8, 0.45)
 
@@ -289,17 +284,12 @@ func has_coffee(peer_id: int) -> bool:
 func speed_bonus(peer_id: int) -> float:
 	return COFFEE_SPEED_BONUS if has_coffee(peer_id) else 0.0
 
-## Coffee's cut from a story day's Pay ($). 0 on an endless shift: there it
-## comes out of the Bucks (endless_bucks_cost()), and Pay stays the score.
+## Coffee's cut from today's Pay ($).
 func dollars_today() -> int:
-	return 0 if main.is_endless() else coffee_cups_today * COFFEE_COST_DOLLARS
+	return coffee_cups_today * COFFEE_COST_DOLLARS
 
 func dollars_week() -> int:
 	return coffee_cups_week * COFFEE_COST_DOLLARS
-
-## Per head, like the rest of an endless payout (see the header).
-static func bucks_cost(cups: int, crew: int) -> int:
-	return int(round(float(cups * COFFEE_COST_BUCKS) / maxi(1, crew)))
 
 ## Can a cup be poured right now? (The shift's running, the store isn't
 ## closing up, the report isn't up.) The host decides; peers use it for the
@@ -349,15 +339,15 @@ func buy_coffee(peer_id: int) -> bool:
 	coffee_cups_today += 1
 	coffee_cups_week += 1
 	cups_poured += 1
-	print("[Coffee] %s had a cup (%d today) — +%d%% speed this shift; %s at payday" % [main.player_display_name(peer_id), coffee_cups_today, roundi(COFFEE_SPEED_BONUS * 100.0), ("-%d Bucks per cup, per head" % COFFEE_COST_BUCKS) if main.is_endless() else ("-$%d" % COFFEE_COST_DOLLARS)])
+	print("[Coffee] %s had a cup (%d today) — +%d%% speed this shift; %s at payday" % [main.player_display_name(peer_id), coffee_cups_today, roundi(COFFEE_SPEED_BONUS * 100.0), ("-$%d" % COFFEE_COST_DOLLARS)])
 	_announce_coffee.rpc(peer_id)
 	return true
 
 ## Every peer: the toast (the state itself is already on CoffeeSync).
 @rpc("authority", "call_local", "reliable")
 func _announce_coffee(peer_id: int) -> void:
-	var cost := ("%d Bucks" % COFFEE_COST_BUCKS) if main.is_endless() else ("$%d" % COFFEE_COST_DOLLARS)
-	var whose := "this shift's Bucks" if main.is_endless() else "today's pay"
+	var cost := "$%d" % COFFEE_COST_DOLLARS
+	var whose := "today's pay"
 	if Net.is_active() and peer_id == multiplayer.get_unique_id():
 		main.show_toast("COFFEE! +%d%% speed this shift — %s comes out of %s" % [roundi(COFFEE_SPEED_BONUS * 100.0), cost, whose], COFFEE_TOAST)
 		Sfx.play("ui_buy")
@@ -400,7 +390,7 @@ func _process(delta: float) -> void:
 		if has_coffee(me):
 			_coffee_hint.text = "Already had your cup. Your hands are shaking."
 		elif coffee_open():
-			var cost := ("-%d Bucks" % COFFEE_COST_BUCKS) if main.is_endless() else ("-$%d at payday" % COFFEE_COST_DOLLARS)
+			var cost := "-$%d at payday" % COFFEE_COST_DOLLARS
 			_coffee_hint.text = "E: coffee  (+%d%% speed this shift, %s)" % [roundi(COFFEE_SPEED_BONUS * 100.0), cost]
 		else:
 			_coffee_hint.text = "The pot's been cleaned out for the night."

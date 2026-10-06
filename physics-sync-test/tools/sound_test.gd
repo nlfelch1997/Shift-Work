@@ -36,12 +36,14 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
 	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
-	# and Day 7's report still finishes the week into Endless Mode (the debug
-	# --endless route) for the endless checks.
+	# (OCT 2026 PHASE 4: Week 21's Endless Mode and its debug --endless route
+	# are retired — Day 7's report just leads to Day 8 now.)
 	main.test_follow_old_calendar = true
-	main.legacy_endless_route = true
 	sfx = root.get_node("Sfx")
 	sfx.played.connect(func(s, _p): heard.append([Time.get_unix_time_from_system(), s]))
 	var mode := "sound"

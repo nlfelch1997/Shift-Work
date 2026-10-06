@@ -204,7 +204,7 @@ func today_pay() -> int:
 var today_text := "" # tests read what the counter says
 
 func _process(delta: float) -> void:
-	var show: bool = main.status_hud and Net.is_active() and not main.players.is_empty() and main.shift_active and not main.is_day_report_active() and not main.is_endless()
+	var show: bool = main.status_hud and Net.is_active() and not main.players.is_empty() and main.shift_active and not main.is_day_report_active()
 	hud_visible = show
 	_panel.visible = show
 	if not show:

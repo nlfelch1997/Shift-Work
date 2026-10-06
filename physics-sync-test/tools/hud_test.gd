@@ -5,8 +5,10 @@ extends SceneTree
 ##
 ## Story, solo (Day N on the line, F3, the day rolling over):
 ##   godot --headless --path . --script res://tools/hud_test.gd -- --server --day=1 --no-save --test=hud
-## Endless (Shift #N and the wallet on the line, no "Day"/"Week"):
-##   godot --headless --path . --script res://tools/hud_test.gd -- --server --day=7 --no-save --test=hud-endless
+## Past the old week (OCT 2026 PHASE 4 — replaced Week 21's hud-endless when
+## Endless Mode was retired): Day 7's report rolls into an ordinary Day 8 —
+## Day/Bank on the line, never "Endless"/"Shift #"/"Bucks":
+##   godot --headless --path . --script res://tools/hud_test.gd -- --server --day=7 --no-save --test=hud-past-week
 ## Main menu (no --server: nothing in the corner over the menu):
 ##   godot --headless --path . --script res://tools/hud_test.gd -- --no-save --test=hud-menu
 ## Co-op (3 peers): every peer's player count right, F3 local to its peer,
@@ -25,12 +27,14 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
+	# OCT 2026 PHASE 4: random events (Events.gd) are off here — tools/events_test.gd
+	# tests them; --events=on turns them on (the income runs measure both).
+	main.events_on = "--events=on" in OS.get_cmdline_user_args()
 	# OCT 2026 PHASE 2: written for the 7-day story — Day N -> N+1 hands the
 	# crew old Day N+1's sections/earnings (Main.gd's test_follow_old_calendar),
-	# and Day 7's report still finishes the week into Endless Mode (the debug
-	# --endless route) for the endless checks.
+	# (OCT 2026 PHASE 4: Week 21's Endless Mode and its debug --endless route
+	# are retired — Day 7's report just leads to Day 8 now.)
 	main.test_follow_old_calendar = true
-	main.legacy_endless_route = true
 	root.get_node("Sfx").log_plays = false
 	var mode := "hud"
 	for a in args:
@@ -39,8 +43,8 @@ func _initialize() -> void:
 	match mode:
 		"hud":
 			_run_story.call_deferred()
-		"hud-endless":
-			_run_endless.call_deferred()
+		"hud-past-week":
+			_run_past_week.call_deferred()
 		"hud-menu":
 			_run_menu.call_deferred()
 		"hud-shots":
@@ -168,37 +172,24 @@ func _run_story() -> void:
 	check(status().visible, "S4: and back on")
 	finish()
 
-## --- endless ---------------------------------------------------------------------
+## --- past the old week (PHASE 4) -------------------------------------------------
 
-func _run_endless() -> void:
+func _run_past_week() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
 	root.size = Vector2i(960, 540)
 	await frames(3)
-	check(status().text == "Day 7  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E0: Day 7 before the week ends ('%s')" % status().text)
+	check(status().text == "Day 7  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E0: Day 7 ('%s')" % status().text)
 	await _end_day()
 	main._on_continue_pressed()
-	await wait_until(func(): return main.endless.screen == main.endless.SCREEN_WEEK_COMPLETE, 5.0)
-	main.enter_hub()
-	await wait(0.5)
-	check(main.is_endless(), "E1: in endless mode")
-	var want := "Endless  ·  Break Room  ·  %d Bucks  ·  1 player" % main.endless.wallet
-	check(status().text == want, "E1: hub reads '%s'" % status().text)
-	main.take_offer(0)
-	await wait_until(func(): return main.shift_active, 5.0)
+	await wait_until(func(): return main.current_day == 8 and main.shift_active, 8.0)
 	await frames(3)
-	_common_checks("E2")
-	check(status().text.begins_with("Endless  ·  Shift #%d  ·  " % main.endless.shift_number) and main.endless.shift_number == 1, "E2: shift #1 on the line ('%s')" % status().text)
-	check(not status().text.contains("Week") and not status().text.contains("Day"), "E2: no 'Day'/'Week' in endless ('%s')" % status().text)
-	main.endless.wallet += 37
-	await frames(2)
-	check(status().text.contains("%d Bucks" % main.endless.wallet), "E3: wallet updates live ('%s')" % status().text)
-	await _f3_checks("E4")
-	check(dbg().text.contains("endless shift #1"), "E4: dump has the endless line too")
-	await _end_day()
-	main._on_continue_pressed()
-	await wait_until(func(): return main.endless.screen == main.endless.SCREEN_HUB, 5.0)
-	await frames(2)
-	check(status().text == "Endless  ·  Break Room  ·  %d Bucks  ·  1 player" % main.endless.wallet, "E5: back in the hub after shift #1, payout in the wallet ('%s')" % status().text)
+	_common_checks("E1")
+	check(status().text == "Day 8  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E1: Day 8 is an ordinary shift ('%s')" % status().text)
+	for word in ["Endless", "Shift #", "Bucks", "Break Room  ·"]:
+		check(not status().text.contains(word), "E1: no '%s' on the line" % word)
+	check(main.get_node_or_null("HubUI") == null and main.get_node_or_null("Endless") == null, "E2: no hub screen or Endless node any more")
+	await _f3_checks("E3")
+	check(not dbg().text.contains("endless") and not dbg().text.contains("Bucks"), "E3: the dump has no endless/Bucks line")
 	finish()
 
 ## --- menu ------------------------------------------------------------------------

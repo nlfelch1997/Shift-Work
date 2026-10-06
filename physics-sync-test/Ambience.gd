@@ -231,7 +231,7 @@ func _mark_emissive() -> void:
 
 ## WEEK 21 — the lights and the spills each get their own level (0 off, 1
 ## normal, 2 the Day 7 numbers) from Main.gd's hazard_levels(): the story's
-## Day 6+ gates, or an endless posting, which can run one without the other.
+## Day 6+ gates (Week 21's endless postings could run one without the other).
 var lights_level := 0
 var spills_level := 0
 

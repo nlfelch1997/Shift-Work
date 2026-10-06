@@ -253,14 +253,10 @@ func finish(why: String) -> void:
 	main.cleanup.set_cans(_saved_cans)
 	for c in get_tree().get_nodes_in_group("customer"):
 		c.force_leave()
-	if _resume == "story":
-		main._reconfigure_world()
-		main._start_shift()
-	else:
-		main._despawn_all_customers()
-		main._reset_shelves_and_products_for_new_day()
-		main._reconfigure_world()
-		main._resume_past_story(_resume)
+	# (OCT 2026 PHASE 4: a save always resumes into a shift now — Week 21's
+	# WEEK COMPLETE / hub resume points went with Endless Mode.)
+	main._reconfigure_world()
+	main._start_shift()
 
 @rpc("authority", "call_local", "reliable")
 func _announce_over(why: String) -> void:
