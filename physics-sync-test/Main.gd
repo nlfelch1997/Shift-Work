@@ -3300,6 +3300,10 @@ func _build_alert_layer() -> void:
 	report_pay_label.add_sibling(report_cleanup_label)
 	report_pay_label.get_parent().move_child(report_cleanup_label, report_pay_label.get_index())
 
+## OCT 2026 PHASE 4: past this many characters the order/event row drops to
+## a smaller font (24px fits ~64 characters across 960px).
+const ROW_LONG_CHARS := 64
+
 ## Every peer, every frame: the LOOK BUSY warning for whoever the manager is
 ## watching (only shown on that player's own screen — everyone else sees
 ## the "?"/"!" over his head instead) and the write-up toast.
@@ -3321,6 +3325,10 @@ func _update_alert_layer(delta: float) -> void:
 	# OCT 2026 PHASE 4: a running random event owns this row (no order is
 	# ever open alongside one), then its result line for a few seconds.
 	var ev_line: String = events.status_line()
+	# A long event line (every section on a Delivery) steps the row's font
+	# down so it never runs off a 960px screen.
+	var long_line: bool = ev_line.length() > ROW_LONG_CHARS or (ev_line == "" and events.result_left > 0.0 and events.result_text.length() > ROW_LONG_CHARS)
+	_order_label.add_theme_font_size_override("font_size", 19 if long_line else 24)
 	if ev_line != "":
 		_order_label.text = ev_line
 		_order_label.add_theme_color_override("font_color", events.status_color())

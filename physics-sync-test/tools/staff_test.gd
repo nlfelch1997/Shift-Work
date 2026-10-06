@@ -188,6 +188,9 @@ func _upkeep_due() -> bool:
 	if not main.store_open or main.cleanup_active:
 		return false
 	var cl: Node = main.cleanup
+	# PHASE 4: an inspection wants every last piece (the --event-brain bot).
+	if event_aware and main.events.active() and main.events.key == "inspection":
+		return cl.litter.size() > 0 or not cl.puddles.is_empty() or cl.full_cans() > 0
 	return cl.litter.size() >= UPKEEP_LITTER or not cl.puddles.is_empty() or cl.full_cans() > 0 or (main.ambience.spills_enabled() and main.ambience.spills.any(func(sp): return sp["phase"] == 1))
 
 func _upkeep_pass() -> bool:
@@ -250,10 +253,22 @@ func _upkeep_pass() -> bool:
 	_upkeep_s += _wall() - t0
 	return true
 
+## OCT 2026 PHASE 4 — with --event-brain the bot also answers the cleaning
+## events: during a Surprise Inspection or a Leaky Roof it runs the cleaning
+## pass (whatever --upkeep says); otherwise only --upkeep cleans mid-shift.
+func _event_upkeep() -> bool:
+	if main.events.active() and main.events.key in ["inspection", "leak"]:
+		return await _upkeep_pass()
+	if "--upkeep" in OS.get_cmdline_user_args():
+		return await _upkeep_pass()
+	return false
+
 func _run_income() -> void:
 	_hire_spec = _parse_hire()
 	if "--upkeep" in OS.get_cmdline_user_args():
 		upkeep_hook = _upkeep_pass
+	if event_aware:
+		upkeep_hook = _event_upkeep
 	_open_after = float(_arg_int("--open-after=", -1))
 	var afk := "--afk" in OS.get_cmdline_user_args()
 	var shifts := _arg_int("--shifts=", 1)
@@ -292,6 +307,7 @@ func _run_income() -> void:
 		var pay: int = main._pay_today()
 		var cl: Node = main.cleanup
 		print("UPKEEP day=%d upkeep=%d frozen=%d shift=%d | rating %.2f -> %.2f | sold %d, customer cap %d, price $%d | rating on prices %s, trash %s (%d binned), bounced %d | cleaning passes %d, %.0fs | litter dropped %d, puddles %d, cans %s, bags dumped %d | pay %s" % [main.debug_day, 1 if upkeep_hook.is_valid() else 0, 1 if main.rating_frozen else 0, n + 1, rating0, main.store_rating.rating, sold, main.customer_cap(), main.sale_price(), main._format_money(main.rating_sales_today), main._format_money(cl.litter_pay_today()), cl.trash_binned_today, main.bounced_today, _upkeep_passes, _upkeep_s, cl.litter_dropped_today, cl.puddles_dropped_today, str(cl.cans), cl.bags_dumped_today, main._format_money(pay)])
+		print("EVENTS day=%d shift=%d on=%d brain=%d | %s | bonus %s" % [main.debug_day, n + 1, 1 if main.events_on else 0, 1 if event_aware else 0, str(main.events.log_today), main._format_money(main.events.bonus_today)])
 		print("INCOME day=%d open_after=%d stage=%d sections=%d hire=%s afk=%d share=%d shift=%d | sold %d by %s | pay %s, wages %s, net %s | bank %s -> %s, lifetime +%d | opened at %.0fs by %s, prep ceiling %.0fs | boxes diverted %d (skipped %d), bot placed %d | %s | wall %.0fs" % [main.debug_day, int(_open_after), main.complication_stage, main.sections_owned, str(_hire_spec).replace(" ", ""), 1 if afk else 0, 1 if _share else 0, n + 1, sold, str(main.sold_by_section_today).replace(" ", ""), main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(pay - main.staff.wages_today), main._format_money(money0), main._format_money(main.money), main.lifetime_earned - life0, stats.get("opened_at", -1.0), stats.get("opened_by", "ceiling" if afk else "?"), stats["grace"], main.staff.boxes_diverted_today, main.staff.boxes_skipped_today, stats["placed"], "; ".join(helper_bits), _wall() - t0])
 		check(main.money == money0 + pay - main.staff.wages_today, "shift %d: bank moved by pay - wages exactly (%s -> %s)" % [n + 1, main._format_money(money0), main._format_money(main.money)])
 		check(main.lifetime_earned == life0 + maxi(0, pay), "shift %d: lifetime earned grew by the pay alone (wages don't touch it)" % (n + 1))

@@ -100,7 +100,7 @@ const CREW_BONUS_SCALE := 0.5
 ## seconds: how long it runs once active (Catering's is by crew size).
 const EVENTS := {
 	"rush": {"name": "Lunch Rush", "sections": 2, "earned": 0, "weight": 3, "bonus": 50, "seconds": 45.0,
-		"line": "Shoppers are flooding %s — keep its shelves full!",
+		"line": "Shoppers want %s — every bit you shelve there sells!",
 		"how": "Sell %d from %s before time's up."},
 	"inspection": {"name": "Surprise Inspection", "sections": 2, "earned": 600, "weight": 2, "bonus": 40, "seconds": 35.0,
 		"line": "An inspector is on the way — clean up the WHOLE store!",
@@ -111,7 +111,7 @@ const EVENTS := {
 	"catering": {"name": "Catering Order", "sections": 3, "earned": 0, "weight": 3, "bonus": 60, "seconds": 0.0,
 		"line": "A big order across the store — stock every section on the list!",
 		"how": "Stock what's listed in each section before time's up."},
-	"delivery": {"name": "Surprise Delivery", "sections": 3, "earned": 2000, "weight": 2, "bonus": 60, "seconds": 80.0,
+	"delivery": {"name": "Surprise Delivery", "sections": 3, "earned": 2000, "weight": 2, "bonus": 60, "seconds": 70.0,
 		"line": "An extra truck with a box for EVERY section — unpack them all!",
 		"how": "Get one box unpacked on each section's pad."},
 }
@@ -194,11 +194,11 @@ var late_completions := 0
 
 var main: Node
 var _markers := {} # section -> Label (world-space, over the section's pad)
-var _drips: Array = [] # [Polygon2D] over each live leak (host's ids via data)
+var _drew := false # the last frame drew leak drips
 
 func _ready() -> void:
 	main = get_parent()
-	z_index = 40 # over the floor, the stock and the crowd; under the HUD
+	z_index = 110 # over the floor, the crowd and the lights' darkness (the E prompts are 120)
 	var sync := MultiplayerSynchronizer.new()
 	var config := SceneReplicationConfig.new()
 	for prop in [".:phase", ".:key", ".:time_left", ".:event_id", ".:data", ".:bonus_today", ".:bonus_week", ".:log_today", ".:result_text", ".:result_ok", ".:result_left"]:
@@ -263,14 +263,17 @@ func extra_customers() -> int:
 	return 0
 
 ## Lunch Rush: every list drawn while it runs has the rush section on it
-## (Main.gd's make_shopping_list()) — stocked or not: a shopper who finds it
-## empty waits at its shelves (Customer.gd's LIST_PATIENCE) like any
-## sold-out item. That's the pressure.
+## (Main.gd's make_shopping_list()) — as long as its shelves have stock. FOUND
+## BY THE SOLO FEASIBILITY SIM: adding it to lists while the section stood
+## empty turned shoppers who'd have browsed and come back into shoppers who
+## waited at bare shelves and left with nothing — a missed rush cost sales.
+## Now demand follows stock: keep it full and it sells as fast as it's
+## shelved; leave it empty and the store is exactly as it would have been.
 func adjust_list(list: PackedStringArray) -> PackedStringArray:
 	if not (active() and key == "rush"):
 		return list
 	var sec: String = data.get("section", "")
-	if sec == "" or list.has(sec):
+	if sec == "" or list.has(sec) or not main.stocked_units_by_section().has(sec):
 		return list
 	var out := PackedStringArray([sec])
 	out.append_array(list)
@@ -748,23 +751,23 @@ func status_line() -> String:
 	var t := ceili(time_left)
 	match key:
 		"rush":
-			return "LUNCH RUSH — sell from %s: %d/%d   %ds left   (+$%d)" % [data["section"], int(data["done"]), int(data["goal"]), t, int(data["bonus"])]
+			return "LUNCH RUSH — sell from %s: %d/%d   %ds   +$%d" % [data["section"], int(data["done"]), int(data["goal"]), t, int(data["bonus"])]
 		"catering":
 			var left := _needs_list(true)
-			return "CATERING ORDER — stock %s   %ds left   (+$%d)" % [", ".join(left) if not left.is_empty() else "done!", t, int(data["bonus"])]
+			return "CATERING — stock %s   %ds   +$%d" % [" · ".join(left) if not left.is_empty() else "done!", t, int(data["bonus"])]
 		"delivery":
 			var left := []
 			for sec in data["needs"]:
 				if int(data["have"].get(sec, 0)) < int(data["needs"][sec]):
 					left.append(sec)
-			return "SURPRISE DELIVERY — unpack on: %s   %ds left   (+$%d)" % [", ".join(left) if not left.is_empty() else "done!", t, int(data["bonus"])]
+			return "DELIVERY — a box on each pad: %s   %ds   +$%d" % [" · ".join(left) if not left.is_empty() else "done!", t, int(data["bonus"])]
 		"inspection":
 			var mess := float(data.get("mess", 0.0))
 			var ok := mess <= float(data["pass_at"])
-			return "INSPECTOR IN %ds — mess %s / pass at %s %s   (+$%d)" % [t, _num(mess), _num(float(data["pass_at"])), "✓" if ok else "— clean up!", int(data["bonus"])]
+			return "INSPECTOR IN %ds — mess %s, pass at %s %s   +$%d" % [t, _num(mess), _num(float(data["pass_at"])), "✓" if ok else "— clean up!", int(data["bonus"])]
 		"leak":
 			var left: int = data["leaks"].size() + int(data["to_drop"])
-			return "LEAKY ROOF — mop up %d leak%s   %ds left   (+$%d)" % [left, "" if left == 1 else "s", t, int(data["bonus"])]
+			return "LEAKY ROOF — mop up %d leak%s   %ds   +$%d" % [left, "" if left == 1 else "s", t, int(data["bonus"])]
 	return ""
 
 ## Hurry colour in the last 8s.
@@ -804,7 +807,11 @@ func _process(_delta: float) -> void:
 		if l.visible:
 			l.text = on[sec]
 			l.scale = Vector2.ONE * (1.0 + 0.06 * sin(t * 6.0))
-	queue_redraw()
+	# Only the Leaky Roof draws (its drips); one more redraw clears them after.
+	var drawing := active() and key == "leak"
+	if drawing or _drew:
+		queue_redraw()
+	_drew = drawing
 
 ## Leaky Roof: a drip and a pulsing ring over every leak still on the floor;
 ## Surprise Inspection: nothing in the world — the whole store is the ask.

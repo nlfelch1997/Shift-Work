@@ -298,11 +298,25 @@ func _each_rush() -> void:
 	var cap_on: int = main.customer_cap()
 	check(ev().extra_customers() == ev().RUSH_EXTRA_CUSTOMERS and cap_on == main.customer_cap() and cap_on - ev().extra_customers() > 0, "R2: the crowd cap grows by %d while it runs (cap %d)" % [ev().extra_customers(), cap_on])
 	main.test_hold_customers = true
+	# Demand follows stock: an empty rush section isn't forced onto lists...
+	for sb in main.shelves:
+		if main._section_name_at(sb.global_position) == sec:
+			for o in sb.get_node("Shelf").filled_objects():
+				move_body(o, o.global_position + Vector2(0, 90))
+	await wait(0.6)
+	var none_forced := true
+	for i in 30:
+		var l: PackedStringArray = main.make_shopping_list()
+		if l.has(sec):
+			none_forced = false
+	check(none_forced, "R2: %s's shelves are bare: it isn't forced onto lists (no shopper sent to empty shelves)" % sec)
+	# ...a stocked one is on every list.
+	await stock_one(sec)
 	var all_have := true
 	for i in 30:
 		if not main.make_shopping_list().has(sec):
 			all_have = false
-	check(all_have, "R2: every new shopping list has %s on it (30/30)" % sec)
+	check(all_have, "R2: one unit on %s's shelves -> every new shopping list has it (30/30)" % sec)
 	check(_marker(sec).visible and _marker(sec).text.begins_with("RUSH HERE!"), "R2: the marker: '%s'" % _marker(sec).text.replace("\n", " "))
 	await wait(0.1)
 	check(main._order_label.visible and main._order_label.text.begins_with("LUNCH RUSH — sell from %s: 0/%d" % [sec, goal]), "R2: the live row: '%s'" % main._order_label.text)
@@ -339,7 +353,7 @@ func _each_catering() -> void:
 	for sec in needs:
 		check(_marker(sec).visible and _marker(sec).text == "STOCK %d MORE" % int(needs[sec]), "C1: marker over %s: '%s'" % [sec, _marker(sec).text])
 	await wait(0.1)
-	check(main._order_label.text.begins_with("CATERING ORDER — stock "), "C1: the live row: '%s'" % main._order_label.text)
+	check(main._order_label.text.begins_with("CATERING — stock "), "C1: the live row: '%s'" % main._order_label.text)
 	# A section not on the order doesn't count; one item counted once even if
 	# it's knocked off and put back.
 	var off_list: Array = section_names().filter(func(s): return not needs.has(s))
@@ -799,20 +813,6 @@ func _run_ev_net_client() -> void:
 
 const FORCE_AFTER := 10.0
 
-func _event_upkeep() -> bool:
-	# The cleaning pass, only when an event asks for clean floors (or --upkeep).
-	if ev().active() and ev().key in ["inspection", "leak"]:
-		return await _upkeep_pass()
-	if "--upkeep" in OS.get_cmdline_user_args():
-		return await _upkeep_pass()
-	return false
-
-func _upkeep_due() -> bool:
-	if ev().active() and ev().key == "inspection":
-		var cl: Node = main.cleanup
-		return cl.litter.size() > 0 or not cl.puddles.is_empty() or cl.full_cans() > 0
-	return super()
-
 func _run_feasible() -> void:
 	_hire_spec = _parse_hire()
 	upkeep_hook = _event_upkeep
@@ -834,13 +834,10 @@ func _run_feasible() -> void:
 			var forced := {"done": false}
 			var forcer := func():
 				await wait_until(func(): return main.store_open or not main.shift_active, 3000.0)
-				ev()._countdown = -1.0
-				await wait(FORCE_AFTER)
+				# At opening, in place of the shift's own roll (so it holds the
+				# first call-out back, as a real roll does).
 				if main.store_open:
-					# A delivery needs the truck away: give it the chance.
-					if k == "delivery":
-						await wait_until(func(): return main.delivery.truck_away() or not main.store_open, 40.0)
-					ev().force_next(k, 0.1)
+					ev().force_next(k, FORCE_AFTER)
 				forced["done"] = true
 			forcer.call()
 			await _play_shift()
