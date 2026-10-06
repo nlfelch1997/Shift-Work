@@ -447,6 +447,8 @@ func _run_events() -> void:
 	main.events_on = true
 	main.open_store(1)
 	await wait(0.3)
+	main.shift_time_left = 2000.0 # room for both events (an event only starts if it can finish)
+	main._order_timer = 1.0e9 # no priority order (an event waits for one to close)
 	# A Lunch Rush, won: sell its goal from the rush section.
 	main.events.force_next("rush", 0.1)
 	await wait_until(func(): return main.events.active(), 12.0)
