@@ -440,11 +440,28 @@ extends Node2D
 ##     Cleanup.gd LITTER_RATE_PER_CUSTOMER 1/60 per customer-second in the store
 ##     Cleanup.gd CLEAN_BONUS_MAX           0.25 (+25% of gross pay, split
 ##                                          evenly: spills & knockovers / litter)
-##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied at a trash bin
-##     Cleanup.gd LITTER_PAY_PER_PIECE      $1 a piece picked up (E by hand any time, or swept),
-##                                          its own Pay line, outside the bonus (Oct 2026)
+##     Cleanup.gd PAN_CAPACITY              8 pieces, emptied into a trash can
+##     Cleanup.gd LITTER_PAY_PER_PIECE      $1 a piece, paid when it goes INTO A CAN (Phase 3D;
+##                                          was: when picked up), its own Pay line, outside the bonus
 ##     Carryable.gd PICKUP_RANGE            70 px (+12 host net slack), the store's shared E radius (Oct 2026: was 60)
 ##     Cleanup.gd MOP_TIME_* / SWEEP_TIME   spill ~2.1-2.6 s, display 1.6, stock 0.8 / 0.45 s
+##
+##   STORE UPKEEP (OCT 2026 PHASE 3D) — Cleanup.gd (FLAGGED)
+##     HAND_MAX                            3 pieces of trash in hand (hands full: no stock)
+##     CAN_CAPACITY                        10 pieces a can; full = overflowing (rated down)
+##     BAG_SPEED_MULT                      0.85 x walking with a bin bag
+##     DUMPSTER_POS / DUMPSTER_RANGE       (2030,1530) Storage SW corner / 95 px; never fills
+##     PUDDLE_CHANCE / PUDDLE_MAX          15% of drops are drink puddles / 6 at once (mop only)
+##     MOPS / BROOMS                       3 / 3 (station 2+2, hub rack 1+1), usable all day
+##   STORE RATING (OCT 2026 PHASE 3D) — StoreRating.gd + Main.gd (FLAGGED)
+##     MESS_LITTER / _SPILL / _FULL_CAN    1 / 3 / 4 points (a loose bag counts as a full can)
+##     MESS_PER_STAR_BASE / _PER_SECTION   6 + 3 per section past the first (6, 9, 12, 15)
+##     FALL_PER_SEC / RISE_PER_SEC         1 star per 60 s / per 90 s; store open only
+##     RATING_START                        3.0 (new shops and pre-v4 saves) — the old economy
+##     RATING_CROWD_MULT (Main.gd)         [0.70, 1.00, 1.15] customer cap at 1/3/5 stars
+##     RATING_PRICE_MULT (Main.gd)         [0.85, 1.00, 1.10] per-sale pay at 1/3/5 stars
+##     BOUNCE_PAY / BOUNCE_CALM_SECONDS    $5 a troublemaker thrown out / one fewer for 45 s
+##     ESCORT_SPEED_MULT                   0.8 x hauling one; Customer.gd ESCORT_MAX_TIME 25 s
 ##
 ##   BREAK ROOM COFFEE (WEEK 23) — BreakRoom.gd (FLAGGED placeholders)
 ##     COFFEE_POS / COFFEE_RANGE            (180,66) top-wall counter / 70 px
