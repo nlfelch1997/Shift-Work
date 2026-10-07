@@ -906,9 +906,17 @@ func _run_net_host_quit_host() -> void:
 	# --- H2 host again from the menu; the clients rejoin from theirs
 	main.host_button.pressed.emit()
 	await wait_until(func(): return main.shift_active and main.players.has(1), 20.0)
+	# Alone for now: pause, and let the crew join a paused game.
+	await esc()
+	check(paused and pm().paused_world, "H2: alone after re-hosting — the menu pauses")
 	_net_write("phase2.json", {"go": 1})
 	await wait_until(func(): return main.players.size() >= 3, 30.0)
-	check(main.players.size() == 3, "H2: re-hosted from the menu, both clients rejoined from theirs (crew %d)" % main.players.size())
+	check(main.players.size() == 3, "H2: re-hosted from the menu, both clients rejoined from theirs — into a paused game (crew %d)" % main.players.size())
+	check(not paused and not pm().paused_world and pm().is_open() and pm()._note.visible, "H2: a joiner un-paused the world; the menu stays up as the co-op overlay")
+	var t_j: float = main.shift_time_left
+	await wait(1.0)
+	check(t_j - main.shift_time_left > 0.5, "H2: the clock runs again (%.1f -> %.1f)" % [t_j, main.shift_time_left])
+	await esc()
 	await wait(2.0)
 	# --- H3 the host quits to desktop for real: the clients aren't left hanging
 	_net_write("phase3.json", {"go": 1})
