@@ -570,8 +570,10 @@ func _player_state(peer_id: int) -> Dictionary:
 		_state[peer_id] = {"anchor": Vector2.INF, "still_time": 0.0, "last_work": -INF, "last_chaos": -INF, "meter": 0.0, "cooldown": 0.0, "reason": "", "forklift_until": -INF}
 	return _state[peer_id]
 
+## OCT 2026 PHASE 4C: game time (Main.game_clock), not wall-clock, so the
+## work/forklift grace windows don't run out while a solo game is paused.
 func _now() -> float:
-	return Time.get_ticks_msec() / 1000.0
+	return get_tree().current_scene.game_clock
 
 ## --- Every peer: smoothing + the tell -------------------------------------
 

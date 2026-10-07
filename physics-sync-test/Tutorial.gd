@@ -276,7 +276,7 @@ func _request_skip() -> void:
 		finish("skipped")
 
 func _unhandled_input(event: InputEvent) -> void:
-	if active and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
+	if active and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB and not main.pause_menu.blocks_input():
 		request_skip()
 		get_viewport().set_input_as_handled()
 
@@ -445,14 +445,16 @@ func _at_register(p: Node2D) -> bool:
 
 ## --- Card + marker -----------------------------------------------------------
 
+## OCT 2026 PHASE 4C: the keys this player actually has bound (Settings.gd;
+## host_ or client_ set by the same rule Player.gd reads input with).
 func _keys(me: int) -> Dictionary:
-	var host: bool = me == 1
+	var p := "host_" if me == 1 else "client_"
 	return {
-		"move": "WASD" if host else "arrow keys",
-		"interact": "E" if host else "Enter",
-		"place": "C" if host else "/",
-		"defend": "Space",
-		"throw": "F" if host else ".",
+		"move": Settings.move_keys(p),
+		"interact": Settings.key("interact", p),
+		"place": Settings.key("place", p),
+		"defend": Settings.key("defend", p),
+		"throw": Settings.key("throw", p),
 	}
 
 func _show(p: Node2D, me: int) -> void:

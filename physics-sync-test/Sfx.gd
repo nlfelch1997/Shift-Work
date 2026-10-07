@@ -173,7 +173,30 @@ func _setup_buses() -> void:
 			var i := AudioServer.bus_count - 1
 			AudioServer.set_bus_name(i, bus_name)
 			AudioServer.set_bus_send(i, "Master")
-		AudioServer.set_bus_volume_db(AudioServer.get_bus_index(bus_name), BUS_DB[bus_name])
+		AudioServer.set_bus_volume_db(AudioServer.get_bus_index(bus_name), bus_db(bus_name))
+
+## OCT 2026 PHASE 4C — the player's volume sliders (Settings.gd), 0..1:
+## "music" scales the Music bus, "sfx" scales SFX, Hazard and UI together
+## (every non-music sound: footsteps, the forklift loop, event stings,
+## clicks). On top of BUS_DB, so the mix's hierarchy survives any setting;
+## 0 mutes the bus. The Master slider is Settings.gd's, on the Master bus.
+var user_volume := {"music": 1.0, "sfx": 1.0}
+const USER_MIN_DB := -60.0
+
+func set_user_volume(kind: String, v: float) -> void:
+	if not user_volume.has(kind):
+		return
+	user_volume[kind] = clampf(v, 0.0, 1.0)
+	for bus_name in ([BUS_MUSIC] if kind == "music" else [BUS_SFX, BUS_HAZARD, BUS_UI]):
+		var i := AudioServer.get_bus_index(bus_name)
+		AudioServer.set_bus_mute(i, user_volume[kind] <= 0.0)
+		if bus_name != BUS_MUSIC: # the music bus eases there in _process (ducking)
+			AudioServer.set_bus_volume_db(i, bus_db(bus_name))
+
+## A bus's level: its BUS_DB place in the mix + the player's slider.
+func bus_db(bus_name: String) -> float:
+	var v: float = user_volume["music"] if bus_name == BUS_MUSIC else user_volume["sfx"]
+	return BUS_DB[bus_name] + maxf(linear_to_db(maxf(v, 0.0001)), USER_MIN_DB)
 
 func _on_node_added(node: Node) -> void:
 	if node is BaseButton:
@@ -230,6 +253,10 @@ func _play(sound: String, pos: Variant, db_offset: float, pitch: float) -> Node:
 		p = p2
 	p.stream = stream_list[randi() % stream_list.size()]
 	p.bus = def["bus"]
+	# PHASE 4C: UI clicks still click on the (solo) pause menu, where the
+	# rest of the scene they're parented to is paused.
+	if def["bus"] == BUS_UI:
+		p.process_mode = Node.PROCESS_MODE_ALWAYS
 	p.volume_db = def.get("db", 0.0) + db_offset
 	var spread: float = def.get("pitch", 0.0)
 	p.pitch_scale = pitch * (1.0 + randf_range(-spread, spread))
@@ -314,7 +341,7 @@ func _process(delta: float) -> void:
 			p.stop()
 	_duck_left = maxf(0.0, _duck_left - delta)
 	var music_bus := AudioServer.get_bus_index(BUS_MUSIC)
-	var want: float = BUS_DB[BUS_MUSIC] + (DUCK_DB if _duck_left > 0.0 else 0.0)
+	var want: float = bus_db(BUS_MUSIC) + (DUCK_DB if _duck_left > 0.0 else 0.0)
 	AudioServer.set_bus_volume_db(music_bus, move_toward(AudioServer.get_bus_volume_db(music_bus), want, 40.0 * delta))
 
 ## Tests: how many times `sound` played in the last `seconds`.

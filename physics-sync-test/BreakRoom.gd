@@ -391,7 +391,7 @@ func _process(delta: float) -> void:
 			_coffee_hint.text = "Already had your cup. Your hands are shaking."
 		elif coffee_open():
 			var cost := "-$%d at payday" % COFFEE_COST_DOLLARS
-			_coffee_hint.text = "E: coffee  (+%d%% speed this shift, %s)" % [roundi(COFFEE_SPEED_BONUS * 100.0), cost]
+			_coffee_hint.text = Settings.key("interact") + ": coffee  (+%d%% speed this shift, %s)" % [roundi(COFFEE_SPEED_BONUS * 100.0), cost]
 		else:
 			_coffee_hint.text = "The pot's been cleaned out for the night."
 	else:
@@ -401,7 +401,7 @@ func _process(delta: float) -> void:
 		_vending_hint.text = VENDING_LINES[_vending_line_index]
 	else:
 		_vending_hint.visible = here and near_vending(p.global_position)
-		_vending_hint.text = "E: vending machine"
+		_vending_hint.text = Settings.key("interact") + ": vending machine"
 
 func _steam_h() -> float:
 	var node := get_node("CoffeeMachine") as Node2D

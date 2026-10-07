@@ -73,3 +73,15 @@ TESTS+=(
 "save-jan-2|janitor|0|0|0|--server --save-file=user://jan_test/save.json --test=jan-save --phase=2|"
 "save-jan-3|janitor|0|0|0|--server --save-file=user://jan_test/save.json --test=jan-save --phase=3|"
 )
+# OCT 2026 PHASE 4C (pause menu, settings, quitting) — tools/menu_test.gd.
+# Real wall-clock time throughout. Each writes its settings to its own file.
+TESTS+=(
+"menu-pause|menu|0|0|0|--server --day=7 --no-save --money=20000 --events=on --test=pause|"
+"menu-quit-solo|menu|0|0|0|--server --save-file=user://menu_test/save.json --test=quit-solo|"
+"menu-settings|menu|0|0|0|--no-save --settings-file=user://menu_test/settings.cfg --test=settings|"
+"menu-rebind-play|menu|0|0|0|--server --no-save --practice --settings-file=user://menu_test/keys.cfg --test=rebind-play|"
+"menu-display|menu|0|0|1|--server --day=7 --no-save --settings-file=user://menu_test/fs.cfg --test=display|"
+"menu-shots|menu|0|0|1|--no-save --settings-file=user://menu_test/ms.cfg --test=menu-shots|"
+"menu-net-pause|menu|0|2|0|--server --players=3 --day=5 --no-save --test=net-pause|"
+"menu-net-host-quit|menu|0|2|0|--server --players=3 --day=5 --save-file=user://menu_test/net_host.json --test=net-host-quit|"
+)
