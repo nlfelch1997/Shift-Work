@@ -56,3 +56,20 @@ TESTS+=(
 "ev-shop|events|0|0|0|--server --day=1 --no-save --test=shop|"
 "ev-net|events|0|2|0|--server --players=3 --day=7 --no-save --test=net-events|"
 )
+# OCT 2026 PHASE 4B (the janitor) — tools/janitor_test.gd, and the staff
+# hazards watch with the janitor on staff beside all three helpers. Real
+# wall-clock time throughout (the income/event measurements are bot sims run
+# on demand — see the file's header — not here).
+TESTS+=(
+"jan-hire|janitor|0|0|0|--server --no-save --test=jan-hire|"
+"jan-chores|janitor|0|0|0|--server --day=5 --no-save --test=jan-chores|"
+"jan-chores-d7|janitor|0|0|0|--server --day=7 --no-save --test=jan-chores|"
+"jan-stuck|janitor|0|0|0|--server --day=5 --no-save --test=jan-stuck|"
+"jan-reach|janitor|0|0|0|--server --day=7 --shift-seconds=4000 --no-save --test=jan-reach --n=6|"
+"jan-events|janitor|0|0|0|--server --day=7 --shift-seconds=1200 --no-save --events=on --test=jan-events|"
+"jan-net|janitor|0|2|0|--server --players=3 --day=5 --no-save --money=3000 --test=jan-net|"
+"staff-hazards-jan|staff|0|0|0|--server --day=7 --no-save --test=hazards --hire=Produce:0:0,Dairy/Frozen:0:0,Bakery:0:0,Janitor:0|"
+"save-jan-1|janitor|0|0|0|--server --save-file=user://jan_test/save.json --test=jan-save --phase=1|"
+"save-jan-2|janitor|0|0|0|--server --save-file=user://jan_test/save.json --test=jan-save --phase=2|"
+"save-jan-3|janitor|0|0|0|--server --save-file=user://jan_test/save.json --test=jan-save --phase=3|"
+)

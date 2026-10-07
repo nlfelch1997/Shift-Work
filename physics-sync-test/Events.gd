@@ -146,6 +146,30 @@ const DELIVERY_EXTRA_PER_EXTRA := 1
 ## first) — i.e. the store would rate 4 stars or better. Pass bumps the rating.
 const INSPECTION_PASS_STARS := 1.0
 const INSPECTION_RATING_BUMP := 0.3
+## OCT 2026 PHASE 4B — with a JANITOR on staff (Janitor.gd), measured: a
+## janitor alone (nobody else cleaning) passed 12 of 12 inspections at the
+## normal bar, Day 5 and Day 7 — they keep the store clean before the
+## inspector arrives, so no bar on its own changes that. So with a janitor on
+## staff the janitor walks the inspector round for the whole visit (from the
+## warning on) — off the floor (Janitor.gd reads janitor_escorting()), so the
+## crew holds the floor against the shoppers' fresh litter itself; the
+## janitor's earlier work still counts (a cleaner start). Measured with that
+## (6-round janitor-alone sims, 4-round solo-bot feasibility sims):
+##   janitor alone: 0/6 (Day 5), 0/6 (Day 7)
+##   solo bot + janitor, bar x0.75: 3/4 Day 5 (bot alone 2/4), 0/4 Day 7
+##     (bot alone 2/3); bar x0.25: 0/3 Day 7 (one stage-4 spill is 3 points)
+## — a tighter bar made hiring a janitor a PENALTY at the top tier, so the
+## bar stays the normal one (x1.0, below); the escort is the scaling. The knob
+## is kept, FLAGGED, for Phase 5.
+const INSPECTION_PASS_STARS_JANITOR := 1.0
+## PHASE 4B: a Leaky Roof with a janitor on staff drops this many extra
+## leaks. The janitor mops leaks, slowly (Janitor.LEAK_MOP_TIME 6 s each).
+## Measured, janitor alone, 3 leaks: 0/6 at Day 7 at base speed — but 3/6
+## (Day 7) and 4/6 (Day 5) once they've had the speed upgrade: near free. With
+## this one extra leak: 1/6 and 1/6 upgraded, while the solo bot + janitor
+## still won 3/3 (as the bot alone does on 3): the crew mops the deciding
+## leak or two. FLAGGED, tunable.
+const LEAK_PER_JANITOR := 1
 ## Leaky Roof: leaks (+ per extra player), dropped one every LEAK_DROP_GAP,
 ## round-robin over the open sections so they're spread out. Solo 3 (was 4:
 ## the solo feasibility sim, top tier, mopped 1 of 4 in 50s — a mop to fetch
@@ -484,9 +508,9 @@ func _plan(k: String) -> Dictionary:
 				have[sec] = 0
 			return {"needs": needs, "have": have}
 		"inspection":
-			return {"mess": 0.0, "pass_at": _inspection_bar(), "parts": [0, 0, 0]}
+			return {"mess": 0.0, "pass_at": _inspection_bar(), "parts": [0, 0, 0], "escort": _janitor_working()}
 		"leak":
-			var n := LEAK_COUNT + LEAK_PER_EXTRA * (crew() - 1)
+			var n := LEAK_COUNT + LEAK_PER_EXTRA * (crew() - 1) + (LEAK_PER_JANITOR if _janitor_working() else 0)
 			return {"to_drop": n, "total": n, "leaks": [], "mopped": 0}
 	return {}
 
@@ -515,7 +539,17 @@ func _rush_section(open: Array) -> String:
 	return best[randi() % best.size()]
 
 func _inspection_bar() -> float:
-	return snappedf(main.store_rating.mess_per_star() * INSPECTION_PASS_STARS, 0.1)
+	var stars := INSPECTION_PASS_STARS_JANITOR if _janitor_working() else INSPECTION_PASS_STARS
+	return snappedf(main.store_rating.mess_per_star() * stars, 0.1)
+
+## PHASE 4B: a janitor on the floor this shift (Staff.gd).
+func _janitor_working() -> bool:
+	return main.staff.working(main.staff.JANITOR)
+
+## PHASE 4B (every peer, replicated state): the janitor is walking the
+## inspector round right now (Janitor.gd stops cleaning).
+func janitor_escorting() -> bool:
+	return busy() and key == "inspection" and data.get("escort", false)
 
 ## --- Host: running one ------------------------------------------------------------
 
@@ -747,6 +781,8 @@ func _how_text() -> String:
 		"delivery":
 			return "Unpack a box on each pad: " + ", ".join(data.get("needs", {}).keys()) + "."
 		"inspection":
+			if data.get("escort", false):
+				return "%s is showing the inspector round — you keep the floor clean: mess %s or less (trash 1, spill 3, full can 4)." % [main.staff.JANITOR_NAME, _num(float(data.get("pass_at", 0)))]
 			return "Get the mess to %s or less (trash 1, spill 3, full can 4)." % _num(float(data.get("pass_at", 0)))
 		"leak":
 			return "Mop up all %d leaks before time's up." % int(data.get("total", 0))

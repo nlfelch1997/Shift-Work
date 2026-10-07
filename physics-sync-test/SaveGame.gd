@@ -50,7 +50,12 @@ extends RefCounted
 ## wallet, run stats and week summary are dropped: the Bucks currency is
 ## retired, and there's no honest exchange rate for a debug-only wallet. A
 ## v2-v4 save loads with that gear, no events seen yet.
-const VERSION := 5
+## OCT 2026 PHASE 4B: version 6 adds the janitor — "staff" may now hold a
+## "Janitor" entry ({"speed": level}) beside the section helpers. A v2-v5
+## save loads as-is with no janitor (none could be hired yet). A janitor in a
+## save whose shop owns fewer than Staff.JANITOR_MIN_SECTIONS sections (a
+## hand-edited file) is dropped, like a helper for a section not owned.
+const VERSION := 6
 const LEGACY_VERSION := 1
 const RATING_DEFAULT := 3.0 # Main.RATING_START (not preloaded: Main preloads this file) # the 7-day story's saves
 const DEFAULT_PATH := "user://shiftwork_save.json"
@@ -76,7 +81,8 @@ static func snapshot(main: Node) -> Dictionary:
 			# the shift in flight isn't saved, so neither are its sales.
 			"lifetime_sold": main._sold_at_day_start if main.shift_active else main._total_sold(),
 		},
-		# OCT 2026 PHASE 3: section -> {"speed": level, "carry": level}.
+		# OCT 2026 PHASE 3: section -> {"speed": level, "carry": level};
+		# PHASE 4B (v6): + "Janitor" -> {"speed": level}.
 		"staff": main.staff.staff.duplicate(true),
 		# OCT 2026 PHASE 3D.
 		"upkeep": {
@@ -161,6 +167,9 @@ static func sanitize(raw: Dictionary) -> Dictionary:
 			"speed": int(clampf(_num(st.get("speed"), 0), 0, staff_script.SPEED_BY_LEVEL.size() - 1)),
 			"carry": int(clampf(_num(st.get("carry"), 0), 0, staff_script.CARRY_BY_LEVEL.size() - 1)),
 		}
+	var jan = raw_staff.get(staff_script.JANITOR)
+	if jan is Dictionary and sections >= staff_script.JANITOR_MIN_SECTIONS:
+		staff[staff_script.JANITOR] = {"speed": int(clampf(_num(jan.get("speed"), 0), 0, staff_script.JANITOR_SPEED_BY_LEVEL.size() - 1))}
 	# OCT 2026 PHASE 3D: missing (a v2/v3 save) or damaged -> 3 stars, empty cans.
 	var up: Dictionary = _dict(raw.get("upkeep"))
 	var cleanup_script := preload("res://Cleanup.gd")

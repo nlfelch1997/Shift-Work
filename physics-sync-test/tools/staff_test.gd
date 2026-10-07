@@ -112,8 +112,8 @@ func _staffed_color(obj: Node) -> bool:
 		if visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
 			return false
 	for sec in _hire_spec:
-		if visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
-			return true
+		if main.SECTION_COLORS.has(sec) and visual.color.is_equal_approx(main.SECTION_COLORS[sec]):
+			return true # (PHASE 4B: "Janitor" in --hire isn't a section)
 	return false
 
 ## The brain leaves a staffed section's stock to its helper.
@@ -340,6 +340,10 @@ func _run_income() -> void:
 				helper_bits.append("%s[s%d c%d]: placed %d, unpacked %d, walked %.0fpx, yield %.0fs" % [sec, main.staff.speed_level(sec), main.staff.carry_level(sec), h.placed_today, h.unpacked_today, h.walked_px, h.forklift_yield_s])
 		var pay: int = main._pay_today()
 		var cl: Node = main.cleanup
+		# OCT 2026 PHASE 4B: what the janitor did this shift (--hire=Janitor:N).
+		if main.staff.is_hired("Janitor"):
+			var j: Node2D = main.staff.janitor
+			print("JAN day=%d shift=%d speed=%d | picked %d, binned %d, mopped %d (leaks %d), bags %d taken / %d dumped, stuck %d, unreachable %d, forklift yield %.0fs, walked %.0fpx" % [main.debug_day, n + 1, main.staff.speed_level("Janitor"), j.litter_picked_today, j.litter_binned_today, j.mopped_today, j.leaks_mopped_today, j.bags_taken_today, j.bags_dumped_today, j.stuck_skips, j.unreachable_skips, j.forklift_yield_s, j.walked_px])
 		print("UPKEEP day=%d upkeep=%d frozen=%d shift=%d | rating %.2f -> %.2f | sold %d, customer cap %d, price $%d | rating on prices %s, trash %s (%d binned), bounced %d | cleaning passes %d, %.0fs | litter dropped %d, puddles %d, cans %s, bags dumped %d | pay %s" % [main.debug_day, 1 if upkeep_hook.is_valid() else 0, 1 if main.rating_frozen else 0, n + 1, rating0, main.store_rating.rating, sold, main.customer_cap(), main.sale_price(), main._format_money(main.rating_sales_today), main._format_money(cl.litter_pay_today()), cl.trash_binned_today, main.bounced_today, _upkeep_passes, _upkeep_s, cl.litter_dropped_today, cl.puddles_dropped_today, str(cl.cans), cl.bags_dumped_today, main._format_money(pay)])
 		print("EVENTS day=%d shift=%d on=%d brain=%d | %s | bonus %s" % [main.debug_day, n + 1, 1 if main.events_on else 0, 1 if event_aware else 0, str(main.events.log_today), main._format_money(main.events.bonus_today)])
 		print("INCOME day=%d open_after=%d stage=%d sections=%d hire=%s afk=%d share=%d shift=%d | sold %d by %s | pay %s, wages %s, net %s | bank %s -> %s, lifetime +%d | opened at %.0fs by %s, prep ceiling %.0fs | boxes diverted %d (skipped %d), bot placed %d | %s | wall %.0fs" % [main.debug_day, int(_open_after), main.complication_stage, main.sections_owned, str(_hire_spec).replace(" ", ""), 1 if afk else 0, 1 if _share else 0, n + 1, sold, str(main.sold_by_section_today).replace(" ", ""), main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(pay - main.staff.wages_today), main._format_money(money0), main._format_money(main.money), main.lifetime_earned - life0, stats.get("opened_at", -1.0), stats.get("opened_by", "ceiling" if afk else "?"), stats["grace"], main.staff.boxes_diverted_today, main.staff.boxes_skipped_today, stats["placed"], "; ".join(helper_bits), _wall() - t0])
@@ -906,6 +910,8 @@ func _run_staff_hazards() -> void:
 		check(main.players.has(peer), "Z2: write-up for %s — a player" % main.player_display_name(peer))
 	print("INFO  writeups %d, rams %d, sold by section %s, selling window %.0fs" % [main.writeups_today, rams, str(main.sold_by_section_today), stats["shift_len"] - stats.get("opened_at", 0.0)])
 	for sec in _hire_spec:
+		if not st().HELPER_SECTIONS.has(sec):
+			continue # (PHASE 4B: the janitor isn't a section helper)
 		var h := helper(sec)
 		print("INFO  %s: placed %d, unpacked %d, knocked stock reshelved %d, forklift yield %.1fs, walked %.0fpx" % [sec, h.placed_today, h.unpacked_today, h.knocked_reshelved_today, h.forklift_yield_s, h.walked_px])
 		# (Sales are reported, not required: shoppers take the NEAREST stocked
@@ -952,6 +958,9 @@ func _counts() -> Dictionary:
 		placed += h.placed_today if h.active else 0
 	c["helper_placed"] = placed
 	c["helpers"] = st().helpers.values().filter(func(h): return h.active).size()
+	if st().is_hired("Janitor"):
+		var j: Node2D = st().janitor
+		c["jan"] = "picked %d mopped %d bags %d stuck %d" % [j.litter_picked_today, j.mopped_today, j.bags_taken_today, j.stuck_skips]
 	c["wages"] = st().wages_today
 	c["staffed_sold"] = 0
 	for sec in st().HELPER_SECTIONS:
@@ -989,8 +998,13 @@ func _soak_staff_checks() -> void:
 		seen += 1
 		var placed := []
 		for sec in _hire_spec:
-			placed.append(helper(sec).placed_today)
-		check(placed.all(func(n): return n > 0) and st().wages_today == _hire_spec.keys().reduce(func(a, k): return a + int(st().WAGE[k]), 0), "SOAK shift %d: every helper worked (%s placed), wages $%d charged" % [seen, str(placed), st().wages_today])
+			if st().HELPER_SECTIONS.has(sec):
+				placed.append(helper(sec).placed_today)
+		check(placed.all(func(n): return n > 0) and st().wages_today == _hire_spec.keys().reduce(func(a, k): return a + st().wage_of(k), 0), "SOAK shift %d: every helper worked (%s placed), wages $%d charged" % [seen, str(placed), st().wages_today])
+		# PHASE 4B: the janitor worked every shift too, and never gave up stuck.
+		if _hire_spec.has("Janitor"):
+			var j: Node2D = st().janitor
+			check(j.litter_picked_today + j.mopped_today + j.bags_taken_today > 0, "SOAK shift %d: the janitor worked (picked %d, mopped %d, bags %d; stuck %d, unreachable %d)" % [seen, j.litter_picked_today, j.mopped_today, j.bags_taken_today, j.stuck_skips, j.unreachable_skips])
 		await wait_until(func(): return not main.is_day_report_active(), 100000.0)
 
 func finish() -> void:

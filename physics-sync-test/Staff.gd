@@ -50,6 +50,7 @@ extends Node2D
 ## charge (the money check and the write happen in one host call).
 
 const HelperScript := preload("res://Helper.gd")
+const JanitorScript := preload("res://Janitor.gd")
 
 ## The sections a helper can be hired into, in SECTIONS order.
 const HELPER_SECTIONS := ["Produce", "Dairy/Frozen", "Bakery"]
@@ -104,6 +105,66 @@ const CARRY_BY_LEVEL := [1, 2, 3]
 ## Price of the NEXT level (index = current level).
 const SPEED_COSTS := [100, 200]
 const CARRY_COSTS := [100, 200]
+## ============================================================================
+## OCT 2026 PHASE 4B — THE JANITOR (Janitor.gd): one store-wide cleaning hire,
+## on the same board, under the same rules as a section helper — prep-only
+## changes, host-authoritative, the wage out of the bank at clock-out beside
+## the pay (never touching lifetime_earned), on the books for any shift they
+## were hired at any point of, let go from the board. Kept in `staff` under
+## the key JANITOR ({"speed": level}), so hiring, the books, the wage bill,
+## replication and the save all ride the helpers' own paths.
+## THE GATE: owning JANITOR_MIN_SECTIONS sections (a one-room shop's mess is
+## a few steps away; the second room is where the walking starts and where the
+## cans, puddles and the first events — Inspection, Leaky Roof — show up),
+## separate from affording the fee, each with its own refusal.
+## NUMBERS — FLAGGED, tunable placeholders, MEASURED with the income harness
+## (tools/staff_test.gd --test=income [--shifts=4] [--upkeep] --hire=...,
+## Janitor:0; the solo bot, --fixed-fps 60 bot sims, Oct 2026). Mean net pay
+## a shift (pay - wages) and where the rating ends up:
+##
+##   Day 3 preset (2 sections), 4 shifts in a row x 2 runs (the rating carries
+##   over from shift to shift — this is the honest comparison):
+##     solo, never cleans mid-shift      $554   rating mostly 1-3 stars
+##     solo, cleans mid-shift (--upkeep) $312   ~4.4
+##     solo + janitor                    $560   ~4.6
+##     solo + Produce helper             $980   1.0 (pinned there)
+##     solo + Produce helper + janitor  $1373   ~4.7
+##   Day 5 / Day 7 presets, one shift each from 3 stars, 3 runs:
+##     solo                       $263 / $245      solo + janitor   $242 / $201
+##     solo + helpers             $447 / $522      + janitor        $418 / $404
+##     (rating at close: ~3.2 -> 4.2 / ~3.0 -> 4.0 with the janitor)
+##
+## What that says: the janitor ENDS the Phase 3D trade-off — a solo crew no
+## longer has to pick between money (never clean: $554) and a good rating
+## (clean it yourself: $312): with a janitor it gets both ($560 at ~4.6
+## stars). With a section helper stocking, the extra customers a good rating
+## brings turn into sales: +$393 a shift net, the best hire on the board after
+## the helper itself. On ONE shift from 3 stars at Day 5/7 it's break-even to
+## -$100 (a fresh 3-star store has nothing to lose yet; and at Day 7 the
+## bigger crowd sold LESS with the same stock — see the Phase 4B report,
+## flagged for Phase 5's rating/crowd balance).
+## So: the WAGE is set at the solo break-even ($50: solo + janitor = solo
+## without, a little under a section helper's), the FEE ($200) at about a
+## shift of what it adds with a helper on staff — hiring is a real decision
+## for a solo crew (you buy the rating, not money) and a clear win once
+## helpers stock. ONE upgrade (speed): it measured nothing on income (one
+## 4-shift run, $488 vs $560 — noise), but it decides the Leaky Roof (Events.gd's
+## LEAK_PER_JANITOR note); a second wasn't justified by any number.
+## ============================================================================
+const JANITOR := "Janitor"
+const JANITOR_NAME := "Pat"
+const JANITOR_LOOK := "cashier_3"
+const JANITOR_COLOR := Color(0.55, 0.78, 0.82) # a grey-teal ring: not any section's color
+const JANITOR_MIN_SECTIONS := 2
+const JANITOR_HIRE_FEE := 200
+const JANITOR_WAGE := 50
+## Level 0 = as hired; ONE upgrade (walking speed, px/s). A helper starts at
+## 80 in one room; the janitor crosses the store, so starts a bit quicker.
+const JANITOR_SPEED_BY_LEVEL := [95.0, 135.0]
+const JANITOR_SPEED_COSTS := [150]
+## Everyone the board can hire, in board order.
+const ROLES := ["Produce", "Dairy/Frozen", "Bakery", "Janitor"]
+
 ## Back-stock boxes a section can hold; a truck's box for a full back room
 ## isn't brought (the truck carries one less).
 const BACKSTOCK_MAX := 3
@@ -132,6 +193,7 @@ var boxes_skipped_today := 0 # a staffed section's back room was full
 
 var main: Node
 var helpers: Dictionary = {} # section -> Helper (every peer)
+var janitor: Node2D # Janitor.gd (every peer)
 var panel: CanvasLayer
 var _panel_root: Control
 var _panel_sig := ""
@@ -160,6 +222,9 @@ func _ready() -> void:
 		h.setup(sec, i, HELPER_NAMES[sec], HELPER_LOOKS[sec], main.SECTION_COLORS[sec])
 		helpers[sec] = h
 		add_child(h)
+	janitor = JanitorScript.new()
+	janitor.setup_janitor(JANITOR_NAME, JANITOR_LOOK, JANITOR_COLOR)
+	add_child(janitor)
 	_build_panel()
 
 ## --- Reads (every peer) -------------------------------------------------------
@@ -180,17 +245,33 @@ func backstock_of(sec: String) -> int:
 func wages_due() -> int:
 	var n := 0
 	for sec in on_books:
-		n += int(WAGE.get(sec, 0))
+		n += wage_of(sec)
 	return n
+
+## A role's wage, name and fee (a section's helper, or the janitor).
+func wage_of(role: String) -> int:
+	return JANITOR_WAGE if role == JANITOR else int(WAGE.get(role, 0))
+
+func name_of(role: String) -> String:
+	return JANITOR_NAME if role == JANITOR else str(HELPER_NAMES.get(role, role))
+
+func fee_of(role: String) -> int:
+	return JANITOR_HIRE_FEE if role == JANITOR else int(HIRE_FEE.get(role, 0))
+
+func speed_table(role: String) -> Array:
+	return JANITOR_SPEED_BY_LEVEL if role == JANITOR else SPEED_BY_LEVEL
 
 ## Staffing exists in the shopkeeper game only (not the practice shift).
 func _staffing_live() -> bool:
 	return not main.tutorial.active
 
 ## The helper is on the floor right now (hired, section open, a real shift).
+## The janitor: hired and a real shift (they work wherever's open).
 func working(sec: String) -> bool:
 	if not is_hired(sec) or not _staffing_live():
 		return false
+	if sec == JANITOR:
+		return true
 	var i: int = main.section_index(sec)
 	return i >= 0 and main.is_section_open(main.SECTIONS[i])
 
@@ -204,16 +285,20 @@ func _prep_window() -> bool:
 ## "hire", "speed", "carry", "fire". The ownership gate and the money gate
 ## are separate checks with their own answers.
 func blocker(sec: String, action: String) -> String:
-	if not HELPER_SECTIONS.has(sec):
+	if not ROLES.has(sec):
 		return "no helpers for %s" % sec
 	if main.tutorial.active:
 		return "practice shift — hire in a real shift"
-	var i: int = main.section_index(sec)
 	if action == "hire":
-		if i >= main.sections_owned:
+		# The ownership gate: a section helper needs their section bought; the
+		# janitor (PHASE 4B), JANITOR_MIN_SECTIONS sections owned.
+		if sec == JANITOR:
+			if main.sections_owned < JANITOR_MIN_SECTIONS:
+				return "own %d sections first" % JANITOR_MIN_SECTIONS
+		elif main.section_index(sec) >= main.sections_owned:
 			return "buy %s first" % sec
 		if is_hired(sec):
-			return "%s already works here" % HELPER_NAMES[sec]
+			return "%s already works here" % name_of(sec)
 	elif not is_hired(sec):
 		return "nobody hired"
 	if action in ["speed", "carry"] and next_cost(sec, action) < 0:
@@ -229,13 +314,15 @@ func blocker(sec: String, action: String) -> String:
 func price(sec: String, action: String) -> int:
 	match action:
 		"hire":
-			return int(HIRE_FEE.get(sec, 0))
+			return fee_of(sec)
 		"speed", "carry":
 			return maxi(0, next_cost(sec, action))
 	return 0
 
 func next_cost(sec: String, knob: String) -> int:
-	var costs: Array = SPEED_COSTS if knob == "speed" else CARRY_COSTS
+	if sec == JANITOR and knob != "speed":
+		return -1
+	var costs: Array = (JANITOR_SPEED_COSTS if sec == JANITOR else SPEED_COSTS) if knob == "speed" else CARRY_COSTS
 	var lvl := speed_level(sec) if knob == "speed" else carry_level(sec)
 	return costs[lvl] if lvl < costs.size() else -1
 
@@ -290,21 +377,24 @@ func do_action(sec: String, action: String, by_peer: int, from_level := -1) -> b
 	var text := ""
 	match action:
 		"hire":
-			next[sec] = {"speed": 0, "carry": 0}
+			next[sec] = {"speed": 0} if sec == JANITOR else {"speed": 0, "carry": 0}
 			var books := on_books.duplicate()
 			books[sec] = true
 			on_books = books
-			text = "%s hired %s for %s — $%d, then $%d a shift" % ["%s", HELPER_NAMES[sec], sec, cost, WAGE[sec]]
+			if sec == JANITOR:
+				text = "%s hired %s as the janitor — $%d, then $%d a shift" % ["%s", JANITOR_NAME, cost, JANITOR_WAGE]
+			else:
+				text = "%s hired %s for %s — $%d, then $%d a shift" % ["%s", HELPER_NAMES[sec], sec, cost, WAGE[sec]]
 		"speed", "carry":
-			var lvl := int(next[sec][action]) + 1
+			var lvl := int(next[sec].get(action, 0)) + 1
 			next[sec][action] = lvl
-			text = "%s trained %s: %s" % ["%s", HELPER_NAMES[sec], ("walks faster (%d px/s)" % int(SPEED_BY_LEVEL[lvl])) if action == "speed" else ("carries %d at a time" % CARRY_BY_LEVEL[lvl])]
+			text = "%s trained %s: %s" % ["%s", name_of(sec), ("walks faster (%d px/s)" % int(speed_table(sec)[lvl])) if action == "speed" else ("carries %d at a time" % CARRY_BY_LEVEL[lvl])]
 		"fire":
 			next.erase(sec)
 			var bs := backstock.duplicate()
 			bs.erase(sec)
 			backstock = bs
-			text = "%s let %s go (this shift's $%d wage is still owed)" % ["%s", HELPER_NAMES[sec], WAGE[sec]]
+			text = "%s let %s go (this shift's $%d wage is still owed)" % ["%s", name_of(sec), wage_of(sec)]
 	main.money -= cost
 	staff = next
 	actions_done += 1
@@ -341,6 +431,7 @@ func reset_for_new_shift() -> void:
 	sync_helpers()
 	for h in helpers.values():
 		h.reset_for_new_shift()
+	janitor.reset_for_new_shift()
 
 ## Host: each helper's on/off and its two knobs from `staff`. Called on every
 ## change (hire, upgrade, a section bought, the world reconfiguring).
@@ -352,15 +443,24 @@ func sync_helpers() -> void:
 		h.speed = SPEED_BY_LEVEL[speed_level(sec)]
 		h.capacity = CARRY_BY_LEVEL[carry_level(sec)]
 		h.set_active(working(sec))
+	janitor.speed = JANITOR_SPEED_BY_LEVEL[mini(speed_level(JANITOR), JANITOR_SPEED_BY_LEVEL.size() - 1)]
+	janitor.set_active(working(JANITOR))
+
+## Host, from Main.gd's start_cleanup(): the janitor goes off the clock — trash
+## in hand into a can, a bag back in its can — before Cleanup.gd counts the
+## mess (and so before any save: a bag in hand is never lost).
+func on_store_close() -> void:
+	if multiplayer.is_server():
+		janitor._put_down_all()
 
 ## Host, at clock-out (Main.gd's _end_shift()): the shift's wage bill. The
 ## money itself moves in Main.gd's _bank_shift_pay(), beside the pay.
 func close_books() -> int:
 	var due := wages_due()
 	var parts := []
-	for sec in HELPER_SECTIONS:
+	for sec in ROLES:
 		if on_books.has(sec):
-			parts.append("%s $%d" % [HELPER_NAMES[sec], WAGE[sec]])
+			parts.append("%s $%d" % [name_of(sec), wage_of(sec)])
 	wages_today = due
 	wages_detail = ", ".join(parts)
 	return due
@@ -399,10 +499,12 @@ func _process(_delta: float) -> void:
 	if Net.is_active() and multiplayer.is_server():
 		# The world can open/close a helper's section under it (a purchase,
 		# the practice shift ending, a debug start) — keep them in step.
+		var stale: bool = janitor.active != working(JANITOR)
 		for sec in helpers:
 			if helpers[sec].active != working(sec):
-				sync_helpers()
-				break
+				stale = true
+		if stale:
+			sync_helpers()
 	_update_piles()
 	_update_board_ui()
 
@@ -417,10 +519,12 @@ func _build_board() -> void:
 	# cork, a header strip and one pinned card per hireable section.
 	_poly(board, [Vector2(-12, -78), Vector2(14, -78), Vector2(14, 78), Vector2(-12, 78)], Color(0.35, 0.22, 0.12))
 	_poly(board, [Vector2(-9, -74), Vector2(11, -74), Vector2(11, 74), Vector2(-9, 74)], Color(0.72, 0.55, 0.36))
-	for i in HELPER_SECTIONS.size():
-		var y := -48.0 + i * 46.0
+	# (PHASE 4B: four cards — the janitor's has their grey-teal strip.)
+	for i in ROLES.size():
+		var y := -54.0 + i * 36.0
+		var strip: Color = JANITOR_COLOR if ROLES[i] == JANITOR else main.SECTION_COLORS[ROLES[i]]
 		_poly(board, [Vector2(-6, y - 14), Vector2(9, y - 14), Vector2(9, y + 14), Vector2(-6, y + 14)], Color(0.96, 0.94, 0.88))
-		_poly(board, [Vector2(-6, y - 14), Vector2(9, y - 14), Vector2(9, y - 8), Vector2(-6, y - 8)], main.SECTION_COLORS[HELPER_SECTIONS[i]])
+		_poly(board, [Vector2(-6, y - 14), Vector2(9, y - 14), Vector2(9, y - 8), Vector2(-6, y - 8)], strip)
 		_poly(board, [Vector2(0, y - 12), Vector2(3, y - 12), Vector2(3, y - 9), Vector2(0, y - 9)], Color(0.85, 0.15, 0.15)) # pin
 	var title := Label.new()
 	title.text = "STAFF"
@@ -538,9 +642,10 @@ func _rebuild_panel() -> void:
 	col.add_theme_constant_override("separation", 6)
 	box.add_child(col)
 	col.add_child(_ui_label("STAFF BOARD", 20, Color(1, 0.82, 0.25)))
-	col.add_child(_ui_label("Hire a helper for a section you own: they unpack its boxes and stock its shelves on their own.\nWages come out of the bank at clock-out. Staff changes happen during prep.  Bank: %s" % main._format_money(main.money), 12, Color(0.8, 0.85, 0.95)))
+	col.add_child(_ui_label("Hire a helper for a section you own: they unpack its boxes and stock its shelves on their own.\nA janitor keeps the whole store clean. Wages come out of the bank at clock-out. Staff changes happen during prep.  Bank: %s" % main._format_money(main.money), 12, Color(0.8, 0.85, 0.95)))
 	for sec in HELPER_SECTIONS:
 		col.add_child(_section_row(sec))
+	col.add_child(_janitor_row())
 
 func _section_row(sec: String) -> Control:
 	var row := PanelContainer.new()
@@ -580,6 +685,55 @@ func _section_row(sec: String) -> Control:
 	var why_l := _ui_label("", 11, Color(1, 0.75, 0.4))
 	var whys := []
 	for action in (["speed", "carry"] if is_hired(sec) else (["hire"] if owned else [])):
+		var why := blocker(sec, action)
+		if why != "" and why != "maxed out" and not whys.has(why):
+			whys.append(why)
+	why_l.text = " / ".join(whys)
+	why_l.visible = not whys.is_empty()
+	v.add_child(why_l)
+	return row
+
+## PHASE 4B: the janitor's row — hire / one speed upgrade / let go.
+func _janitor_row() -> Control:
+	var sec := JANITOR
+	var row := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.12, 0.13, 0.17)
+	sb.border_color = JANITOR_COLOR
+	sb.border_width_left = 4
+	sb.set_corner_radius_all(5)
+	sb.content_margin_left = 10
+	sb.content_margin_right = 8
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
+	row.add_theme_stylebox_override("panel", sb)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	row.add_child(h)
+	var v := VBoxContainer.new()
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.add_theme_constant_override("separation", 0)
+	h.add_child(v)
+	var eligible: bool = main.sections_owned >= JANITOR_MIN_SECTIONS
+	var actions := []
+	if is_hired(sec):
+		var sl := speed_level(sec)
+		v.add_child(_ui_label("Janitor — %s  ·  $%d a shift" % [JANITOR_NAME, JANITOR_WAGE], 15, Color(0.55, 1, 0.6)))
+		v.add_child(_ui_label("Speed %d/%d (%d px/s)  ·  litter, puddles, leaks, full cans to the dumpster" % [sl + 1, JANITOR_SPEED_BY_LEVEL.size(), int(JANITOR_SPEED_BY_LEVEL[sl])], 12, Color(0.8, 0.85, 0.95)))
+		h.add_child(_button(sec, "speed", ("Faster  $%d" % next_cost(sec, "speed")) if next_cost(sec, "speed") >= 0 else "Speed MAX"))
+		h.add_child(_button(sec, "fire", "Let go"))
+		actions = ["speed"]
+	elif eligible:
+		v.add_child(_ui_label("Janitor — nobody hired", 15, Color(1, 1, 1)))
+		v.add_child(_ui_label("%s: $%d to hire, then $%d a shift — picks up litter, mops spills, empties full cans" % [JANITOR_NAME, JANITOR_HIRE_FEE, JANITOR_WAGE], 12, Color(0.8, 0.85, 0.95)))
+		h.add_child(_button(sec, "hire", "Hire  $%d" % JANITOR_HIRE_FEE))
+		actions = ["hire"]
+	else:
+		v.add_child(_ui_label("Janitor — not yet", 15, Color(0.5, 0.52, 0.58)))
+		v.add_child(_ui_label("Own %d sections to hire one ($%d to hire after that)" % [JANITOR_MIN_SECTIONS, JANITOR_HIRE_FEE], 12, Color(0.5, 0.52, 0.58)))
+	var why_l := _ui_label("", 11, Color(1, 0.75, 0.4))
+	var whys := []
+	for action in actions:
 		var why := blocker(sec, action)
 		if why != "" and why != "maxed out" and not whys.has(why):
 			whys.append(why)

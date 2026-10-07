@@ -38,6 +38,18 @@ const DISPLAY_RADIUS := 32.0 # a 44px display, any rotation (Helper.gd's number)
 const REBUILD_EVERY := 1.0
 const LOOSE_RADIUS := 16.0 # a 28px product lying anywhere (a box is bigger, but rarer on the floor)
 
+## OCT 2026 PHASE 4B: the janitor (Janitor.gd) walks this same grid, in its
+## own instance with Storage left IN (the dumpster is out there) and the
+## delivery forklift's working floor — its lane, the dock and the receiving
+## row — marked solid instead (JANITOR_KEEP_OUT), so a path to the dumpster
+## goes round the forklift's floor, never across it. Customers' grid is
+## unchanged (false).
+var for_janitor := false
+## Storage's forklift floor (world rect): the lane (Delivery.LANE_Y 1250 +-
+## the forklift's half-length and a body), the receiving row (y 1450) and
+## everything east to the dock. The dumpster (x 1975-2085) is west of it.
+const JANITOR_KEEP_OUT := Rect2(2150.0, 1150.0, 730.0, 360.0)
+
 var main: Node
 var _astar := AStarGrid2D.new()
 var _built_at := -INF
@@ -94,8 +106,10 @@ func invalidate() -> void:
 
 func _build() -> void:
 	_astar.fill_solid_region(_astar.region, false)
-	for zone in [main.BREAK_ROOM_GRID_POS, main.STORAGE_GRID_POS]:
+	for zone in ([main.BREAK_ROOM_GRID_POS] if for_janitor else [main.BREAK_ROOM_GRID_POS, main.STORAGE_GRID_POS]):
 		_solid_world_rect(Rect2(Vector2(zone.x * main.ROOM_WIDTH, zone.y * main.ROOM_HEIGHT), Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT)))
+	if for_janitor:
+		_solid_world_rect(JANITOR_KEEP_OUT)
 	for body in main.get_node("Walls").get_children():
 		_solid_body(body)
 	for gate in main.get_node("Gates").get_children():
@@ -121,6 +135,8 @@ func _build() -> void:
 	# lane's ends and parks — a shopper re-plans round it, as a helper does).
 	if main.forklift.visible:
 		_solid_body(main.forklift)
+	if for_janitor and main.delivery_forklift != null and main.delivery_forklift.visible:
+		_solid_body(main.delivery_forklift)
 
 func _solid_body(body: Node) -> void:
 	for cs in body.get_children():
@@ -159,6 +175,18 @@ func _solid_circle(center: Vector2, radius: float) -> void:
 		for y in range(c0.y, c1.y + 1):
 			if _cell_center(Vector2i(x, y)).distance_to(center) <= radius:
 				_astar.set_point_solid(Vector2i(x, y), true)
+
+## Phase 4B (the janitor): is there a grid route at all (path() falls back to
+## a straight line when there isn't)?
+func reachable(from: Vector2, to: Vector2) -> bool:
+	var a := _open_cell_near(_to_cell(from))
+	var b := _open_cell_near(_to_cell(to))
+	return a != Vector2i(-1, -1) and b != Vector2i(-1, -1) and not _astar.get_id_path(a, b).is_empty()
+
+## Phase 4B (the janitor): is this world point on open floor in the grid as
+## last built? (Its forklift side-step only steps onto open cells.)
+func is_open(p: Vector2) -> bool:
+	return not _astar.is_point_solid(_to_cell(p))
 
 func _to_cell(p: Vector2) -> Vector2i:
 	return Vector2i(clampi(int(floor(p.x / GRID)), 0, _astar.region.size.x - 1), clampi(int(floor(p.y / GRID)), 0, _astar.region.size.y - 1))

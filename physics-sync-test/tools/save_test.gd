@@ -255,7 +255,7 @@ func _phase2() -> void:
 	var d := disk()
 	check(d["shop"]["completed_day"] == 7 and d["gear"].is_empty() and d["events"]["seen"].is_empty(), "P2: saved on Day 7's report: completed 7, no gear, no events")
 	var rawj: Dictionary = _read_json(SOLO)
-	check(int(rawj.get("version", 0)) == 5 and rawj.has("gear") and rawj.has("events") and not rawj.has("endless"), "P2: the file is version 5: 'gear' and 'events', no 'endless' block (%s)" % str(rawj.keys()))
+	check(int(rawj.get("version", 0)) == SaveGameScript.VERSION and SaveGameScript.VERSION >= 5 and rawj.has("gear") and rawj.has("events") and not rawj.has("endless"), "P2: the file is the current version (5 added these): 'gear' and 'events', no 'endless' block (%s)" % str(rawj.keys()))
 	await wait(2.7)
 	check(main.save_button.text == "Save", "P2: the button reads 'Save' again after a moment")
 	_write_text(EXPECT, JSON.stringify({"money": main.money, "earned": main.lifetime_earned, "owned": main.sections_owned, "stage": main.complication_stage}))
