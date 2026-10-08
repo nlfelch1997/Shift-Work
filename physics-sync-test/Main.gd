@@ -699,10 +699,11 @@ const SECTION_PRICES := {"Produce": 600, "Dairy/Frozen": 2500, "Bakery": 6000}
 ## The money-gated stages keep their shape (about one shift's pay past the
 ## purchase they follow): manager Produce + $300, lights + spills Produce +
 ## Dairy/Frozen + $600. The top tier is no longer "the whole store + a bit":
-## lifetime $25,000 is the target's shift ~16 for a typical crew with helpers.
+## lifetime $32,000 is the target's shift ~16 for a typical crew with helpers
+## (measured: solo ~16, 2 players ~14, 3 players ~12-13 — co-op runs ahead).
 const MANAGER_EARNED := 900
 const ENVIRONMENT_EARNED := 3700
-const RUSH_EARNED := 25000
+const RUSH_EARNED := 32000
 ## The complication ladder. Stage i is on once stage i-1 is AND its own needs
 ## are met (checked at shift start, one step per shift). "sections" = sections
 ## owned (Dry Goods counts), "earned" = lifetime_earned. title/line: the
