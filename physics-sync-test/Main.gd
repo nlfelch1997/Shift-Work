@@ -1580,6 +1580,8 @@ func _priority_order_window() -> float:
 ## rows at the bottom, the debug HUD above them, and the modal end-of-day
 ## report above both (the relative order the scene's own layers already had
 ## is unchanged).
+## PHASE 5: the prep/cleanup line keeps this far from each screen edge.
+const PREP_LINE_SIDE_MARGIN := 262.0
 const UI_LAYER_ALERTS := 1
 const UI_LAYER_MENU := 2
 const UI_LAYER_DEBUG := 3
@@ -3463,11 +3465,19 @@ func _build_alert_layer() -> void:
 	_prep_label.name = "PrepLabel"
 	_prep_label.anchor_left = 0.0
 	_prep_label.anchor_right = 1.0
-	_prep_label.anchor_top = 0.07
-	_prep_label.anchor_bottom = 0.07
-	_prep_label.offset_bottom = 34.0
+	_prep_label.anchor_top = 0.0
+	_prep_label.anchor_bottom = 0.0
+	# PHASE 5: between the corner status line (top-left) and the store
+	# rating panel (top-right, StoreRating.gd: 232 px wide), wrapping, instead
+	# of the full width — a long prep/cleanup line ran under both.
+	_prep_label.offset_left = PREP_LINE_SIDE_MARGIN
+	_prep_label.offset_right = -PREP_LINE_SIDE_MARGIN
+	_prep_label.offset_top = 8.0
+	_prep_label.offset_bottom = 80.0
+	_prep_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prep_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_prep_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_prep_label.add_theme_font_size_override("font_size", 20)
+	_prep_label.add_theme_font_size_override("font_size", 17)
 	_prep_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
 	_prep_label.add_theme_constant_override("shadow_offset_x", 2)
 	_prep_label.add_theme_constant_override("shadow_offset_y", 2)

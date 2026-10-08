@@ -5,6 +5,8 @@
 # otherwise (only the bot SIMS that their own headers document under
 # --fixed-fps 60 run that way — never a timing-sensitive check).
 #   GODOT=/path/to/godot tools/run_regression.sh [OUT_DIR] [LANES] [NAME_REGEX]
+# RESUME=1 (same OUT_DIR) carries on after an interrupted run: tests already in
+# summary.txt are skipped, the rest run, the ALL: line is recounted.
 # LANES (default 2) tests run at once; each gets its own port and SW_NET_DIR.
 # PORT_BASE (default 9100): ports are PORT_BASE + 2 x the test's index — give
 # two side-by-side runs different bases (e.g. 9100 and 9500) or they collide.
@@ -110,6 +112,9 @@ export -f launch exitcode
 run_one() {
   local idx=$1 line=$2
   IFS='|' read -r name script fps nclients xvfb hargs cargs <<< "$line"
+  # PHASE 5: RESUME=1 skips tests that already have a line in summary.txt (a
+  # container restart mid-suite no longer means starting over).
+  if [ "${RESUME:-0}" = "1" ] && grep -q "^$name " "$OUT/summary.txt" 2>/dev/null; then return; fi
   local port=$((${PORT_BASE:-9100} + idx * 2))
   local log="$OUT/logs/$name"
   export SW_NET_DIR="user://rr_net_$name/"
@@ -151,7 +156,7 @@ run_one() {
 }
 export -f run_one
 
-: > "$OUT/summary.txt"
+[ "${RESUME:-0}" = "1" ] || : > "$OUT/summary.txt"
 par=(); ser=()
 for i in "${!TESTS[@]}"; do
   n="${TESTS[$i]%%|*}"
@@ -160,4 +165,5 @@ for i in "${!TESTS[@]}"; do
 done
 for i in "${par[@]}"; do printf '%s\0%s\0' "$i" "${TESTS[$i]}"; done | xargs -0 -n 2 -P "$LANES" bash -c 'run_one "$0" "$1"'
 for i in "${ser[@]}"; do run_one "$i" "${TESTS[$i]}"; done
+sed -i '/^ALL: /d' "$OUT/summary.txt"
 echo "ALL: $(grep -c ' OK ' "$OUT/summary.txt") OK, $(grep -c ' FAILED ' "$OUT/summary.txt") FAILED" | tee -a "$OUT/summary.txt"

@@ -555,7 +555,26 @@ func _counts() -> Dictionary:
 		"mem_mb": snappedf(Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, 0.1),
 		"products": get_nodes_in_group("carryable").size(),
 		"customers": get_nodes_in_group("customer").size(),
+		# PHASE 5: nodes under each of Main's children (and root's other
+		# children), to find where a node-count creep lives.
+		"tree": _subtree_counts(),
 	}
+
+func _subtree_counts() -> Dictionary:
+	var out := {}
+	for c in root.get_children():
+		if c == main:
+			for k in main.get_children():
+				out[String(k.name)] = _count_nodes(k)
+		else:
+			out["/" + String(c.name)] = _count_nodes(c)
+	return out
+
+func _count_nodes(n: Node) -> int:
+	var t := 1
+	for c in n.get_children(true):
+		t += _count_nodes(c)
+	return t
 
 ## Keeps every open shelf stocked (spawning stock at the section if none is
 ## loose), for as long as the store is open — a crew on top of its job, so
@@ -639,6 +658,15 @@ func _run_soak() -> void:
 	print("SOAK SUMMARY — %d shifts, %.1f min of real time" % [shifts, (Time.get_ticks_msec() - t0) / 60000.0])
 	for r in rows:
 		print("SOAK  ", r)
+	# PHASE 5: which subtrees grew from the first shift to the last.
+	var grew := {}
+	var t0: Dictionary = rows[0]["tree"]
+	var t1: Dictionary = rows[-1]["tree"]
+	for k in t1:
+		var d: int = t1[k] - int(t0.get(k, 0))
+		if d != 0:
+			grew[k] = d
+	print("SOAK GROWTH (nodes, first -> last shift, by subtree): %s" % str(grew))
 	# Drift checks: compare the last shift's between-shifts counts with the
 	# first's (both taken at the report, when the floor has just been cleared
 	# of customers but still holds the shift's stock).
