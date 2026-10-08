@@ -1147,10 +1147,15 @@ func _run_progress() -> void:
 	var rating_moved := false
 	var events_seen := 0
 	var t_start := _wall()
-	for n in shifts:
+	# Shifts are numbered by the game's own counter, so a run with
+	# --save-file=... that is relaunched after a crash carries on where the
+	# save left off (the save is written at every clock-out).
+	while true:
 		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 60.0)
 		await wait(0.2)
-		var shift := n + 1
+		var shift: int = main.current_day
+		if shift > shifts:
+			break
 		var money0: int = main.money
 		var bought := _spend(helpers_on)
 		_hire_spec = main.staff.staff.duplicate(true)
@@ -1185,10 +1190,9 @@ func _run_progress() -> void:
 			rating_moved = true
 		_mark("rating_moved", shift, rating_moved)
 		print("PROGRESS players=%d policy=%s shift=%d | bought %s | stage %d, sections %d, staff %s | opened at %.0fs of %.0fs prep | sold %d, pay %s, wages %s, events bonus %s %s | rating %.2f -> %.2f | bank %s -> %s, lifetime %d | gear %s | wall %.0fs" % [main.players.size(), "helpers" if helpers_on else "nohelpers", shift, str(bought), main.complication_stage, main.sections_owned, str(main.staff.staff.keys()), stats.get("opened_at", -1.0), stats["grace"], sold, main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(main.events.bonus_today), str(main.events.log_today), rating0, main.store_rating.rating, main._format_money(money0), main._format_money(main.money), main.lifetime_earned, str(main.shop.upgrades), _wall() - t0])
-		if _milestones.has("everything"):
+		if _milestones.has("everything") or shift >= shifts:
 			break
-		if n < shifts - 1:
-			main._on_continue_pressed()
+		main._on_continue_pressed()
 	print("PROGRESS SUMMARY players=%d policy=%s milestones=%s wall=%.0fmin" % [main.players.size(), "helpers" if helpers_on else "nohelpers", str(_milestones), (_wall() - t_start) / 60.0])
 	finish()
 
