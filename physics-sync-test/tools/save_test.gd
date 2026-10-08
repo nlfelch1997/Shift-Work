@@ -520,7 +520,7 @@ func _run_client() -> void:
 	var raw_before := FileAccess.get_file_as_string(CLIENT_SAVE)
 	check(await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0), "client: connected")
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	check(main.load_status == -1, "client: never reads a save of its own (status %d)" % main.load_status)
 	var n := 0
 	while true:

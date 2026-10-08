@@ -88,6 +88,7 @@ func _initialize() -> void:
 		"open-early": _run_open_early.call_deferred()
 		"gear": _run_gear.call_deferred()
 		"shots": _run_shots.call_deferred()
+		"fk-helpers": _run_fk_helpers.call_deferred()
 		_:
 			print("FAIL  unknown --test=%s" % _mode)
 			quit(1)
@@ -500,4 +501,55 @@ func _run_shots() -> void:
 	await wait(0.5)
 	check(main._demo_end.visible, "SH: the demo end screen is up")
 	await _shot("demo_end")
+	finish()
+
+## --- HELPERS AND THE FORKLIFT ------------------------------------------------------
+## Phase 4B's soak saw a section helper inside the Produce forklift's body for
+## 8 frames once. Every helper hired, the top tier (the forklift's hottest
+## lap), a long selling window, nobody playing: every physics frame, after
+## the helpers and the forklift have both moved, no helper is inside the
+## forklift's body (Helper.gd's _in_forklift(), +2px); each overlap frame is
+## printed with the state that led to it.
+##   godot --headless --path . --script res://tools/phase5_test.gd -- --server --day=7 --no-save --prep-seconds=0 --shift-seconds=300 --test=fk-helpers
+func _run_fk_helpers() -> void:
+	await wait_until(func(): return main.players.has(1), 20.0)
+	main.staff.staff = {"Produce": {"speed": 0, "carry": 0}, "Dairy/Frozen": {"speed": 0, "carry": 0}, "Bakery": {"speed": 0, "carry": 0}}
+	await wait_until(func(): return main.shift_active, 20.0)
+	player().teleport_to(Vector2(480, 270)) # out of everyone's way, in the break room
+	main.open_store(1)
+	var h: Node2D = main.staff.helpers["Produce"]
+	var fk: Node2D = main.forklift
+	var frames := 0
+	var overlap := 0
+	var close := 0
+	var near_ram := 0
+	var rams0: int = fk.rams_today
+	var episodes := 0
+	var in_ep := false
+	while main.shift_active and not main.cleanup_active:
+		# After every node's _physics_process this frame (process_frame comes
+		# after the physics step), so this sees where both actually ended up.
+		await process_frame
+		if main.is_day_report_active():
+			break
+		frames += 1
+		if not h.active or h._forklift_live() == null:
+			in_ep = false
+			continue
+		if h._in_forklift(h.position, 2.0):
+			overlap += 1
+			if not in_ep:
+				episodes += 1
+			in_ep = true
+			if overlap <= 40:
+				var rel: Vector2 = (h.position - fk.global_position).rotated(-fk.rotation)
+				print("INFO  OVERLAP f=%d helper %s (local %s) job=%s pause=%.2f | forklift %s rot %.3f v %.0f alert %s reversing %s state %s" % [frames, str(h.position.round()), str(rel.round()), h._job.get("kind", "-"), h._pause, str(fk.global_position.round()), fk.rotation, fk.velocity.length(), str(fk.alert), str(fk.reversing), str(fk.get("state"))])
+		else:
+			in_ep = false
+			if h._in_forklift(h.position, 20.0):
+				close += 1
+	print("INFO  FK-HELPERS frames %d, overlap frames %d in %d episode(s), within 20px %d, rams %d, Produce helper placed %d" % [frames, overlap, episodes, close, fk.rams_today - rams0, h.placed_today])
+	check(frames > 1200, "FK1: watched %d frames of selling" % frames)
+	check(h.placed_today > 0, "FK1: the Produce helper worked the aisle (%d placed)" % h.placed_today)
+	check(overlap == 0, "FK1: the Produce helper was never inside the forklift's body (%d frames, %d episodes; within 20px %d frames)" % [overlap, episodes, close])
 	finish()

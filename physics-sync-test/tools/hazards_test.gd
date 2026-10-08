@@ -1832,7 +1832,7 @@ func _n0_walk_then_stop() -> Array:
 func _run_net_orders_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	await wait_until(func(): return main.shift_active and main.current_day == 5, 20.0)
 	check(main.current_day == 5, "%s: Day 5 (replicated)" % who)
@@ -2663,7 +2663,7 @@ func _watch_finale_banner() -> void:
 func _run_net_ambience_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	_watch_finale_banner()
 	await wait_until(func(): return main.shift_active and main.current_day >= 6, 20.0)
@@ -3432,7 +3432,7 @@ func _run_net_delivery_host() -> void:
 func _run_net_delivery_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var go := await _net_read("n1_go.json", 60.0)
 	await wait(0.3)
@@ -3783,7 +3783,7 @@ func _watch_open_banner() -> void:
 func _run_net_prep_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	_watch_open_banner()
 	var g1 := await _net_read("np1_go.json", 60.0)
@@ -3973,7 +3973,7 @@ func _run_net_hazard_pause_host() -> void:
 func _run_net_hazard_pause_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	await _net_read("nh1_go.json", 60.0)
 	var h := await _watch_hazards(20.0)
@@ -4001,7 +4001,7 @@ func _run_net_hazard_pause_client() -> void:
 func _run_coop_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	while true:
 		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 1.0e9)
 		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
@@ -4722,7 +4722,7 @@ func _jnorm(v) -> String:
 func _run_net_cleanup_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var g1 := await _net_read("nc1_go.json", 120.0)
 	await wait(0.3)
@@ -5114,7 +5114,7 @@ func _run_net_polish_host() -> void:
 func _run_net_polish_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me) + ": "
 	var g := await _net_read("np1_go.json", 120.0)
 	var census := _po_static_checks(who)

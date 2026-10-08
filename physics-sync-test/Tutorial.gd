@@ -446,9 +446,10 @@ func _at_register(p: Node2D) -> bool:
 ## --- Card + marker -----------------------------------------------------------
 
 ## OCT 2026 PHASE 4C: the keys this player actually has bound (Settings.gd;
-## host_ or client_ set by the same rule Player.gd reads input with).
-func _keys(me: int) -> Dictionary:
-	var p := "host_" if me == 1 else "client_"
+## PHASE 5: the set this PC reads, Settings.local_prefix(), the same rule
+## Player.gd reads input with).
+func _keys(_me: int) -> Dictionary:
+	var p: String = Settings.local_prefix()
 	return {
 		"move": Settings.move_keys(p),
 		"interact": Settings.key("interact", p),

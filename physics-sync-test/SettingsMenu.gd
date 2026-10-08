@@ -17,6 +17,7 @@ var _sliders := {} # kind -> HSlider
 var _slider_values := {} # kind -> Label
 var _fullscreen: CheckButton
 var _vsync: CheckButton
+var second_set_check: CheckButton
 var _bind_buttons := {} # full action name -> Button
 var _status: Label
 var back_button: Button
@@ -77,7 +78,7 @@ func handle_key(event: InputEventKey) -> bool:
 
 func _action_text(full: String) -> String:
 	var base := full.trim_prefix("host_").trim_prefix("client_")
-	return "%s (%s)" % [Settings.ACTION_NAMES[base], "hosting" if full.begins_with("host_") else "joined"]
+	return "%s (%s)" % [Settings.ACTION_NAMES[base], "your keys" if full.begins_with("host_") else "second set"]
 
 ## Click on a key button: wait for the next key press.
 func start_capture(full: String) -> void:
@@ -183,17 +184,24 @@ func _build_display() -> Control:
 func _build_controls() -> Control:
 	var v := _tab("Controls")
 	v.add_theme_constant_override("separation", 6)
-	var intro := ui_label("Click a key to change it. Hosting or playing solo uses the left column; joining a friend's game uses the right one. A key already in use swaps with it.", 12, Color(0.8, 0.85, 0.95))
+	var intro := ui_label("Click a key to change it. A key already in use swaps with it. Everyone plays with the left column, hosting or joined — tick the box to play with the right-hand set (arrow keys) on this PC instead.", 12, Color(0.8, 0.85, 0.95))
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(intro)
+	second_set_check = CheckButton.new()
+	second_set_check.name = "SecondSet"
+	second_set_check.text = "Use the second set (arrow keys) on this PC"
+	second_set_check.toggled.connect(func(on: bool):
+		if not _syncing:
+			Settings.set_second_set(on))
+	v.add_child(second_set_check)
 	var grid := GridContainer.new()
 	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 3)
 	v.add_child(grid)
 	grid.add_child(ui_label("", 12, Color.WHITE))
-	grid.add_child(ui_label("Hosting / solo", 12, Color(1, 0.82, 0.25)))
-	grid.add_child(ui_label("Joined a game", 12, Color(1, 0.82, 0.25)))
+	grid.add_child(ui_label("Your keys", 12, Color(1, 0.82, 0.25)))
+	grid.add_child(ui_label("Second set", 12, Color(1, 0.82, 0.25)))
 	for a in Settings.ACTIONS:
 		var name_l := ui_label(Settings.ACTION_NAMES[a], 13, Color(1, 1, 1))
 		name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -231,6 +239,7 @@ func _refresh() -> void:
 		_slider_values[kind].text = "%d%%" % pct
 	_fullscreen.button_pressed = Settings.fullscreen
 	_vsync.button_pressed = Settings.vsync
+	second_set_check.button_pressed = Settings.second_set
 	for full in _bind_buttons:
 		_bind_buttons[full].text = "press a key…" if full == capturing else Settings.key_label(full)
 	reset_button.disabled = Settings.controls_are_default()

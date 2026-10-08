@@ -1,12 +1,13 @@
 # Art credits — Break Room (Week 23)
 
-Credits for the art added in the Week 23 Break Room pass. (The older art
-packs under `supermarket/` and `warehouse/` aren't listed here yet.)
+Credits for the art added in the Week 23 Break Room pass. The older packs
+under `supermarket/` and `warehouse/` are at the end of this file: their
+source is UNRESOLVED.
 
 | Files | Used for | Source | Author | License |
 |---|---|---|---|---|
-| `breakroom-furniture/PixelFurniture.png` | Break Room furniture: fridge, sink counter, coffee-machine cabinet, binder shelf, cubby shelf, staff lockers, table + chairs, armchairs (`BreakRoom.gd`) | Pixel Furniture pack | Kelano Studio | Free for commercial use, no attribution required — credited as a courtesy |
-| `vending-machines/*.png` (only `Vending Machine 2.1.png` is used) | Break Room vending machine (`BreakRoom.gd`) | Pixel Art Vending Machines | karsiori | CC0 |
+| `breakroom-furniture/PixelFurniture.png` | Break Room furniture: fridge, sink counter, coffee-machine cabinet, binder shelf, cubby shelf, staff lockers, table + chairs, armchairs (`BreakRoom.gd`) | Pixel Furniture pack (source URL: **TODO — not recorded**) | Kelano Studio | Free for commercial use, no attribution required — credited as a courtesy |
+| `vending-machines/*.png` (only `Vending Machine 2.1.png` is used) | Break Room vending machine (`BreakRoom.gd`) | Pixel Art Vending Machines (source URL: **TODO — not recorded**) | karsiori | CC0 |
 | `breakroom-furniture/Employee of the Month.webp` | Break Room "Employee of the Month" photo | Supplied by the project owner (signed "Big Papa Felch") | — | Project-owned |
 
 Notes:
@@ -52,3 +53,27 @@ Credits-screen / Steam-page text:
 > Carlo Enrico Victoria (Nemisys), Thane Brimhall (pennomi), Mandi Paugh,
 > laetissima, thecilekli, William.Thompsonj and Napsio (Vitruvian Studio). Full per-file credits and source
 > links: CREDITS-LPC.csv. Sprite sheets lightly modified for Shift Work (name tag).
+
+# UNRESOLVED — the supermarket and warehouse tile packs (Phase 5 audit)
+
+| Files | Used for | Source | License |
+|---|---|---|---|
+| `supermarket/Tile_A2-2.png`, `supermarket/Auto-tile-A4-walls-3.png`, `supermarket/1.png`, `2.png`, `4.png`, `11.png` (and unused `3.png`, `5.png`-`10.png`) | Floors, sales-floor walls, shelving bays, every product sprite, litter, trash bins, checkout lanes, carts, the store sign board, the time clock, produce crates (`StoreArt.gd`, `Customer.gd`, `Cleanup.gd`, `Main.gd`, `Delivery.gd`) | **UNKNOWN** — RPG Maker MV-format "supermarket" pack | **UNKNOWN** |
+| `warehouse/Auto-tile-A4-walls-2.png`, `warehouse/Auto-tile-A4-walls-3.png` (a copy of the supermarket one), `warehouse/tile-B-03.png`, `tile-B-04.png`, `tile-B-05.png` (and unused `tile-B-01.png`, `tile-B-02.png`) | Storage walls, the tool station, both forklifts, pallets and delivery boxes (`StoreArt.gd`, `Cleanup.gd`, `Forklift.gd`, `Delivery.gd`) | **UNKNOWN** — RPG Maker MV-format "warehouse" pack | **UNKNOWN** |
+
+What the repository shows (Phase 5, Oct 2026): both packs arrived in one
+commit by the project owner (`d1b8678`, "Add warehouse and supermarket tileset
+assets for art integration pass", 26 Sep 2026) with no license file, readme,
+store page or author name, and the PNGs carry no metadata. Nothing else in
+the history names a source. **To resolve:** find the purchase receipt or store
+page, record the pack names, authors, URLs and license terms here, and confirm
+the art is hand-made. `docs/asset-audit.md` (rows A1-A11) explains why
+that last point matters.
+
+# Also to confirm
+
+- `breakroom-furniture/Employee of the Month.webp` (the break-room portrait):
+  "supplied by the project owner". Who made the image and how, and, if it
+  depicts a real person, their permission. See `docs/asset-audit.md` row A14.
+- No app/window icon is set (`project.godot` has no `config/icon`), so
+  exports use Godot's default icon.

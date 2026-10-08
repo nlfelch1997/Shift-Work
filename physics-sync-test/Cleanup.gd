@@ -1577,5 +1577,5 @@ func _my_player(me: int) -> Node2D:
 	var p = main.players.get(me)
 	return p if p != null and is_instance_valid(p) and p.is_inside_tree() else null
 
-func _place_key(me: int) -> String:
-	return Settings.key("place", "host_" if me == 1 else "client_") # PHASE 4C: the bound key
+func _place_key(_me: int) -> String:
+	return Settings.key("place") # PHASE 4C: the bound key (PHASE 5: this PC's key set)

@@ -695,7 +695,7 @@ func _run_net_staff_host() -> void:
 func _run_net_staff_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var n := 0
 	while true:
@@ -1195,7 +1195,7 @@ func _run_progress_client() -> void:
 		upkeep_hook = _event_upkeep
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	while true:
 		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 1.0e9)
 		await wait(1.0) # the host spends first
