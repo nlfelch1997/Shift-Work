@@ -120,6 +120,8 @@ func _text_rect(c: Control) -> Rect2:
 	var l: Label = c if c is Label else c.get_child(0)
 	var w: float = l.get_theme_font("font").get_string_size(l.text, HORIZONTAL_ALIGNMENT_LEFT, -1, l.get_theme_font_size("font_size")).x
 	var g := l.get_global_rect()
+	if l.autowrap_mode != TextServer.AUTOWRAP_OFF:
+		w = minf(w, g.size.x) # PHASE 5: the prep line wraps inside its own box
 	return Rect2(g.get_center().x - w * 0.5, g.position.y, w, g.size.y)
 
 func _f3_checks(tag: String) -> void:
@@ -178,13 +180,13 @@ func _run_past_week() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
 	root.size = Vector2i(960, 540)
 	await frames(3)
-	check(status().text == "Day 7  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E0: Day 7 ('%s')" % status().text)
+	check(status().text == "Shift 7  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E0: Shift 7 ('%s')" % status().text)
 	await _end_day()
 	main._on_continue_pressed()
 	await wait_until(func(): return main.current_day == 8 and main.shift_active, 8.0)
 	await frames(3)
 	_common_checks("E1")
-	check(status().text == "Day 8  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E1: Day 8 is an ordinary shift ('%s')" % status().text)
+	check(status().text == "Shift 8  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E1: Day 8 is an ordinary shift ('%s')" % status().text)
 	for word in ["Endless", "Shift #", "Bucks", "Break Room  ·"]:
 		check(not status().text.contains(word), "E1: no '%s' on the line" % word)
 	check(main.get_node_or_null("HubUI") == null and main.get_node_or_null("Endless") == null, "E2: no hub screen or Endless node any more")

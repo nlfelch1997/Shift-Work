@@ -394,12 +394,12 @@ func _run_hire() -> void:
 	check(st().staff.is_empty() and main.money == 0, "H3: pressing it anyway is refused by the host")
 	check(main._toast_label.text.contains("need $"), "H3: ...and says why ('%s')" % main._toast_label.text)
 	# --- H4 hired
-	main.money = 1000
+	main.money = 3000
 	b = await panel_button("Produce:hire")
 	check(b != null and not b.disabled, "H4: with the money, Hire is live")
 	await press_button("Produce:hire")
 	var h := helper("Produce")
-	check(st().is_hired("Produce") and main.money == 1000 - st().HIRE_FEE["Produce"], "H4: Sam hired for Produce — bank $1000 -> %s" % main._format_money(main.money))
+	check(st().is_hired("Produce") and main.money == 3000 - st().HIRE_FEE["Produce"], "H4: Sam hired for Produce — bank $3000 -> %s" % main._format_money(main.money))
 	check(st().speed_level("Produce") == 0 and st().carry_level("Produce") == 0 and h.speed == st().SPEED_BY_LEVEL[0] and h.capacity == st().CARRY_BY_LEVEL[0], "H4: starts at speed %d px/s, carrying %d" % [int(h.speed), h.capacity])
 	await wait(0.2)
 	check(h.active and h.visible and main._grid_cell_of(h.position) == Vector2i(2, 1), "H4: on the floor in Produce (%s)" % str(h.position.round()))

@@ -1286,7 +1286,10 @@ func _run_orders() -> void:
 		table[d] = [main._prep_ceiling(), main._current_shift_duration()]
 	_econ_restore(real_day)
 	print("PREP  day -> [prep ceiling, day clock]: %s" % str(table))
-	var want := {1: [180.0, sd], 2: [180.0, sd], 3: [360.0, sd], 4: [360.0, sd], 5: [540.0, sd], 6: [540.0, sd], 7: [720.0, sd - main.FINALE_SELLING_CUT]}
+	# (PHASE 5: per section from the constant — 180 s until then, 90 s now.)
+	var ps: float = main.PREP_CEILING_BASE
+	var pp: float = main.PREP_CEILING_PER_SECTION
+	var want := {1: [ps, sd], 2: [ps, sd], 3: [ps + pp, sd], 4: [ps + pp, sd], 5: [ps + 2 * pp, sd], 6: [ps + 2 * pp, sd], 7: [ps + 3 * pp, sd - main.FINALE_SELLING_CUT]}
 	for d in range(1, 8):
 		check(is_equal_approx(table[d][0], want[d][0]) and is_equal_approx(table[d][1] - table[d][0], want[d][1]), "G: Day %d: prep ceiling %.0fs, clock %.0fs -> %.0fs selling if the whole ceiling is used (as before: %.0fs)" % [d, table[d][0], table[d][1], table[d][1] - table[d][0], want[d][1]])
 	check(absf(prep_now - table[5][0]) < 0.5 and not main.store_open, "G: the live Day 5 shift started closed, with %.1fs of prep" % prep_now)
@@ -3070,7 +3073,7 @@ func _run_delivery() -> void:
 	var names: Array = main._unlocked_sections().map(func(s): return s["name"])
 	# --- D1 (WEEK 16): the store opens empty and closed — all stock arrives
 	# by truck, starting during prep.
-	check(floor_total() == 0 and not main.store_open and main.prep_time_left > 300.0, "D1: day opens with no stock on the floor (%d), store closed, %.0fs of prep" % [floor_total(), main.prep_time_left])
+	check(floor_total() == 0 and not main.store_open and main.prep_time_left > 200.0, "D1: day opens with no stock on the floor (%d), store closed, %.0fs of prep" % [floor_total(), main.prep_time_left])
 	check(boxes().is_empty() and not d.truck_parked(), "D1: no boxes, no truck at opening")
 	check(dfk().active and dfk().visible and not dfk().is_in_group("forklift") and main.manager.get_tree().get_first_node_in_group("forklift") == fk(), "D1: delivery forklift live; the manager's 'forklift' is still the Produce one")
 	# Quiet store for the mechanics checks.
