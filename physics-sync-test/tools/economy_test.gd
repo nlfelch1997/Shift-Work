@@ -660,10 +660,10 @@ func _run_soak() -> void:
 		print("SOAK  ", r)
 	# PHASE 5: which subtrees grew from the first shift to the last.
 	var grew := {}
-	var t0: Dictionary = rows[0]["tree"]
-	var t1: Dictionary = rows[-1]["tree"]
-	for k in t1:
-		var d: int = t1[k] - int(t0.get(k, 0))
+	var tree0: Dictionary = rows[0]["tree"]
+	var tree1: Dictionary = rows[-1]["tree"]
+	for k in tree1:
+		var d: int = tree1[k] - int(tree0.get(k, 0))
 		if d != 0:
 			grew[k] = d
 	print("SOAK GROWTH (nodes, first -> last shift, by subtree): %s" % str(grew))
