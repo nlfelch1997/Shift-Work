@@ -37,7 +37,7 @@ extends Node2D
 
 const UPGRADES := [
 	{"key": "shoes", "name": "Comfy Sneakers", "desc": "+8% walking speed per level", "costs": [200, 450, 800]},
-	{"key": "brace", "name": "Back Brace", "desc": "+1 product at once: E grabs till full, E again sets all down", "costs": [400, 1000]},
+	{"key": "brace", "name": "Back Brace", "desc": "+1 product at once: {interact} grabs till full, {interact} again sets all down", "costs": [400, 1000]},
 	{"key": "soles", "name": "Non-Slip Soles", "desc": "spills slow you less, you slide less", "costs": [200, 450]},
 	{"key": "boots", "name": "Steel-Toe Boots", "desc": "shorter stun when the forklift hits you", "costs": [150, 350]},
 	{"key": "alibi", "name": "Plausible Deniability", "desc": "manager takes +0.5s longer to write you up", "costs": [250, 550]},
@@ -275,7 +275,7 @@ func _process(_delta: float) -> void:
 	var here: bool = p != null and near_lockers(p.global_position) and main.shift_active and not main.is_day_report_active() and not main.tutorial.active
 	_hint.visible = here
 	if here:
-		_hint.text = "E: close the shop" if panel.visible else "E: gear shop — crew upgrades"
+		_hint.text = Settings.key("interact") + ": close the shop" if panel.visible else Settings.key("interact") + ": gear shop — crew upgrades"
 	if panel.visible and not here:
 		panel.visible = false # walked off, the shift ended...
 	if not panel.visible:
@@ -336,7 +336,7 @@ func _row(u: Dictionary) -> Control:
 	v.add_theme_constant_override("separation", 0)
 	h.add_child(v)
 	v.add_child(_ui_label("%s  Lv %d/%d" % [u["name"], lvl, u["costs"].size()], 13, Color(1, 0.82, 0.25) if lvl > 0 else Color(1, 1, 1)))
-	var d := _ui_label(u["desc"], 11, Color(0.62, 0.64, 0.7))
+	var d := _ui_label(u["desc"].replace("{interact}", Settings.key("interact")), 11, Color(0.62, 0.64, 0.7))
 	d.custom_minimum_size = Vector2(240, 0)
 	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(d)

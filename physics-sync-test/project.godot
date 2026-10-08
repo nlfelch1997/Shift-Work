@@ -23,11 +23,14 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 Net="*res://Net.gd"
 GameLog="*res://GameLog.gd"
 Sfx="*res://Sfx.gd"
+Settings="*res://Settings.gd"
 
 [display]
 
 window/size/viewport_width=960
 window/size/viewport_height=540
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [input]
 

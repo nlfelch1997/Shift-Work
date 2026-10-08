@@ -1536,34 +1536,34 @@ func _update_hint(me: int, cleanup: bool) -> void:
 	var held := tool_of(me)
 	match a:
 		"pan_empty":
-			text = "E: empty the dustpan into the can (%d)" % tools[held]["pan"]
+			text = Settings.key("interact") + ": empty the dustpan into the can (%d)" % tools[held]["pan"]
 		"tool_put":
 			var t: Dictionary = tools[held]
 			if t["kind"] == "broom" and t["full"]:
 				text = "Dustpan full — empty it at a trash can"
 			elif float(t["work"]) < 0.0:
-				text = "Hold %s: %s  ·  E: put it down" % [_place_key(me), "mop" if t["kind"] == "mop" else "sweep"]
+				text = "Hold %s: %s  ·  %s: put it down" % [_place_key(me), "mop" if t["kind"] == "mop" else "sweep", Settings.key("interact")]
 		"tool_pick":
-			text = "E: pick up the %s" % tools[_nearest_free_tool(p.global_position)]["kind"]
+			text = Settings.key("interact") + ": pick up the %s" % tools[_nearest_free_tool(p.global_position)]["kind"]
 		"bag_dump":
-			text = "E: into the dumpster!"
+			text = Settings.key("interact") + ": into the dumpster!"
 		"bag_put":
-			text = "Take the bag to the DUMPSTER (out back, Storage)  ·  E: set it down"
+			text = "Take the bag to the DUMPSTER (out back, Storage)  ·  %s: set it down" % Settings.key("interact")
 		"bin_trash":
-			text = "E: throw it in the can  (+$%d)" % (hand_count(me) * LITTER_PAY_PER_PIECE)
+			text = Settings.key("interact") + ": throw it in the can  (+$%d)" % (hand_count(me) * LITTER_PAY_PER_PIECE)
 		"pick_trash":
-			text = "E: pick up trash" + (" (%d/%d in hand)" % [hand_count(me), HAND_MAX] if hand_count(me) > 0 else "")
+			text = Settings.key("interact") + ": pick up trash" + (" (%d/%d in hand)" % [hand_count(me), HAND_MAX] if hand_count(me) > 0 else "")
 		"can_full":
 			text = "This can's FULL — take its bag to the dumpster"
 		"hands_full":
 			text = "Hands full (%d) — throw it in a trash can" % hand_count(me)
 		"drop_trash":
-			text = "Trash in hand (%d) — throw it in a trash can  ·  E: drop it" % hand_count(me)
+			text = "Trash in hand (%d) — throw it in a trash can  ·  %s: drop it" % [hand_count(me), Settings.key("interact")]
 		"bag_pick":
-			text = "E: pick up the bin bag"
+			text = Settings.key("interact") + ": pick up the bin bag"
 		"bag_take":
 			var c := can_near(p.global_position, false, true)
-			text = "E: take the bag out (%d/%d)" % [cans[c], can_capacity()] + ("  — it's FULL!" if can_full(c) else "")
+			text = Settings.key("interact") + ": take the bag out (%d/%d)" % [cans[c], can_capacity()] + ("  — it's FULL!" if can_full(c) else "")
 	if text == "":
 		return
 	hint_text = text
@@ -1578,4 +1578,4 @@ func _my_player(me: int) -> Node2D:
 	return p if p != null and is_instance_valid(p) and p.is_inside_tree() else null
 
 func _place_key(me: int) -> String:
-	return "C" if me == 1 else "/"
+	return Settings.key("place", "host_" if me == 1 else "client_") # PHASE 4C: the bound key

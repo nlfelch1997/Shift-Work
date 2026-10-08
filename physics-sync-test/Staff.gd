@@ -612,7 +612,7 @@ func _update_board_ui() -> void:
 	var here: bool = p != null and near_board(p.global_position) and main.shift_active and not main.is_day_report_active()
 	_hint.visible = here and _staffing_live()
 	if _hint.visible:
-		_hint.text = "E: close the staff board" if panel.visible else "E: staff board — hire help"
+		_hint.text = Settings.key("interact") + ": close the staff board" if panel.visible else Settings.key("interact") + ": staff board — hire help"
 	if panel.visible and not (here and _staffing_live()):
 		panel.visible = false # walked off, the shift ended, practice...
 	if not panel.visible:

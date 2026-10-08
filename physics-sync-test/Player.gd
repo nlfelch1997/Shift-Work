@@ -280,6 +280,15 @@ func _physics_process(delta: float) -> void:
 		place_pressed = Input.is_action_just_pressed("client_place")
 		place_held = Input.is_action_pressed("client_place")
 		defend_pressed = Input.is_action_just_pressed("client_defend")
+	# OCT 2026 PHASE 4C: the pause menu (or Settings) is up — in co-op the
+	# world keeps running, so this player just stands still meanwhile.
+	if not bot_mode and get_tree().current_scene.pause_menu.blocks_input():
+		dir = Vector2.ZERO
+		interact_pressed = false
+		throw_pressed = false
+		place_pressed = false
+		place_held = false
+		defend_pressed = false
 	if dir.length() > 0.1:
 		_last_move_dir = dir.normalized()
 		facing_angle = _last_move_dir.angle()
@@ -792,6 +801,7 @@ func _update_place_target() -> void:
 		if _place_target_slot:
 			_place_target_slot.get_node("Prompt").visible = false
 		if new_target:
+			new_target.get_node("Prompt").text = Settings.key("place") # PHASE 4C: the bound key
 			new_target.get_node("Prompt").visible = true
 		_place_target_slot = new_target
 

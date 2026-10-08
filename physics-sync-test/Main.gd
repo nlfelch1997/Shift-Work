@@ -838,6 +838,8 @@ const StoreRatingScript := preload("res://StoreRating.gd")
 const SaveGameScript := preload("res://SaveGame.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
+const PauseMenuScript := preload("res://PauseMenu.gd")
+const SettingsMenuScript := preload("res://SettingsMenu.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
 const CustomerScript := preload("res://Customer.gd")
@@ -1045,7 +1047,7 @@ var bounced_today := 0
 var bounced_week := 0
 var rating_sales_today := 0
 var rating_sales_week := 0
-var _bounce_times: Array = [] # host: Time.get_ticks_msec() of recent bounces
+var _bounce_times: Array = [] # host: game_clock of recent bounces (PHASE 4C: was wall-clock ms)
 var writeups_by_peer := {}
 ## WEEK 11 — priority orders (see PRIORITY_ORDER_* above). The open order and
 ## the day's order tallies are host-written and replicated via DaySync, the
@@ -1616,6 +1618,51 @@ var tutorial: Node2D
 ## Host: Host Game was clicked in the menu (not a --server test launch) — the
 ## only way a brand-new crew is offered practice on its own (Tutorial.gd).
 var _host_from_menu := false
+
+## --- OCT 2026 PHASE 4C: pause menu, settings, quitting ----------------------
+## PauseMenu.gd (Esc) and SettingsMenu.gd (over Settings.gd, the autoload).
+##
+## CO-OP DECISION: in a networked game the pause menu is an overlay, not a
+## pause — the host is authoritative and freezing one peer would desync the
+## crew, so the world keeps running and the menu says so; the player's own
+## input is ignored while it's open. Solo (hosting, nobody connected) it
+## really pauses (get_tree().paused). A host-wide synchronized pause was
+## considered and NOT built: every MultiplayerSynchronizer stops in a paused
+## tree, so un-pausing would need its own always-processing RPC path on every
+## peer, plus a rule for who may pause whom — risk this phase doesn't need.
+##
+## QUITTING (leave_session()): the network peer is closed first (a host's
+## clients hear "server disconnected" at once instead of timing out; a
+## client's host drops its player and whatever it carried, as for any
+## disconnect), then the game quits or reloads Main.tscn to the main menu.
+## Nothing is saved on the way out: saving stays at clock-out (plus the
+## purchases that already save as they happen), so a crew that quits
+## mid-shift picks up at the start of that day next time — the pause menu
+## says so and asks first (quit_loss_text()). A client whose host leaves goes
+## back to its main menu with a note, instead of the window just closing.
+var pause_menu: CanvasLayer
+var settings_menu: CanvasLayer
+var _esc_hint: Label
+var _menu_notice: Label
+var _menu_settings_button: Button
+var _menu_quit_button: Button
+## Seconds of game time: advances with Main's _process, so it stops while a
+## solo game is paused. For timers that used Time.get_ticks_msec() (the
+## manager's grace windows, the recent-bounce window), which would otherwise
+## jump on resume.
+var game_clock := 0.0
+## A client whose host leaves: quit (true — the automated --client runs,
+## whose tests end that way) or go back to the main menu (false — a player
+## who joined from the menu).
+var quit_on_host_loss := false
+## Survive Main.tscn being reloaded for "Quit to Main Menu": the command
+## line's --server/--client autostart only happens once per launch, and the
+## note the fresh menu shows ("The host ended the session").
+static var _autostart_done := false
+static var _pending_menu_notice := ""
+## Tests: leave_session() calls this instead of quitting/reloading when set
+## (Callable taking to_desktop: bool), after closing the network as usual.
+var test_leave_hook := Callable()
 var _practice_requested := false
 ## WEEK 23 — the dressed break room and its coffee machine (BreakRoom.gd).
 var break_room: Node2D
@@ -1822,10 +1869,7 @@ func _ready() -> void:
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
 	multiplayer.connected_to_server.connect(_on_connected_to_server)
 	multiplayer.connection_failed.connect(_on_connection_failed)
-	multiplayer.server_disconnected.connect(func():
-		print("[Main] Host disconnected, quitting.")
-		get_tree().quit()
-	)
+	multiplayer.server_disconnected.connect(_on_server_disconnected)
 
 	host_button.pressed.connect(func():
 		_host_from_menu = true
@@ -1853,11 +1897,13 @@ func _ready() -> void:
 	_build_time_clock()
 	_build_gate_hint()
 	_build_report_extras()
+	_build_pause_and_settings()
 
 	_parse_cli_args()
 
 func _parse_cli_args() -> void:
 	var args := OS.get_cmdline_user_args()
+	quit_on_host_loss = "--client" in args
 	bot_mode = "--bot" in args
 	for arg in args:
 		if arg.begins_with("--connect-port="):
@@ -1910,6 +1956,10 @@ func _parse_cli_args() -> void:
 	if "--new-game" in args:
 		_skip_load = true
 	_practice_requested = _practice_requested or "--practice" in args
+	# PHASE 4C: back at the menu after "Quit to Main Menu" — no autostart.
+	if _autostart_done:
+		return
+	_autostart_done = true
 	if "--server" in args:
 		_on_host_pressed()
 	elif "--client" in args:
@@ -2157,6 +2207,8 @@ func _start_bot_timer() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	print("[Main] Peer connected: %d" % id)
+	# PHASE 4C: a joiner can't load into a paused world.
+	pause_menu.crew_joined()
 	if multiplayer.is_server():
 		_spawn_player(id)
 
@@ -2447,7 +2499,7 @@ func _build_store_sign() -> void:
 	_sign_text.add_theme_color_override("font_color", Color(1, 1, 1))
 	sign.add_child(_sign_text)
 	_sign_hint = Label.new()
-	_sign_hint.text = "E: open the store"
+	_sign_hint.text = Settings.key("interact") + ": open the store"
 	_sign_hint.position = Vector2(-80, -86)
 	_sign_hint.size = Vector2(160, 24)
 	_sign_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2466,6 +2518,8 @@ func _update_store_sign(delta: float) -> void:
 	_sign_text.text = "CLOSED" if closed else "OPEN"
 	var me := multiplayer.get_unique_id() if Net.is_active() else 0
 	_sign_hint.visible = closed and not cleanup_active and players.has(me) and is_instance_valid(players[me]) and near_store_sign(players[me].global_position)
+	if _sign_hint.visible:
+		_sign_hint.text = Settings.key("interact") + ": open the store" # PHASE 4C: the bound key
 	_open_banner_t = maxf(0.0, _open_banner_t - delta)
 	_update_time_clock(me)
 	_update_gate_hint(me)
@@ -2597,7 +2651,7 @@ func _build_time_clock() -> void:
 	label.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2))
 	node.add_child(label)
 	_clock_hint = Label.new()
-	_clock_hint.text = "E: clock out"
+	_clock_hint.text = Settings.key("interact") + ": clock out"
 	_clock_hint.position = Vector2(-80, -76)
 	_clock_hint.size = Vector2(160, 24)
 	_clock_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2634,7 +2688,7 @@ func gate_hint_for(pos: Vector2) -> Array:
 		return ["", "", false]
 	var why := purchase_blocker(sec)
 	if why == "":
-		return [sec, "E: buy %s — $%d\n(bank %s)" % [sec, section_price(sec), _format_money(money)], true]
+		return [sec, Settings.key("interact") + ": buy %s — $%d\n(bank %s)" % [sec, section_price(sec), _format_money(money)], true]
 	return [sec, "%s — $%d\n%s" % [sec, section_price(sec), why], false]
 
 func _update_gate_hint(me: int) -> void:
@@ -2654,6 +2708,8 @@ func _update_gate_hint(me: int) -> void:
 
 func _update_time_clock(me: int) -> void:
 	_clock_hint.visible = cleanup_active and not _day_report_active and players.has(me) and is_instance_valid(players[me]) and near_time_clock(players[me].global_position)
+	if _clock_hint.visible:
+		_clock_hint.text = Settings.key("interact") + ": clock out" # PHASE 4C: the bound key
 
 ## PLAYTEST ROOT-CAUSE FIX ("Day 2 starts fully stocked, nothing to do"):
 ## nothing previously reset shelf-fill state or the physical product pool
@@ -3547,8 +3603,8 @@ func sale_price() -> int:
 
 ## Host: bounces in the last BOUNCE_CALM_SECONDS.
 func recent_bounces() -> int:
-	var now := Time.get_ticks_msec()
-	_bounce_times = _bounce_times.filter(func(t): return now - int(t) < BOUNCE_CALM_SECONDS * 1000.0)
+	var now := game_clock
+	_bounce_times = _bounce_times.filter(func(t): return now - float(t) < BOUNCE_CALM_SECONDS)
 	return _bounce_times.size()
 
 ## Any peer: E on a troublemaker (Player.gd's grabbable_customer()).
@@ -3637,7 +3693,7 @@ func check_bounce(c: Node, peer: int) -> void:
 	if not tutorial.active:
 		bounced_today += 1
 		bounced_week += 1
-	_bounce_times.append(Time.get_ticks_msec())
+	_bounce_times.append(game_clock)
 	cleanup._bump_stat(peer, "bounced", 1)
 	print("[Main] %s BOUNCED %s out the door (+$%d)" % [player_display_name(peer), c.name, BOUNCE_PAY])
 	c.force_leave()
@@ -4054,6 +4110,7 @@ func _deal_customer_look() -> int:
 	return _last_customer_look
 
 func _process(delta: float) -> void:
+	game_clock += delta
 	# WEEK 7 — runs on every peer, purely reactive to current_day (which is
 	# host-authoritative, replicated — see _day_sync in _ready()), not
 	# something this check itself changes. Catches: the very first tick on
@@ -4240,6 +4297,173 @@ func _process(delta: float) -> void:
 	# priority order one frame late (clients were fine, they get it by sync).
 	_update_alert_layer(delta)
 	_update_store_sign(delta)
+	_esc_hint.visible = in_game() and not players.is_empty() and not _day_report_active
+	_esc_hint.text = "Esc: menu"
 	# WEEK 19: the manager goes home at close (every peer, from the
 	# replicated flag; his rounds stop in Manager.gd).
 	manager.visible = manager.active and not cleanup_active
+
+## --- OCT 2026 PHASE 4C: pause menu, settings, quitting ----------------------------
+## (See the PHASE 4C note by pause_menu's declaration.)
+
+func _build_pause_and_settings() -> void:
+	settings_menu = SettingsMenuScript.new()
+	settings_menu.name = "SettingsMenu"
+	settings_menu.main = self
+	add_child(settings_menu)
+	pause_menu = PauseMenuScript.new()
+	pause_menu.name = "PauseMenu"
+	pause_menu.main = self
+	pause_menu.settings_menu = settings_menu
+	add_child(pause_menu)
+	# The main menu's own Settings and Quit, under Join.
+	var menu: VBoxContainer = host_button.get_parent()
+	_menu_settings_button = Button.new()
+	_menu_settings_button.name = "SettingsButton"
+	_menu_settings_button.text = "Settings"
+	_menu_settings_button.pressed.connect(settings_menu.open)
+	menu.add_child(_menu_settings_button)
+	_menu_quit_button = Button.new()
+	_menu_quit_button.name = "QuitButton"
+	_menu_quit_button.text = "Quit"
+	_menu_quit_button.pressed.connect(func(): leave_session(true))
+	menu.add_child(_menu_quit_button)
+	# The scene's menu box was sized for its first four rows; let it grow
+	# downward from the same top edge.
+	menu.offset_bottom = menu.offset_top + 300.0
+	# A note over the menu after leaving a game ("The host ended the session").
+	_menu_notice = Label.new()
+	_menu_notice.name = "MenuNotice"
+	_menu_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_menu_notice.anchor_left = 0.0
+	_menu_notice.anchor_right = 1.0
+	_menu_notice.anchor_top = 0.5
+	_menu_notice.anchor_bottom = 0.5
+	_menu_notice.offset_left = 80.0
+	_menu_notice.offset_right = -80.0
+	_menu_notice.offset_top = -120.0
+	_menu_notice.offset_bottom = -40.0
+	_menu_notice.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	_menu_notice.add_theme_font_size_override("font_size", 16)
+	_menu_notice.add_theme_color_override("font_color", Color(0.18, 0.18, 0.2, 1))
+	_menu_notice.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.85))
+	_menu_notice.add_theme_constant_override("outline_size", 4)
+	_menu_notice.text = _pending_menu_notice
+	_menu_notice.visible = _pending_menu_notice != ""
+	_pending_menu_notice = ""
+	menu_layer.add_child(_menu_notice)
+	# "Esc: menu", bottom-left, small: the pause menu's hint while playing.
+	_esc_hint = Label.new()
+	_esc_hint.name = "EscHint"
+	_esc_hint.anchor_top = 1.0
+	_esc_hint.anchor_bottom = 1.0
+	_esc_hint.offset_left = 10.0
+	_esc_hint.offset_top = -24.0
+	_esc_hint.offset_bottom = -6.0
+	_esc_hint.add_theme_font_size_override("font_size", 12)
+	_esc_hint.add_theme_color_override("font_color", Color(1, 0.94, 0.82, 0.8))
+	_esc_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_esc_hint.add_theme_constant_override("shadow_offset_x", 1)
+	_esc_hint.add_theme_constant_override("shadow_offset_y", 1)
+	_esc_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_esc_hint.visible = false
+	$DebugLayer.add_child(_esc_hint)
+
+## Past the main menu: hosting, joined, or still connecting.
+func in_game() -> bool:
+	return not menu_layer.visible
+
+## Solo: this PC hosts and nobody else is connected — the only case where
+## the pause menu really pauses.
+func is_solo() -> bool:
+	return Net.is_active() and multiplayer.is_server() and multiplayer.get_peers().is_empty()
+
+## Esc's first job: close this peer's open Staff Board / gear shop panel.
+func close_open_panel() -> bool:
+	for owner_node in [staff, shop]:
+		if owner_node.panel.visible:
+			owner_node.toggle_panel()
+			return true
+	return false
+
+## The pause menu's line about where the game is.
+func pause_info_text() -> String:
+	if not Net.is_active():
+		return "Not connected yet."
+	var where := ""
+	if _day_report_active:
+		where = "Day %d is over and saved." % current_day if multiplayer.is_server() and save_enabled else "Day %d is over." % current_day
+	elif tutorial.active:
+		where = "Practice shift."
+	elif cleanup_active:
+		where = "Day %d — cleanup." % current_day
+	elif shift_active and not store_open:
+		where = "Day %d — prep (store closed)." % current_day
+	elif shift_active:
+		where = "Day %d — store open." % current_day
+	else:
+		where = "Day %d." % current_day
+	var crew := players.size()
+	return "%s  ·  %s\nSaving happens at clock-out, at the end of each shift." % [where, "solo" if crew <= 1 else "%d on the crew" % crew]
+
+## What quitting right now would lose, said plainly — "" if nothing (no game
+## yet, or the day's report is up, i.e. the day is already saved). The pause
+## menu shows it and asks before quitting.
+func quit_loss_text() -> String:
+	if not Net.is_active() or not in_game():
+		return ""
+	if not multiplayer.is_server():
+		return "You'll leave the crew. The host's game keeps going without you — the shop's progress lives in the host's save."
+	var others := multiplayer.get_peers().size()
+	var crew_line := ("\n\nEveryone else on the crew (%d) will be sent back to their main menu." % others) if others > 0 else ""
+	if _day_report_active:
+		return ("Day %d is saved." % current_day + crew_line) if others > 0 else ""
+	if tutorial.active:
+		return "The practice shift isn't saved — next time you host, your shop picks up where your save left off." + crew_line
+	if not save_enabled:
+		return "Saving is off for this session — nothing from it will be kept." + crew_line
+	return "Today's shift isn't saved — saving happens at clock-out. Sales, pay and cleanup from Day %d's shift so far will be lost, and next time you host the crew starts Day %d again from the last save.\n(Sections, gear and staff you bought are already saved.)" % [current_day, current_day] + crew_line
+
+## Quit to desktop (to_desktop) or to the main menu. Closes the network
+## first, so nobody is left waiting on a timeout; never writes the save.
+func leave_session(to_desktop: bool) -> void:
+	get_tree().paused = false
+	var was_host := Net.is_active() and multiplayer.is_server()
+	var peer := multiplayer.multiplayer_peer
+	if peer != null and not (peer is OfflineMultiplayerPeer):
+		print("[Main] Leaving the session (%s) — closing the network" % ("host" if was_host else "client"))
+		peer.close()
+		# Offline, like a fresh launch (null would make every
+		# get_unique_id() in the frame before the reload an error).
+		multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	print("[Main] %s" % ("Quitting to desktop" if to_desktop else "Back to the main menu"))
+	if test_leave_hook.is_valid():
+		test_leave_hook.call(to_desktop)
+		return
+	if to_desktop:
+		get_tree().quit()
+	else:
+		_reload_to_menu("")
+
+## Main.tscn again, fresh, on its main menu (with `notice` over it).
+func _reload_to_menu(notice: String) -> void:
+	get_tree().paused = false
+	_pending_menu_notice = notice
+	Sfx.set_music("")
+	# Out of the tree now (freed at the end of the frame), the fresh one in
+	# next frame — no frame where the old game runs offline.
+	get_tree().change_scene_to_file("res://Main.tscn")
+
+## A client: the host left (quit, crashed, or the connection dropped).
+func _on_server_disconnected() -> void:
+	if quit_on_host_loss:
+		print("[Main] Host disconnected, quitting.")
+		get_tree().quit()
+		return
+	print("[Main] Host disconnected — back to the main menu.")
+	multiplayer.multiplayer_peer = OfflineMultiplayerPeer.new()
+	if test_leave_hook.is_valid():
+		test_leave_hook.call(false)
+		return
+	_reload_to_menu("The host ended the session — you're back at the main menu.")
