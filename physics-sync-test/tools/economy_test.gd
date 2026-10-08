@@ -672,7 +672,14 @@ func _run_soak() -> void:
 	# of customers but still holds the shift's stock).
 	var a: Dictionary = rows[0]
 	var b: Dictionary = rows[-1]
-	check(b["nodes"] <= a["nodes"] + 150, "SOAK: node count steady (%d -> %d)" % [a["nodes"], b["nodes"]])
+	# PHASE 5: against the highest of the first three shifts, not the first:
+	# the first report comes after a store that started with empty shelves,
+	# and the node count follows how stocked it is (StoreArt's shelf facings,
+	# loose stock) — found by the Phase 5 soak, where every subtree but
+	# Sections (facings) and Products held still and both went up AND down.
+	# A leak still shows: it keeps climbing past the early plateau.
+	var early: int = rows.slice(0, mini(3, rows.size())).map(func(r): return int(r["nodes"])).max()
+	check(b["nodes"] <= early + 150, "SOAK: node count steady (first shifts up to %d -> last %d)" % [early, b["nodes"]])
 	check(b["objects"] <= a["objects"] * 1.15 + 500, "SOAK: object count steady (%d -> %d)" % [a["objects"], b["objects"]])
 	check(b["orphans"] <= a["orphans"] + 20, "SOAK: orphan nodes steady (%d -> %d)" % [a["orphans"], b["orphans"]])
 	check(b["mem_mb"] <= a["mem_mb"] * 1.15 + 16.0, "SOAK: memory steady (%.1f -> %.1f MB)" % [a["mem_mb"], b["mem_mb"]])
