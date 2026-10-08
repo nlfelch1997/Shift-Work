@@ -89,6 +89,7 @@ func _initialize() -> void:
 		"gear": _run_gear.call_deferred()
 		"shots": _run_shots.call_deferred()
 		"fk-helpers": _run_fk_helpers.call_deferred()
+		"fk-escape": _run_fk_escape.call_deferred()
 		_:
 			print("FAIL  unknown --test=%s" % _mode)
 			quit(1)
@@ -552,4 +553,71 @@ func _run_fk_helpers() -> void:
 	check(frames > 1200, "FK1: watched %d frames of selling" % frames)
 	check(h.placed_today > 0, "FK1: the Produce helper worked the aisle (%d placed)" % h.placed_today)
 	check(overlap == 0, "FK1: the Produce helper was never inside the forklift's body (%d frames, %d episodes; within 20px %d frames)" % [overlap, episodes, close])
+	finish()
+
+## THE ESCAPE (deterministic): the forklift held still at a pose (as if it
+## had just stopped with its forks over someone, or rammed a shelf with a
+## helper at it), the Produce helper put inside its body at several spots,
+## then left to its own brain. FOUND IN PHASE 5: inside, the helper stepped
+## out sideways, but if that side left the room's open band it turned round
+## and walked out the other side, THROUGH the forklift, or stayed clamped
+## against the band's edge still under it. Every placement must be clear of
+## the body within ESCAPE_FRAMES (a quarter second at its flee speed is ~40 px).
+##   godot --headless --path . --script res://tools/phase5_test.gd -- --server --day=3 --no-save --prep-seconds=900 --test=fk-escape
+const ESCAPE_FRAMES := 12
+
+func _run_fk_escape() -> void:
+	await wait_until(func(): return main.players.has(1) and main.shift_active, 20.0)
+	main.staff.staff = {"Produce": {"speed": 0, "carry": 0}}
+	await wait(0.5)
+	var h: Node2D = main.staff.helpers["Produce"]
+	var fk: CharacterBody2D = main.forklift
+	check(h.active, "FE0: the Produce helper is on the floor")
+	player().teleport_to(Vector2(480, 270))
+	fk.set_physics_process(false) # held exactly where it's put
+	var room: Rect2 = h._room
+	var band_top: float = room.position.y + h.BAND_Y.x
+	var band_bot: float = room.position.y + h.BAND_Y.y
+	var poses := []
+	for x in [2150.0, 2400.0, 2650.0]:
+		for y in [band_top + 4.0, room.position.y + 270.0, band_bot - 4.0]:
+			for rot in [0.0, PI / 2.0, PI, -PI / 2.0, 0.6]:
+				poses.append([Vector2(x, y), rot])
+	var worst := 0
+	var stuck := 0
+	var through := 0
+	var n := 0
+	for pose in poses:
+		for off in [Vector2(6, 0), Vector2(30, 10), Vector2(-30, -10), Vector2(6, 18), Vector2(6, -18)]:
+			fk.global_position = pose[0]
+			fk.rotation = pose[1]
+			fk.velocity = Vector2.ZERO
+			await physics_frame
+			await physics_frame # the helper's turn-tracking settles on the new pose
+			var start: Vector2 = pose[0] + off.rotated(pose[1])
+			h.position = start
+			h.target_position = start
+			h._path = PackedVector2Array()
+			h._path_goal = Vector2.INF
+			var frames := 0
+			while h._in_forklift(h.position, 2.0) and frames < 120:
+				await physics_frame
+				frames += 1
+			n += 1
+			worst = maxi(worst, frames)
+			# Out the far side of the body = walked through it.
+			var rel_start: Vector2 = (start - fk.global_position).rotated(-fk.rotation)
+			var rel_end: Vector2 = (h.position - fk.global_position).rotated(-fk.rotation)
+			if signf(rel_start.y) != 0.0 and signf(rel_end.y) == -signf(rel_start.y) and absf(rel_end.y) > 20.0 and absf(rel_start.y) > 4.0:
+				through += 1
+				if through <= 10:
+					print("INFO  THROUGH forklift %s rot %.2f, helper from %s (local %s, band %.0f-%.0f) to %s (local %s) in %d frames" % [str(pose[0]), pose[1], str(start.round()), str(rel_start.round()), band_top, band_bot, str(h.position.round()), str(rel_end.round()), frames])
+			if frames > ESCAPE_FRAMES:
+				stuck += 1
+				if stuck <= 8:
+					print("INFO  SLOW ESCAPE %d frames: forklift %s rot %.2f, helper from %s (local %s) to %s (local %s)" % [frames, str(pose[0]), pose[1], str(start.round()), str(rel_start.round()), str(h.position.round()), str(rel_end.round())])
+	fk.set_physics_process(true)
+	print("INFO  FK-ESCAPE %d placements, worst %d frames, over %d frames: %d, walked through the body: %d" % [n, worst, ESCAPE_FRAMES, stuck, through])
+	check(stuck == 0, "FE1: out of the forklift's body within %d frames from every one of %d placements (worst %d; %d slow)" % [ESCAPE_FRAMES, n, worst, stuck])
+	check(through == 0, "FE2: never out through the far side of the body (%d)" % through)
 	finish()

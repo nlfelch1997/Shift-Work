@@ -308,6 +308,8 @@ func _run_income() -> void:
 	var afk := "--afk" in OS.get_cmdline_user_args()
 	var shifts := _arg_int("--shifts=", 1)
 	await wait_until(func(): return main.players.has(1), 20.0)
+	# PHASE 5: co-op income runs (clients: --test=progress, which plays every shift).
+	await wait_until(func(): return main.players.size() >= _arg_int("--players=", 1), 60.0)
 	# On the books before the first shift starts (PRODUCT_SPAWN_DELAY after
 	# hosting), as a crew that hired them last prep would be.
 	main.staff.staff = _hire_spec.duplicate(true)

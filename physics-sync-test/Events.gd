@@ -96,6 +96,10 @@ const RESULT_SECONDS := 3.5 # the result line on the banner row
 const RETRY_SECONDS := 2.0 # an event that can't start yet tries again...
 const MAX_RETRIES := 10 # ...this many times (20 s), then this shift lets it go
 const ORDER_GAP := 5.0 # an order can't be called if an event is due within window + this
+## PHASE 5 BALANCE: every base bonus doubled (Lunch Rush 50 -> 100, Inspection
+## and Leaky Roof 40 -> 80, Catering and Surprise Delivery 60 -> 120), and
+## scaled with the store (section_scale()): measured at 2-5% of a shift's pay,
+## events read as a chore, not a payoff.
 ## Bonus scale for a crew (the goals grow with it too): x(1 + this per extra player).
 const CREW_BONUS_SCALE := 0.5
 
@@ -103,19 +107,19 @@ const CREW_BONUS_SCALE := 0.5
 ## weight: relative odds among the unlocked ones. bonus: $ for a solo crew.
 ## seconds: how long it runs once active (Catering's is by crew size).
 const EVENTS := {
-	"rush": {"name": "Lunch Rush", "sections": 2, "earned": 0, "weight": 3, "bonus": 50, "seconds": 45.0,
+	"rush": {"name": "Lunch Rush", "sections": 2, "earned": 0, "weight": 3, "bonus": 100, "seconds": 45.0,
 		"line": "Shoppers want %s — every bit you shelve there sells!",
 		"how": "Sell %d from %s before time's up."},
-	"inspection": {"name": "Surprise Inspection", "sections": 2, "earned": 600, "weight": 2, "bonus": 40, "seconds": 35.0,
+	"inspection": {"name": "Surprise Inspection", "sections": 2, "earned": 600, "weight": 2, "bonus": 80, "seconds": 35.0,
 		"line": "An inspector is on the way — clean up the WHOLE store!",
 		"how": "Trash, spills and full cans in every open section: get the mess under the bar."},
-	"leak": {"name": "Leaky Roof", "sections": 2, "earned": 1000, "weight": 2, "bonus": 40, "seconds": 55.0,
+	"leak": {"name": "Leaky Roof", "sections": 2, "earned": 1000, "weight": 2, "bonus": 80, "seconds": 55.0,
 		"line": "The roof's leaking all over the store — grab a mop!",
 		"how": "Mop up every leak before time's up."},
-	"catering": {"name": "Catering Order", "sections": 3, "earned": 0, "weight": 3, "bonus": 60, "seconds": 0.0,
+	"catering": {"name": "Catering Order", "sections": 3, "earned": 0, "weight": 3, "bonus": 120, "seconds": 0.0,
 		"line": "A big order across the store — stock every section on the list!",
 		"how": "Stock what's listed in each section before time's up."},
-	"delivery": {"name": "Surprise Delivery", "sections": 3, "earned": 2000, "weight": 2, "bonus": 60, "seconds": 65.0,
+	"delivery": {"name": "Surprise Delivery", "sections": 3, "earned": 2000, "weight": 2, "bonus": 120, "seconds": 65.0,
 		"line": "An extra load with a box for section after section — unpack them all!",
 		"how": "Get one box unpacked on each section's pad."},
 }
@@ -283,7 +287,15 @@ func crew() -> int:
 	return maxi(1, main.players.size())
 
 func bonus_for(k: String) -> int:
-	return int(round(int(EVENTS[k]["bonus"]) * (1.0 + CREW_BONUS_SCALE * (crew() - 1)) / 5.0)) * 5
+	return int(round(int(EVENTS[k]["bonus"]) * (1.0 + CREW_BONUS_SCALE * (crew() - 1)) * section_scale() / 5.0)) * 5
+
+## PHASE 5 BALANCE: x(1 + this per section owned past the first) — a bigger
+## store's shift pays more, and a flat bonus shrank to ~2-5% of it; scaled,
+## an event stays worth a real slice of the shift at every size.
+const SECTION_BONUS_SCALE := 0.5
+
+func section_scale() -> float:
+	return 1.0 + SECTION_BONUS_SCALE * maxi(0, main.sections_owned - 1)
 
 func unlocked(k: String) -> bool:
 	var e: Dictionary = EVENTS[k]

@@ -428,7 +428,7 @@ extends Node2D
 ##
 ##   SHIFT CLOCK & PREP (WEEK 16; replaced the grace-period knobs) — Main.gd
 ##     PREP_CEILING_BASE                 180.0 s  store-closed prep, at most...
-##     PREP_CEILING_PER_SECTION          180.0 s  ...+ this per section open beyond Dry Goods
+##     PREP_CEILING_PER_SECTION   (P5: 90) 180.0 s  ...+ this per section open beyond Dry Goods
 ##     SHIFT_DURATION_DEFAULT            111.0 s  the selling window (--shift-seconds= overrides)
 ##     FINALE_SELLING_CUT                 15.0 s  Day 7 selling window 96s
 ##     -> day clock = ceiling + selling: Day 1-2 180+111=291s, Day 3-4 360+111=471s,
@@ -1286,7 +1286,14 @@ const RESTOCK_CHECK_INTERVAL := 3.0
 ## ceiling left over becomes selling time. Using the whole ceiling gets
 ## exactly the old selling window.
 const PREP_CEILING_BASE := 180.0
-const PREP_CEILING_PER_SECTION := 180.0
+## PHASE 5 BALANCE: 180 -> 90. Measured (tools/staff_test.gd --test=progress):
+## the day's clock is ceiling + selling window, so a full store's shift ran
+## ~15 min (3+3x3 min prep + 1:51 + cleanup) — 30 shifts of that is 7+ hours
+## against the 4-6 h target — and a crew that opens early turned up to 9 min
+## of unused prep into selling time (3-6x a late opener's income, the main
+## reason a crew owned every section by shift 4). At 90 s a section a full
+## store's shift is ~10.5 min and opening early is still the biggest lever.
+const PREP_CEILING_PER_SECTION := 90.0
 
 ## WEEK 19 — the cleanup ceiling: how long the closed store waits for someone
 ## to clock out before it clocks everyone out itself. Doesn't scale with the
