@@ -802,6 +802,7 @@ func _run_staff_save() -> void:
 		1:
 			check(main.load_status == SG.LOAD_OK and main.current_day == 7 and main.money == 2000 and main.sections_owned == 3, "V1: a Phase-2 (version 2) save loads — Day %d, bank %s, %d sections" % [main.current_day, main._format_money(main.money), main.sections_owned])
 			check(st().staff.is_empty() and st().helpers.values().all(func(h): return not h.active), "V1: ...with nobody hired")
+			main.money = 5000 # PHASE 5: the hires and training below cost more than the old save's $2000
 			check(st().do_action("Produce", "hire", 1) and st().do_action("Dairy/Frozen", "hire", 1) and st().do_action("Produce", "speed", 1) and st().do_action("Produce", "carry", 1) and st().do_action("Produce", "carry", 1), "V1: hired Sam (speed 2, carry 3) and Alex")
 			var disk := _read_json(path)
 			check(int(disk.get("version", 0)) == SG.VERSION and SG.VERSION >= 3, "V1: the save on disk is version %d" % int(disk.get("version", 0)))
