@@ -770,7 +770,16 @@ func _play_shift(stop: Callable = func(): return not main.shift_active or main.c
 		# WEEK 16: prep. A person opens the store once the shelves are mostly
 		# full, or once there's been nothing to do for a while with at least
 		# half of them stocked. --never-open leaves it to the ceiling.
-		if not main.store_open and not never_open and main.shift_active:
+		# PHASE 5 — --open-rule=typical: the crew the open-early hint is
+		# written for: it opens once the open shelves are as full as the hint
+		# asks (Pacing.OPEN_EARLY_HINT_FILL), or once half the prep ceiling has
+		# gone by, whichever comes first — a measurement assumption, not a
+		# claim about real players (the host decides; one flip for the crew).
+		if open_rule == "typical" and not main.store_open and main.shift_active and main.multiplayer.is_server():
+			var ceiling: float = main._prep_ceiling()
+			if main.open_shelf_fill() >= load("res://Pacing.gd").OPEN_EARLY_HINT_FILL or ceiling - main.prep_time_left >= 0.5 * ceiling:
+				main.open_store(me)
+		if not main.store_open and not never_open and open_rule == "" and main.shift_active:
 			var busy := false
 			for o in get_nodes_in_group("carryable"):
 				if o.get_node("Carryable").carrier_id == me:
@@ -1075,6 +1084,12 @@ func _haul_line() -> String:
 var trace := "--trace" in OS.get_cmdline_user_args()
 ## WEEK 16 — the solo brain's prep phase.
 var never_open := "--never-open" in OS.get_cmdline_user_args()
+## PHASE 5: --open-rule=typical (see _play_shift()); "" = the brain's own rule.
+var open_rule: String = (func():
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--open-rule="):
+			return a.substr("--open-rule=".length())
+	return "").call()
 const OPEN_WHEN_FILLED := 0.9
 const OPEN_WHEN_IDLE := 12.0
 var _prep_idle_t := 0.0
