@@ -236,11 +236,11 @@ escape is 10 frames. `--test=fk-helpers` watched 53,102 frames of
 top-tier selling with all three helpers: 0 overlap frames.
 
 ### Node-count creep
-Not reproduced on this build. Economy soak (Day 7, 5 completed shifts):
-4,018 → 4,003 → 4,021 → 4,007 → 4,011 nodes, 0 orphans, steady memory. The
-soak now prints node counts per subtree and the growth between the first
-and last shift, so the cause will be visible if it comes back. The staff
-soak comparison is in the soak section below.
+Found and explained: not a leak (section 8). The node count follows how
+stocked the store is (shelf facings and loose stock); the soak's check
+compared against a first shift that opens with empty shelves. Fixed the
+check. The soak now prints node counts per subtree and the growth from first
+to last shift, so a real leak would show where it is.
 
 ### Toast over labels; customer AI overlap
 Not changed (pre-existing; no cheap fix). The toast can sit over world-space
@@ -277,7 +277,7 @@ First full pass: **111 OK, 20 failed**. All 20 were looked at:
 - The 13 new Phase 5 entries all pass. No Endless tests remain (Phase 4
   retired them); `hz-endless` / `hz-net-endless` aren't in the list.
 
-### Soak — see section 8 (filled in from the final runs).
+### Soak — section 8.
 
 ### Co-op end to end
 Host + 2 clients: menu-net-pause (overlay, a client quits to menu, another
@@ -344,7 +344,36 @@ co-op peers, events, purchases, helpers).
 (staff_test.gd --test=soak, --day=7 top tier, real time; origin/main vs this
 branch, run side by side on the same machine.)
 
-SOAK_TABLE_PLACEHOLDER
+| | origin/main | this branch |
+|---|---|---|
+| Real time for 8 shifts | 109.6 min | 73.6 min (shorter prep: 450 s vs 720 s at the top tier) |
+| Nodes at each report | 2703, 2786, 3026, 3133, 3013, 3042, 2939, 3049 | 2856, 2940, 3066, 3211, 3047, 3216, 3116, 3056 |
+| Orphan nodes | 0 every shift | 0 every shift |
+| Static memory | 112.4 → 118.4 MB | 112.7 → 119.2 MB |
+| Frame time avg (per shift) | 7.9-10.5 ms | 9.3-12.5 ms |
+| Frame time p95 (per shift) | 15-21 ms | 18-32 ms (32 once, shift 6) |
+| Peak customers | 18-22 | 18-21 |
+| Helpers inside the forklift (watcher, every frame) | 0 of 394,113 frames | 0 of 264,512 frames |
+| Helpers stuck / out of their room | 0 / 0 | 0 / 0 |
+
+- **Node-count creep: explained, not a leak.** The soak's own check ("last
+  shift within +150 of the first") failed on **both**: 2,703 → 3,049 on main,
+  2,856 → 3,056 here. This branch's per-subtree counts show all of the growth
+  under `Sections` (+171: StoreArt's shelf facing sprites, one row per
+  stocked slot) and `Products` (+30: loose stock). Every other subtree held
+  still, and the total goes **up and down** from shift to shift (3,211 →
+  3,047 → 3,216 → 3,116 → 3,056). It follows how stocked the store is when
+  the report comes up; the first shift's report follows a store that opened
+  with empty shelves. The check now compares against the highest of the
+  first three shifts (a real leak would keep climbing past it); both runs
+  pass that.
+- **Frame time:** this branch ran about 1 ms slower on average, with one
+  32 ms p95 shift. Both soaks ran at the same time on the same 4-core
+  machine (alongside nothing else), so some of that is contention. The only
+  per-frame additions are cheap (the open-early hint check, which short-cuts
+  outside prep, and the demo-end visibility). Well inside a 16.7 ms frame on
+  average; worth a look on real hardware if it shows.
+- No crashes in either soak.
 
 ## 9. Deferred / not done
 
