@@ -1463,7 +1463,7 @@ func _run_orders() -> void:
 	main._on_continue_pressed()
 	await wait_until(func(): return main.shift_active and main.current_day == 6, 5.0)
 	check(main.current_day == 6, "O5: advanced to Day 6")
-	check(absf(main.prep_time_left - 540.0) < 0.5 and not main.store_open, "O5: Day 6 opens closed, %.1fs of prep" % main.prep_time_left)
+	check(absf(main.prep_time_left - (main.PREP_CEILING_BASE + 2 * main.PREP_CEILING_PER_SECTION)) < 0.5 and not main.store_open, "O5: Day 6 opens closed, %.1fs of prep" % main.prep_time_left)
 	check(main.orders_called_today == 0 and main.orders_filled_today == 0 and main.priority_sales_today == 0, "O5: Day 6 order tallies reset")
 	check(main.priority_sales_week == week_bonus, "O5: week keeps its %d bonus sales" % main.priority_sales_week)
 	check(is_equal_approx(main._order_timer, main._priority_order_interval()) or main._order_timer > main._priority_order_interval() - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
@@ -2838,7 +2838,7 @@ func _run_finale() -> void:
 			day_numbers_ok = false
 	_econ_restore(real_day)
 	check(day_numbers_ok, "F0 Days 1-6: full selling window and order cadence are the pre-finale numbers")
-	check(main._current_shift_duration() == 540.0 + base_shift and main._prep_ceiling() == 540.0, "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
+	check(main._current_shift_duration() == (main.PREP_CEILING_BASE + 2 * main.PREP_CEILING_PER_SECTION) + base_shift and main._prep_ceiling() == (main.PREP_CEILING_BASE + 2 * main.PREP_CEILING_PER_SECTION), "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
 	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main._priority_order_interval() and main._order_timer > main._priority_order_interval() - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main._priority_order_interval()])
 	# OCT 2026 PHASE 2: Day 6's start announces stage 4 (lights + spills).
 	await wait_until(func(): return main._finale_banner.visible, 1.0)
@@ -2873,7 +2873,7 @@ func _run_finale() -> void:
 	var banner_start := Time.get_ticks_msec()
 	check(main.shift_active and main.is_finale() and fk().finale and mgr().finale and a.finale, "F1 Day 7: finale on for forklift, manager, spills/lights")
 	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "RUSH SEASON", "F1 Day 7: the top tier's RUSH SEASON banner up as the shift starts ('%s')" % main._finale_banner.get_child(0).text)
-	check(main._prep_ceiling() == 720.0 and main._current_shift_duration() == 720.0 + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
+	check(main._prep_ceiling() == (main.PREP_CEILING_BASE + 3 * main.PREP_CEILING_PER_SECTION) and main._current_shift_duration() == (main.PREP_CEILING_BASE + 3 * main.PREP_CEILING_PER_SECTION) + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
 	check(main._selling_window() < base_shift, "F1 Day 7: tighter selling window than Day 6 — %.0fs < %.0fs" % [main._selling_window(), base_shift])
 	check(main._order_timer > main._priority_order_interval() - 1.0 and main._order_timer <= main._priority_order_interval() and main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main._priority_order_interval(), main._order_timer])
 	check(main._priority_order_interval() >= main._priority_order_window() + 5.0, "F1: an order is always closed before the next is due (gap %.0fs >= window %.0fs + 5)" % [main._priority_order_interval(), main._priority_order_window()])
