@@ -605,24 +605,28 @@ func _run_shop() -> void:
 	await wait(0.2)
 	check(shop().panel.visible and shop().buttons.size() == shop().UPGRADES.size(), "S1: E opens the shop: %d items" % shop().buttons.size())
 	# --- S2 broke: refused, nothing charged.
-	check(main.money == 0 and shop().buttons["shoes"].disabled and shop().blocker("shoes") == "need $200 more", "S2: an empty bank: '%s'" % shop().blocker("shoes"))
+	check(main.money == 0 and shop().buttons["shoes"].disabled and shop().blocker("shoes") == "need $%d more" % shop().next_cost("shoes"), "S2: an empty bank: '%s'" % shop().blocker("shoes"))
 	check(not shop().buy("shoes", 1) and main.money == 0 and shop().upgrade_level("shoes") == 0, "S2: the host refuses it")
 	# --- S3 buy, out of the bank; lifetime untouched.
-	main.money = 2000
-	main.lifetime_earned = 3000
+	# (PHASE 5: prices read from Shop.gd, not written in.)
+	var shoes: Array = shop().UPGRADES[0]["costs"]
+	var brace0: int = shop().next_cost("brace")
+	main.money = shoes[0] + brace0 + shop().next_cost("soles") + 500
+	var bank0: int = main.money
+	main.lifetime_earned = 30000
 	await wait(0.2)
 	shop().buttons["shoes"].pressed.emit()
 	await wait(0.2)
-	check(shop().upgrade_level("shoes") == 1 and main.money == 1800 and main.lifetime_earned == 3000, "S3: Sneakers 1 for $200 — bank $1800, lifetime still $3000 (spending never touches it)")
-	check(shop().buttons["shoes"].text == "Buy  $450", "S3: the button moves to the next level's price ('%s')" % shop().buttons["shoes"].text)
+	check(shop().upgrade_level("shoes") == 1 and main.money == bank0 - shoes[0] and main.lifetime_earned == 30000, "S3: Sneakers 1 for $%d — bank %s, lifetime still $30000 (spending never touches it)" % [shoes[0], main._format_money(main.money)])
+	check(shop().buttons["shoes"].text == "Buy  $%d" % shoes[1], "S3: the button moves to the next level's price ('%s')" % shop().buttons["shoes"].text)
 	shop().buttons["brace"].pressed.emit()
 	await wait(0.2)
-	check(shop().upgrade_level("brace") == 1 and main.money == 1400, "S3: Back Brace 1 for $400 (bank %s)" % main._format_money(main.money))
+	check(shop().upgrade_level("brace") == 1 and main.money == bank0 - shoes[0] - brace0, "S3: Back Brace 1 for $%d (bank %s)" % [brace0, main._format_money(main.money)])
 	# --- S4 a race: two requests for the same level in the same instant buy one.
 	var m0: int = main.money
 	var a: bool = shop().buy("soles", 1, 0)
 	var b: bool = shop().buy("soles", 1, 0)
-	check(a and not b and shop().upgrade_level("soles") == 1 and main.money == m0 - 200, "S4: two buys of Soles level 1 at once -> one level, one charge")
+	check(a and not b and shop().upgrade_level("soles") == 1 and main.money == m0 - shop().UPGRADES[2]["costs"][0], "S4: two buys of Soles level 1 at once -> one level, one charge")
 	# --- S5 maxed.
 	shop().upgrades = {"shoes": 1, "brace": 1, "soles": 1, "badge": 1}
 	await wait(0.2)
@@ -687,7 +691,7 @@ func _run_ev_net_host() -> void:
 	for id in ids:
 		await _net_read("did_race_%d" % id, 30.0)
 	await wait(1.0)
-	check(shop().upgrade_level("shoes") == 1 and main.money == 3000 - 200 and shop().purchases_applied == 1, "NE1: both clients bought Sneakers in the same instant -> level 1, $200 once (applied %d, refused %d)" % [shop().purchases_applied, shop().purchases_refused])
+	check(shop().upgrade_level("shoes") == 1 and main.money == 3000 - shop().UPGRADES[0]["costs"][0] and shop().purchases_applied == 1, "NE1: both clients bought Sneakers in the same instant -> level 1, charged once (applied %d, refused %d)" % [shop().purchases_applied, shop().purchases_refused])
 	vn += 1
 	await _view_req(vn, ids, "NE1")
 	# --- NE2 an event, seen the same everywhere: warning, running, result.

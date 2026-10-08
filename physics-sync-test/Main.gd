@@ -677,7 +677,10 @@ extends Node2D
 ##   crew, and a longer climb solo now that there's no week to fit into.
 const STARTING_MONEY := 0
 ## In SECTIONS order after Dry Goods (owned from the start).
-const SECTION_PRICES := {"Produce": 500, "Dairy/Frozen": 900, "Bakery": 1400}
+## PHASE 5: 500 / 900 / 1400 -> 600 / 2500 / 6000. Measured: a typical crew
+## with helpers banked $1100-1300 a shift with two sections and $1600-2300 with
+## three, so the old prices fell by shifts 4-5 (target: all sections ~10).
+const SECTION_PRICES := {"Produce": 600, "Dairy/Frozen": 2500, "Bakery": 6000}
 ## Lifetime-earned thresholds for the two money-gated stages and the top tier,
 ## each about ONE solo shift of pay past the purchase it follows — the old
 ## one-day gap (Day 3 forklift -> Day 4 manager, Day 5 orders -> Day 6 lights):
@@ -686,9 +689,20 @@ const SECTION_PRICES := {"Produce": 500, "Dairy/Frozen": 900, "Bakery": 1400}
 ## - top tier: the whole store ($2800) + ~$700 — "owns everything and has
 ##   plenty of money" — $3500. Lifetime, not the bank, so spending (and later,
 ##   Phase 3's wages) never switches it back off.
-const MANAGER_EARNED := 800
-const ENVIRONMENT_EARNED := 1700
-const RUSH_EARNED := 3500
+## PHASE 5 BALANCE PASS — the numbers below were retuned against the pacing
+## targets in Pacing.gd (all sections ~shift 10, the top tier with helpers ~16,
+## the janitor + every helper's training + the whole gear shop ~24), from
+## MEASURED per-shift income (tools/staff_test.gd --test=income, the "typical
+## crew" bot: --open-rule=typical, events on, solo/2/3 players, with and without
+## helpers) run through the purchase policy of --test=progress, then checked
+## with full progression runs. Before -> after, and why, in the Phase 5 report.
+## The money-gated stages keep their shape (about one shift's pay past the
+## purchase they follow): manager Produce + $300, lights + spills Produce +
+## Dairy/Frozen + $600. The top tier is no longer "the whole store + a bit":
+## lifetime $25,000 is the target's shift ~16 for a typical crew with helpers.
+const MANAGER_EARNED := 900
+const ENVIRONMENT_EARNED := 3700
+const RUSH_EARNED := 25000
 ## The complication ladder. Stage i is on once stage i-1 is AND its own needs
 ## are met (checked at shift start, one step per shift). "sections" = sections
 ## owned (Dry Goods counts), "earned" = lifetime_earned. title/line: the

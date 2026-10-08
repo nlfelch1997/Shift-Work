@@ -283,7 +283,7 @@ func _run_solo() -> void:
 	await wait_until(func(): return shop().panel.visible and shop().buttons.has("shoes"), 3.0)
 	shop().buttons["shoes"].pressed.emit()
 	await wait(0.1)
-	check(shop().upgrade_level("shoes") == 1 and main.money == 1000 - 200, "E1: bought Comfy Sneakers 1 at the lockers for $200 (bank %s)" % main._format_money(main.money))
+	check(shop().upgrade_level("shoes") == 1 and main.money == 1000 - shop().UPGRADES[0]["costs"][0], "E1: bought Comfy Sneakers 1 at the lockers (bank %s)" % main._format_money(main.money))
 	await tap("host_interact")
 	var v3 := await measure_speed()
 	check(absf(v3 - S * 1.08) < S * 0.03, "E1: sneakers alone: %.0f px/s = SPEED x 1.08" % v3)

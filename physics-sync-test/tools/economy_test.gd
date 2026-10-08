@@ -127,9 +127,9 @@ func _run_economy() -> void:
 	check(main._gate_hint.visible and main._gate_hint.text == hint[1], "E2: the prompt is on screen over the gate")
 	check(main._toast_label.visible and main._toast_label.text.contains("need $"), "E2: pressing E says why too ('%s')" % main._toast_label.text)
 	# --- E3 payday: the day's pay goes into the bank
-	# Enough for Produce ($500) but under the manager's $800 lifetime — the
+	# Enough for Produce ($600 since Phase 5) but under the manager's $900 lifetime — the
 	# same shape as the old Day 1-2 (each day here is a sales injection).
-	add_sales(42)
+	add_sales(62)
 	var pay := await end_day()
 	check(pay > 0 and main.money == main.STARTING_MONEY + pay and main.lifetime_earned == pay, "E3: Day 1 paid %s -> bank %s, lifetime $%d" % [main._format_money(pay), main._format_money(main.money), main.lifetime_earned])
 	check(main.report_week_label.text.begins_with("Bank: %s" % main._format_money(main.money)) and not main.report_week_label.text.contains("Week"), "E3: report shows the bank, no week ('%s')" % main.report_week_label.text)
