@@ -75,7 +75,7 @@ const STEPS := [
 	{"id": "mop", "title": "Spills need a mop", "text": "Spilled drinks can't be picked up. Grab the MOP from the rack by the checkout ({interact}), face the puddle and HOLD {place}.\n\n{interact} puts the mop down."},
 	{"id": "dumpster", "title": "Empty the cans", "text": "A full can overflows. Empty-handed at a can, {interact} lifts its bag out — carry it to the DUMPSTER out back (Storage) and {interact} to tip it in."},
 	{"id": "bounce", "title": "Troublemakers", "text": "Red-ringed customers knock stock over. Grab one ({interact}) and walk them out the FRONT DOOR — or toss them ({throw}). {interact} lets go.\n\n({defend} still shoves.)"},
-	{"id": "open", "title": "Open the store", "text": "Trash, spills and full cans drag the STORE RATING down (top right). A better rating brings more customers and better prices.\n\nWhen the crew's ready, flip the STORE SIGN ({interact}) to start Day 1."},
+	{"id": "open", "title": "Open the store", "text": "Trash, spills and full cans drag the STORE RATING down (top right). A better rating brings more customers and better prices.\n\nEvery shift starts closed for prep. OPEN EARLY: prep you don't use becomes selling time, so flip the sign as soon as the shelves are stocked.\n\nFlip the STORE SIGN ({interact}) now to start your first real shift."},
 ]
 
 ## Host-written, replicated (own Sync, reliable ON_CHANGE).

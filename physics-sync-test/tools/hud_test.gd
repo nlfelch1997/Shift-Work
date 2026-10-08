@@ -154,15 +154,15 @@ func _run_story() -> void:
 	root.size = Vector2i(960, 540)
 	await frames(3)
 	_common_checks("S1")
-	check(status().text == "Day %d  ·  Bank %s  ·  1 player" % [main.current_day, main._format_money(main.money)], "S1: story line reads '%s'" % status().text)
+	check(status().text == "Shift %d  ·  Bank %s  ·  1 player" % [main.current_day, main._format_money(main.money)], "S1: story line reads '%s'" % status().text)
 	await _f3_checks("S2")
 	var day0: int = main.current_day
 	await _end_day()
-	check(status().text == "Day %d  ·  Bank %s  ·  1 player" % [day0, main._format_money(main.money)], "S3: still Day %d on the report ('%s')" % [day0, status().text])
+	check(status().text == "Shift %d  ·  Bank %s  ·  1 player" % [day0, main._format_money(main.money)], "S3: still Day %d on the report ('%s')" % [day0, status().text])
 	main._on_continue_pressed()
 	await wait_until(func(): return main.current_day == day0 + 1 and main.shift_active, 8.0)
 	await frames(2)
-	check(status().text == "Day %d  ·  Bank %s  ·  1 player" % [day0 + 1, main._format_money(main.money)], "S3: rolls over live to '%s'" % status().text)
+	check(status().text == "Shift %d  ·  Bank %s  ·  1 player" % [day0 + 1, main._format_money(main.money)], "S3: rolls over live to '%s'" % status().text)
 	check(status().visible and not dbg().visible, "S3: next day — status up, dump still hidden")
 	main.status_hud = false
 	await frames(2)
@@ -213,7 +213,7 @@ func _run_net_host() -> void:
 		DirAccess.remove_absolute(NET_DIR + f)
 	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
 	await wait(1.5)
-	var line := "Day %d  ·  Bank %s  ·  %d players" % [main.current_day, main._format_money(main.money), want]
+	var line := "Shift %d  ·  Bank %s  ·  %d players" % [main.current_day, main._format_money(main.money), want]
 	check(status().text == line, "N1 host: '%s'" % status().text)
 	check(not dbg().visible, "N1 host: dump hidden")
 	_net_write("phase1.json", {"line": line})
@@ -244,7 +244,7 @@ func _run_net_host() -> void:
 	_net_write("phase4.json", {"leave": leaver})
 	await wait_until(func(): return main.players.size() == want - 1, 15.0)
 	await frames(3)
-	var line2 := "Day %d  ·  Bank %s  ·  %d player%s" % [main.current_day, main._format_money(main.money), want - 1, "" if want - 1 == 1 else "s"]
+	var line2 := "Shift %d  ·  Bank %s  ·  %d player%s" % [main.current_day, main._format_money(main.money), want - 1, "" if want - 1 == 1 else "s"]
 	check(status().text == line2, "N4 host: after %d left, '%s'" % [leaver, status().text])
 	_net_write("phase5.json", {"line": line2})
 	for id in ids:

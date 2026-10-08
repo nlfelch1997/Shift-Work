@@ -271,7 +271,7 @@ func _phase7() -> void:
 	check(await wait_shift() and main.current_day == 8 and main.get_node_or_null("HubUI") == null, "P7: a Day 7 save resumes on Day 8 — past the old week, no WEEK COMPLETE")
 	check(main.money == int(expect["money"]) and main.lifetime_earned == int(expect["earned"]) and main.sections_owned == int(expect["owned"]), "P7: bank %s, lifetime $%d, %d sections — as saved" % [main._format_money(main.money), main.lifetime_earned, main.sections_owned])
 	check(main.complication_stage >= int(expect["stage"]), "P7: stage %d (saved %d; at most one step on at this shift's start)" % [main.complication_stage, int(expect["stage"])])
-	check(main.status_label.text.begins_with("Day 8  ·  Bank %s" % main._format_money(main.money)), "P7: status line '%s'" % main.status_label.text)
+	check(main.status_label.text.begins_with("Shift 8  ·  Bank %s" % main._format_money(main.money)), "P7: status line '%s'" % main.status_label.text)
 	check(FileAccess.get_file_as_string(SOLO) == raw, "P7: nothing written (no checkpoint yet)")
 	finish()
 

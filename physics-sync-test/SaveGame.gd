@@ -136,6 +136,24 @@ static func read(path: String) -> Array:
 		return [LOAD_CORRUPT, {}]
 	return [LOAD_OK, sanitize(parsed)]
 
+## PHASE 5 — the main menu's look at the save (Continue's "Shift N · Bank $X"):
+## no side effects (read() quarantines/copies files; this never touches the
+## disk beyond reading). {"exists": bool, "ok": bool, "shift": next shift,
+## "money": bank}. A damaged or old-format file exists but isn't ok.
+static func peek(path: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {"exists": false, "ok": false, "shift": 1, "money": 0}
+	var json := JSON.new()
+	var text := FileAccess.get_file_as_string(path)
+	var parsed = json.data if text.strip_edges() != "" and json.parse(text) == OK else null
+	if not parsed is Dictionary:
+		return {"exists": true, "ok": false, "shift": 1, "money": 0}
+	var version := int(clampf(_num(parsed.get("version"), -1), -1, 1e6))
+	if version <= LEGACY_VERSION or version > VERSION:
+		return {"exists": true, "ok": false, "shift": 1, "money": 0}
+	var shop: Dictionary = sanitize(parsed)["shop"]
+	return {"exists": true, "ok": true, "shift": int(shop["completed_day"]) + 1, "money": int(shop["money"])}
+
 static func legacy_backup_path(path: String) -> String:
 	return path + ".v1.bak"
 

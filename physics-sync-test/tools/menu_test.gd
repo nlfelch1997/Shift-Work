@@ -345,7 +345,7 @@ func _run_quit_solo() -> void:
 	await process_frame
 	check(pm().confirming == "menu" and pm()._confirm.visible and not pm()._buttons.visible, "Q1: Quit to Main Menu mid-shift asks first")
 	var body: String = pm()._confirm_body.text
-	check(body.contains("isn't saved") and body.contains("Day %d" % main.current_day) and body.contains("starts Day %d again" % main.current_day), "Q1: says plainly the shift is lost and Day %d restarts: '%s'" % [main.current_day, body.replace("\n", " / ")])
+	check(body.contains("isn't saved") and body.contains("Shift %d" % main.current_day) and body.contains("replays Shift %d" % main.current_day) and not body.contains("Day "), "Q1: says plainly the shift is lost and Shift %d is replayed: '%s'" % [main.current_day, body.replace("\n", " / ")])
 	check(pm().cancel_button.has_focus() or true, "Q1: Cancel is the safe default")
 	await esc()
 	check(pm().confirming == "" and pm().is_open() and pm()._buttons.visible, "Q1: Esc backs out of the confirmation to the menu")

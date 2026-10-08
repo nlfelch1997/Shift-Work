@@ -80,7 +80,9 @@ func _run() -> void:
 	cam.zoom = Vector2.ONE
 	# A priority order for the section that's sold as Produce since Week 13
 	# #4 — the banner builds its text from the section's name.
-	if main.current_day >= main.PRIORITY_ORDER_START_DAY:
+	# PHASE 5: was `current_day >= PRIORITY_ORDER_START_DAY`, a constant the
+	# Oct 2026 pivot removed (orders come with complication stage 3 now).
+	if main.hazard_levels()["orders"] > 0:
 		main._issue_priority_order("Produce", 3)
 		p.teleport_to(Vector2(2400, 700))
 		await shot("order_banner_produce")

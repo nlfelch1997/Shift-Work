@@ -28,6 +28,7 @@ func _initialize() -> void:
 		"smoke": _run_smoke.call_deferred()
 		"probe": _run_probe.call_deferred()
 		"income": _run_income.call_deferred()
+		"progress": (_run_progress_client if client else _run_progress).call_deferred()
 		"hire": _run_hire.call_deferred()
 		"effect": _run_effect.call_deferred()
 		"save": _run_staff_save.call_deferred()
@@ -1031,3 +1032,177 @@ func _run_probe() -> void:
 		var loose: Array = h._loose_items()
 		print("INFO  probe t=%d placed %d picked %d unpacked %d job %s pos %s fill %s loose %d %s empty %d" % [(i + 1) * 10, h.placed_today, h.picked_today, h.unpacked_today, h._job.get("kind", "-"), str(h.position.round()), str(fill), loose.size(), str(loose.map(func(o): return o.global_position.round())), h._empty_slots().size()])
 	finish()
+
+## =============================================================================
+## PHASE 5 — PROGRESSION: shifts-to-milestone, measured. A bot crew (the solo
+## brain on every peer, as in hazards_test.gd's coop-sim) plays shift after
+## shift from a BRAND-NEW shop (no --day preset), random events on, and spends
+## the bank between shifts by a fixed, written-down policy, at the start of
+## each prep (the only window purchases are allowed in):
+##   1. the next section, as soon as the bank covers it;
+##   2. --policy=helpers (default): a helper for each owned section as soon as
+##      its fee is covered (cheapest first), then the janitor (2+ sections,
+##      every owned section staffed); --policy=nohelpers: never hires;
+##   3. once all four sections are owned (and, with helpers, everyone's on
+##      staff): helper training, the janitor's training, then the gear shop,
+##      cheapest next level first.
+## The brain leaves a staffed section's stock to its helper (the income mode's
+## rule). One PROGRESS line per shift and a MILESTONE line the first shift each
+## milestone holds at the start of that shift's prep (after its purchases):
+##   godot --headless --fixed-fps 60 --path . --script res://tools/staff_test.gd -- --server --no-save --events=on --event-brain --test=progress --shifts=26 [--policy=nohelpers] [--players=N --port=P]
+##   (x N-1) godot --headless --fixed-fps 60 --path . --script res://tools/staff_test.gd -- --client --connect-port=P --no-save --event-brain --test=progress
+## Co-op: give every process the same --max-fps (e.g. 120) so their clocks run
+## at the same rate. A measurement, not a pass/fail regression.
+## =============================================================================
+
+var _milestones := {}
+
+func _all_gear_done() -> bool:
+	for u in main.shop.UPGRADES:
+		if main.shop.next_cost(u["key"]) >= 0:
+			return false
+	return true
+
+func _all_training_done() -> bool:
+	for sec in main.staff.staff:
+		if sec == main.staff.JANITOR:
+			if main.staff.next_cost(sec, "speed") >= 0:
+				return false
+		else:
+			for knob in ["speed", "carry"]:
+				if main.staff.next_cost(sec, knob) >= 0:
+					return false
+	return true
+
+func _mark(key: String, shift: int, cond: bool) -> void:
+	if cond and not _milestones.has(key):
+		_milestones[key] = shift
+		print("MILESTONE %s shift=%d bank=%s lifetime=%d" % [key, shift, main._format_money(main.money), main.lifetime_earned])
+
+## Host, in prep: spend by the policy. Returns what was bought.
+func _spend(helpers_on: bool) -> Array:
+	var bought := []
+	var guard := 0
+	while guard < 40:
+		guard += 1
+		var nxt: Dictionary = main.next_section_for_sale()
+		if not nxt.is_empty() and main.money >= main.section_price(nxt["name"]):
+			if main.buy_section(nxt["name"], 1):
+				bought.append(nxt["name"])
+				continue
+		var did := false
+		if helpers_on:
+			for sec in main.staff.HELPER_SECTIONS:
+				if main.staff.blocker(sec, "hire") == "":
+					did = main.staff.do_action(sec, "hire", 1)
+					if did:
+						bought.append("hire " + sec)
+						break
+			if did:
+				continue
+			var staffed_all: bool = main.staff.HELPER_SECTIONS.all(func(s): return main.section_index(s) >= main.sections_owned or main.staff.is_hired(s))
+			if staffed_all and main.staff.blocker(main.staff.JANITOR, "hire") == "":
+				if main.staff.do_action(main.staff.JANITOR, "hire", 1):
+					bought.append("hire Janitor")
+					continue
+		var whole_store: bool = main.sections_owned >= main.SECTIONS.size()
+		var crew_done: bool = not helpers_on or (main.staff.HELPER_SECTIONS.all(func(s): return main.staff.is_hired(s)) and main.staff.is_hired(main.staff.JANITOR))
+		if not (whole_store and crew_done):
+			break
+		# Training and gear, cheapest next level first.
+		var options := []
+		if helpers_on:
+			for sec in main.staff.staff:
+				for knob in (["speed"] if sec == main.staff.JANITOR else ["speed", "carry"]):
+					var c: int = main.staff.next_cost(sec, knob)
+					if c >= 0:
+						options.append({"cost": c, "kind": "staff", "sec": sec, "knob": knob})
+		for u in main.shop.UPGRADES:
+			var c2: int = main.shop.next_cost(u["key"])
+			if c2 >= 0:
+				options.append({"cost": c2, "kind": "gear", "key": u["key"]})
+		options.sort_custom(func(a, b): return a["cost"] < b["cost"])
+		if options.is_empty() or main.money < options[0]["cost"]:
+			break
+		var o: Dictionary = options[0]
+		if o["kind"] == "staff":
+			did = main.staff.do_action(o["sec"], o["knob"], 1)
+			bought.append("%s %s" % [o["sec"], o["knob"]])
+		else:
+			did = main.shop.buy(o["key"], 1)
+			bought.append("gear " + o["key"])
+		if not did:
+			break
+	return bought
+
+func _run_progress() -> void:
+	var helpers_on := not ("--policy=nohelpers" in OS.get_cmdline_user_args())
+	if event_aware:
+		upkeep_hook = _event_upkeep
+	var shifts := _arg_int("--shifts=", 26)
+	var want := _arg_int("--players=", 1)
+	await wait_until(func(): return main.players.size() >= want, 60.0)
+	var rating_moved := false
+	var events_seen := 0
+	var t_start := _wall()
+	for n in shifts:
+		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 60.0)
+		await wait(0.2)
+		var shift := n + 1
+		var money0: int = main.money
+		var bought := _spend(helpers_on)
+		_hire_spec = main.staff.staff.duplicate(true)
+		_mark("produce", shift, main.sections_owned >= 2)
+		_mark("dairy", shift, main.sections_owned >= 3)
+		_mark("all_sections", shift, main.sections_owned >= 4)
+		_mark("first_helper", shift, main.staff.HELPER_SECTIONS.any(func(s): return main.staff.is_hired(s)))
+		_mark("all_helpers", shift, main.staff.HELPER_SECTIONS.all(func(s): return main.staff.is_hired(s)))
+		_mark("janitor", shift, main.staff.is_hired(main.staff.JANITOR))
+		_mark("top_tier", shift, main.complication_stage >= main.STAGE_RUSH)
+		_mark("top_tier_helpers", shift, main.complication_stage >= main.STAGE_RUSH and main.staff.HELPER_SECTIONS.all(func(s): return main.staff.is_hired(s)))
+		_mark("training_done", shift, helpers_on and _milestones.has("janitor") and _all_training_done())
+		_mark("gear_done", shift, _all_gear_done())
+		_mark("everything", shift, _all_gear_done() and (not helpers_on or (_milestones.has("janitor") and _all_training_done())))
+		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
+		_haul = {"walk_px": 0.0, "last_pos": null, "box_t": {}, "carry_s": [], "item_born": {}, "item_s": [], "box_items": {}, "box_cycle_s": [], "seen": {}, "last_event": dl().unpack_event_id, "last_carry": null, "open_placed": 0, "open_called": 0, "item_carry": null, "last_pos_c": null, "carry_item_s": [], "carry_item_px": []}
+		var rating0: float = main.store_rating.rating
+		var t0 := _wall()
+		await _play_shift()
+		for o in get_nodes_in_group("carryable"):
+			if o.get_node("Carryable").carrier_id == me:
+				await tap(act + "interact")
+		await _play_cleanup(false, true)
+		await wait_until(func(): return main.is_day_report_active(), 300.0)
+		await wait(0.3)
+		var sold: int = main._total_sold() - main._sold_at_day_start
+		var pay: int = main._pay_today()
+		if not main.events.log_today.is_empty():
+			events_seen += 1
+		_mark("first_event", shift, events_seen > 0)
+		if absf(main.store_rating.rating - 3.0) >= 0.5:
+			rating_moved = true
+		_mark("rating_moved", shift, rating_moved)
+		print("PROGRESS players=%d policy=%s shift=%d | bought %s | stage %d, sections %d, staff %s | opened at %.0fs of %.0fs prep | sold %d, pay %s, wages %s, events bonus %s %s | rating %.2f -> %.2f | bank %s -> %s, lifetime %d | gear %s | wall %.0fs" % [main.players.size(), "helpers" if helpers_on else "nohelpers", shift, str(bought), main.complication_stage, main.sections_owned, str(main.staff.staff.keys()), stats.get("opened_at", -1.0), stats["grace"], sold, main._format_money(pay), main._format_money(main.staff.wages_today), main._format_money(main.events.bonus_today), str(main.events.log_today), rating0, main.store_rating.rating, main._format_money(money0), main._format_money(main.money), main.lifetime_earned, str(main.shop.upgrades), _wall() - t0])
+		if _milestones.has("everything"):
+			break
+		if n < shifts - 1:
+			main._on_continue_pressed()
+	print("PROGRESS SUMMARY players=%d policy=%s milestones=%s wall=%.0fmin" % [main.players.size(), "helpers" if helpers_on else "nohelpers", str(_milestones), (_wall() - t_start) / 60.0])
+	finish()
+
+func _run_progress_client() -> void:
+	if event_aware:
+		upkeep_hook = _event_upkeep
+	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
+	me = main.multiplayer.get_unique_id()
+	act = "client_"
+	while true:
+		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 1.0e9)
+		await wait(1.0) # the host spends first
+		_hire_spec = main.staff.staff.duplicate(true)
+		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
+		_haul = {"walk_px": 0.0, "last_pos": null, "box_t": {}, "carry_s": [], "item_born": {}, "item_s": [], "box_items": {}, "box_cycle_s": [], "seen": {}, "last_event": dl().unpack_event_id, "last_carry": null, "open_placed": 0, "open_called": 0, "item_carry": null, "last_pos_c": null, "carry_item_s": [], "carry_item_px": []}
+		await _play_shift()
+		if main.cleanup_active:
+			await _play_cleanup(true, false)
+		await wait_until(func(): return not main.shift_active or main.is_day_report_active(), 10.0)

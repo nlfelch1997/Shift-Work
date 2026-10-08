@@ -1123,7 +1123,7 @@ func _run_practice_skip() -> void:
 	await wait(0.5)
 	check(not tut.active, "PK1: Tab skipped practice")
 	check(main.shift_active and main.current_day == 1 and main.prep_time_left < 1000.0, "PK1: straight into a real Day 1 (prep %.0fs)" % main.prep_time_left)
-	check(main._status_text().begins_with("Day 1"), "PK1: status line: %s" % main._status_text())
+	check(main._status_text().begins_with("Shift 1"), "PK1: status line: %s" % main._status_text())
 	finish()
 
 func _run_net_practice_client() -> void:

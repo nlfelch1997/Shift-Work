@@ -41,7 +41,10 @@ const UPGRADES := [
 	{"key": "soles", "name": "Non-Slip Soles", "desc": "spills slow you less, you slide less", "costs": [200, 450]},
 	{"key": "boots", "name": "Steel-Toe Boots", "desc": "shorter stun when the forklift hits you", "costs": [150, 350]},
 	{"key": "alibi", "name": "Plausible Deniability", "desc": "manager takes +0.5s longer to write you up", "costs": [250, 550]},
-	{"key": "janitor", "name": "Janitor's Kit", "desc": "mop & sweep 20% faster, dustpan +4", "costs": [150, 350]},
+	# PHASE 5: shown as "Cleaning Cart" (was "Janitor's Kit", which read like
+	# the hireable janitor). The key stays "janitor": it's what every save's
+	# "gear" block (and the v2-v4 endless upgrades) store.
+	{"key": "janitor", "name": "Cleaning Cart", "desc": "mop & sweep 20% faster, dustpan +4", "costs": [150, 350]},
 	{"key": "badge", "name": "Employee of the Month", "desc": "cosmetic: a gold star over the crew", "costs": [300]},
 ]
 ## The old Bucks price x this = the $ price above (documentation; see header).

@@ -686,7 +686,7 @@ func bonus_for(gross: int) -> int:
 	return int(round(maxf(0.0, float(gross)) * CLEAN_BONUS_MAX * (0.5 * mop_fraction() + 0.5 * litter_fraction())))
 
 ## Every peer (replicated counters): share of the category cleaned.
-## WEEK 21: + the Break Room's Janitor's Kit (Shop.gd since PHASE 4). Every peer (the
+## WEEK 21: + the Break Room's Cleaning Cart gear ("Janitor's Kit" until PHASE 5; Shop.gd since PHASE 4). Every peer (the
 ## pan's fill art reads it too).
 func pan_capacity() -> int:
 	return PAN_CAPACITY + main.shop.pan_bonus()
