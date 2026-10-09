@@ -13,7 +13,7 @@ from that table. The table reproduces today's nine-room store exactly. The
 proof is exact, not "within noise": clean `main` and this branch, run seeded
 at fixed fps, produce **byte-identical screenshots, nav grids, lattice probes
 and scene trees** at five store states (40 of 40 files, 0 differing pixels).
-The income harness agrees with clean `main` within noise (+0.3 % / +4.9 % / −1.9 % at 1 / 2 / 4 sections, 12 shifts a side), host and two clients give identical registry answers through a shift, and <<REG_SUMMARY>> No save change (still v6), no new network state, no layout,
+The income harness agrees with clean `main` within noise (+0.3 % / +4.9 % / −1.9 % at 1 / 2 / 4 sections, 12 shifts a side), host and two clients give identical registry answers through a shift, and the full regression suite passes apart from known flakes (128/134; the 6 checked, one a newly spotted pre-existing flake on clean `main`). No save change (still v6), no new network state, no layout,
 art, price or balance change.
 
 ---
@@ -125,7 +125,7 @@ Not changed, on purpose:
   The bot's cell-to-cell route (`hazards_test.route_next`, the brain the
   income harness uses) was converted **decision for decision** to room ids,
   so the measuring instrument didn't change.
-- **Raw coordinates: 173 converted**, in 21 files. Fixtures read from the
+- **Raw world coordinates: 221 of 230 converted** (counting every in-world `Vector2(x, y)` literal in the tests), in 21 files. Fixtures read from the
   table or from the scene: pads, cans, the dumpster, the receiving row, the
   sign, the clock, the tool station, the janitor's home, the gates
   (`economy_test.BUY_SPOT` is now "beside each gate"), and the forklift's
@@ -269,11 +269,41 @@ the layout actually changes.
 
 ### 3.3 Co-op: host + 2 clients through a full shift
 
-<<COOP>>
+- **`areas-net`** (new; host + 2 clients, real time): at prep, right after
+  the host buys Produce, 20 s into selling, at the report and at the next
+  shift's prep, every peer hashed every registry answer (30 px lattice ×
+  `area_at` / `section_of` / exit / open-section / shop floor / shoppers
+  allowed / Main's unlocked, break room and storage checks, plus every
+  area's open state). **Both clients matched the host at all five moments**
+  (17/17 checks), including the moment the purchase replicated.
+- **No new network state.** The registry is a constant table plus a live
+  read of the already-replicated `sections_owned` and practice flag. No RPC,
+  `MultiplayerSynchronizer` or replicated property was added: the 3.1
+  scene-tree dumps, which list every synchronizer node, match line for line.
+- **Every co-op entry of the regression suite** (`*-net*`, `save-net*`,
+  `menu-net-*`, `p5-net-demo`, `join-menu`): 51 OK; the 3 that failed are
+  known flakes (below). They include full shifts with 3 and 4 players,
+  purchases, deliveries, events, helpers, the janitor and late joins.
 
 ### 3.4 Full regression
 
-<<REGRESSION>>
+`tools/run_regression.sh`, every entry (134: Phase 5's 131 + the 3 new
+`areas-*`), 2 lanes, real wall-clock time, on the final code:
+**128 OK, 6 failed**, in 80 min. No crashes (no signal 11 this run).
+
+| Failed | Check | Verdict |
+|---|---|---|
+| hz-net-ambience-d6 | E1 (host's view of a client's spill pass) | known flake (on the list; Phase 5 saw the same E1) |
+| hz-finale | F2 spill gaps 12–20 s | known flake (on the list) |
+| sound-net | client beeps 18 vs host 12 | known flake (on the list) |
+| up-net | NF3 | known flake (on the list) |
+| hz-cleanup | CL1 / CL2 (only 2 litter on the floor at 4 s left) | **not the listed CL4**, so re-run alone: **3/3 pass** on this branch, 3/3 on clean `main`. Randomness under load (how much litter customers happen to drop), not the refactor. |
+| sound | S11 "beeper never more than 4/s" (5/s once) | **not on the list**, so re-run alone 3× on each side: **this branch 3/3 pass; clean `main` failed 1 of 3 with the identical S11 "forklift_beep 5/s"**. A pre-existing flake; add it to the list. |
+
+The 3 new entries pass: `areas-snapshot` (16 checks), `areas-no-cell-math`
+(3), `areas-net` (17). Every save suite passes on the final code (save-p1..p7,
+save-net, save-net-story, econ legacy, staff, upkeep, janitor): **v6 saves
+load unchanged**, and trash-can fills still land by index.
 
 ### 3.5 Soak and performance
 
