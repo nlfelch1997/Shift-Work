@@ -117,7 +117,34 @@ reachable, no closed lot reachable and no cut-off pocket of floor
 
 ## 4. Camera and readability
 
-(pending)
+**Decision: no camera change.** Each player keeps their own camera,
+following them at zoom 1 and limited to the whole world (`Player.gd`, limits
+from `StoreLayout.WORLD`). The window stays 960 × 540 with `canvas_items`
+stretch, so fullscreen shows the same 960 × 540 world area, larger.
+
+Why, from the clip shots (host + 2 clients, a selling crowd on stocked
+shelves, every helper hired, an event running, the host's own camera with
+the HUD on, at every growth stage):
+
+- **Stage 1 (the corner shop):** the shop is 840 px wide, so one view
+  holds its whole width — the checkout, the aisles' south ends and both
+  outside walls with their FOR SALE banners. This is the best early
+  readability the store has had: three players and the crowd in one
+  frame.
+- **Stages 2–4:** a view holds about one wing, the same as one old room
+  did. Players, shoppers with carts and list bubbles, helpers (name tags),
+  the manager's cone, the forklift and spills all read at 960 × 540, as
+  they did. Events are still announced by the HUD banner, whatever a
+  player is looking at.
+- **Zooming out was rejected** for the reason the proposal rejected Plan C:
+  at ~0.5 the art and text are too small at 960 × 540. Nothing in Plan B
+  needs it — the biggest store (2400 × 1140 of sales floor) is smaller
+  than the old one's (2880 × 1080 of rooms).
+- **The camera can see the unbought lots** (limits are the world, not the
+  open store): the lots advertise what's next, and the knock-out happens
+  on screen for anyone near.
+
+(Screenshots: section 1.1, `docs/store-layout-plan-b/shot_clip_*`.)
 
 ## 5. Balance: before / after
 

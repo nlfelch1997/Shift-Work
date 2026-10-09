@@ -237,7 +237,7 @@ const ANCHORS := {
 ## Unpack pads, one per section (Delivery.PAD_CENTERS). Each needs ~300 x 300
 ## of open floor round it (its spill ring is 80-150 px out).
 const PADS := {
-	"Dry Goods": Vector2(1200.0, 1230.0),
+	"Dry Goods": Vector2(1200.0, 1100.0), # at the gondolas' south ends: the shortest shelving trips (crew-only: Dry Goods has no helper)
 	"Produce": Vector2(1790.0, 700.0),
 	"Dairy/Frozen": Vector2(620.0, 1190.0),
 	"Bakery": Vector2(450.0, 900.0),
