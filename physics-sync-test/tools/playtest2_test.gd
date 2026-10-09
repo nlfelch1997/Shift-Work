@@ -155,7 +155,7 @@ const DIRS := {"down": Vector2.DOWN, "up": Vector2.UP, "left": Vector2.LEFT, "ri
 ## they were raw coordinates of the old hub.
 func lane_start(dir_name: String, lane := 0) -> Vector2:
 	var b: Rect2 = main.areas.spawn_band_of("dry_goods")
-	var vx: float = b.position.x + [60.0, 600.0, 660.0][clampi(lane, 0, 2)]
+	var vx: float = b.position.x + [0.0, 540.0, 600.0][clampi(lane, 0, 2)]
 	var hy: float = b.position.y + [20.0, 100.0, 190.0][clampi(lane, 0, 2)]
 	match dir_name: # a client's up and down (left and right) lanes are 50px apart: both its items are out at once
 		"down": return Vector2(vx, b.position.y)
@@ -203,6 +203,8 @@ func _run_ride() -> void:
 	print("INFO  worst player %.0fpx/s, worst object %.0fpx/s (player speed %.0f)" % [worst_player, worst_object, player().speed()])
 	finish()
 
+# PHASE 5B PART 2B: in the staff hall, where no stock spawns and no shopper
+# walks (on the shop floor other lanes' items and spawned stock got in the way).
 func _ride_cases(tag: String) -> void:
 	# R1 every pushable kind, every direction.
 	var lane := 0
@@ -214,9 +216,9 @@ func _ride_cases(tag: String) -> void:
 	# R2 pushed into the bottom edge of the store and held there: the item
 	# wedges, the player stops — nothing launches. Then into a side wall.
 	var obj := a_product()
-	player().teleport_to(area_spot("sidewalk", Vector2(-400, 50)))
+	player().teleport_to(area_spot("staff_hall", Vector2(-150, -150)))
 	await physics_frame
-	place(obj, area_spot("sidewalk", Vector2(-400, 82)))
+	place(obj, area_spot("staff_hall", Vector2(-150, -118)))
 	await wait(0.2)
 	var peaks: Array = await hold(Vector2.DOWN, 2.5, obj)
 	check_caps("%s2 product pushed down into the bottom wall and held 2.5s" % tag, peaks)
@@ -226,15 +228,15 @@ func _ride_cases(tag: String) -> void:
 	check(player().global_position.distance_to(p_then) < 2.0, "%s2 ...and the player stays put after letting go (moved %.1fpx)" % [tag, player().global_position.distance_to(p_then)])
 	park(obj)
 	obj = a_product()
-	player().teleport_to(area_spot("hub", Vector2(-440, -110)))
+	player().teleport_to(area_spot("staff_hall", Vector2(100, -150)))
 	await physics_frame
-	place(obj, area_spot("hub", Vector2(-472, -110)))
+	place(obj, area_spot("staff_hall", Vector2(68, -150)))
 	await wait(0.2)
 	check_caps("%s2 product pushed left across the hub's west edge for 2s" % tag, await hold(Vector2.LEFT, 2.0, obj))
 	park(obj)
 	# R3 carrying something while walking another item down the screen.
 	var held: RigidBody2D = a_product()
-	player().teleport_to(area_spot("hub", Vector2(-440, -250)))
+	player().teleport_to(area_spot("staff_hall", Vector2(0, -80)))
 	await physics_frame
 	place(held, player().global_position + Vector2(30, 0))
 	await wait(0.2)
@@ -252,9 +254,9 @@ func _ride_cases(tag: String) -> void:
 	# R4 grab mid-push: walking an item down the screen, grab it (E) and keep
 	# walking — the player keeps walking speed, before and after the grab.
 	obj = a_product()
-	player().teleport_to(area_spot("hub", Vector2(-440, -250)))
+	player().teleport_to(area_spot("staff_hall", Vector2(0, -80)))
 	await physics_frame
-	place(obj, area_spot("hub", Vector2(-440, -218)))
+	place(obj, area_spot("staff_hall", Vector2(0, -48)))
 	await wait(0.25)
 	var first: Array = await hold(Vector2.DOWN, 0.3, obj)
 	print("INFO  R4 at the grab: item %.0fpx ahead" % obj.global_position.distance_to(player().global_position))
