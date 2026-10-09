@@ -232,20 +232,16 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 		ground.texture = _art("lot_ground")
 		ground.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 		ground.texture_scale = Vector2.ONE / 0.625
-	for i in (0 if _art("lot_ground") != null else 220):
-		var dot := Polygon2D.new()
-		var c := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
-		var sz := rng.randf_range(2.0, 5.0)
-		dot.polygon = PackedVector2Array([c, c + Vector2(sz, 0), c + Vector2(sz, sz), c + Vector2(0, sz)])
-		dot.color = GROUND.lightened(rng.randf_range(0.08, 0.3)) if rng.randf() < 0.6 else GROUND.darkened(rng.randf_range(0.1, 0.3))
-		cover.add_child(dot)
-	for i in (0 if _art("lot_ground") != null else 2):
-		var rut := Line2D.new()
-		var y0 := rng.randf_range(r.position.y + 80.0, r.end.y - 80.0)
-		rut.points = PackedVector2Array([Vector2(r.position.x + 40.0, y0), Vector2(r.get_center().x, y0 + rng.randf_range(-60.0, 60.0)), Vector2(r.end.x - 40.0, y0 + rng.randf_range(-90.0, 90.0))])
-		rut.width = 10.0
-		rut.default_color = GROUND.darkened(0.18)
-		cover.add_child(rut)
+	# Stones and two ruts, drawn by one node (a node each was ~250 per lot).
+	var marks := LotMarks.new()
+	if _art("lot_ground") == null:
+		for i in 220:
+			var c := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
+			marks.stones.append([Rect2(c, Vector2.ONE * rng.randf_range(2.0, 5.0)), GROUND.lightened(rng.randf_range(0.08, 0.3)) if rng.randf() < 0.6 else GROUND.darkened(rng.randf_range(0.1, 0.3))])
+		for i in 2:
+			var y0 := rng.randf_range(r.position.y + 80.0, r.end.y - 80.0)
+			marks.ruts.append(PackedVector2Array([Vector2(r.position.x + 40.0, y0), Vector2(r.get_center().x, y0 + rng.randf_range(-60.0, 60.0)), Vector2(r.end.x - 40.0, y0 + rng.randf_range(-90.0, 90.0))]))
+	cover.add_child(marks)
 	# The construction fence round the lot, inside its edges.
 	var f := r.grow(-14.0)
 	var corners := [f.position, Vector2(f.end.x, f.position.y), f.end, Vector2(f.position.x, f.end.y), f.position]
@@ -260,13 +256,15 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 		fence.texture_mode = Line2D.LINE_TEXTURE_TILE
 		fence.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	cover.add_child(fence)
+	var posts := LotMarks.new()
 	for i in 4:
 		var a: Vector2 = corners[i]
 		var b: Vector2 = corners[i + 1]
 		var n := int(a.distance_to(b) / 60.0)
 		for k in n + 1:
 			var p: Vector2 = a.lerp(b, float(k) / maxf(1.0, n))
-			cover.add_child(_rect_poly(Rect2(p - Vector2(3, 3), Vector2(6, 6)), FENCE_POST))
+			posts.stones.append([Rect2(p - Vector2(3, 3), Vector2(6, 6)), FENCE_POST])
+	cover.add_child(posts)
 	# The FOR SALE board, mid-lot.
 	var board := Node2D.new()
 	board.position = r.get_center()
@@ -380,3 +378,13 @@ func _label(text: String, pos: Vector2, size: Vector2, font: int, c: Color) -> L
 	l.add_theme_font_size_override("font_size", font)
 	l.add_theme_color_override("font_color", c)
 	return l
+
+## One node drawing many small marks: a lot's stones and ruts, its fence posts.
+class LotMarks extends Node2D:
+	var stones: Array = [] # [Rect2, Color]
+	var ruts: Array = [] # PackedVector2Array
+	func _draw() -> void:
+		for st in stones:
+			draw_rect(st[0], st[1])
+		for rut in ruts:
+			draw_polyline(rut, GROUND.darkened(0.18), 10.0)

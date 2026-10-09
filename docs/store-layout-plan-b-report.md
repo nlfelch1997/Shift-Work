@@ -83,7 +83,33 @@ host announced. No new network state; **no save change (still v6)**.
 
 ## 2. Deviations from the proposal, and why
 
-(pending: table)
+The proposal's Plan B (`docs/store-layout-proposal.md` §3, the diagrams
+from `layout_model.py`) was followed in shape: corner shop with the
+checkout along the front and the door at its front-right corner, Produce to
+the right with its own back door, Dairy/Frozen then Bakery to the left,
+back of house along the whole back, nothing ever moves. Every change to the
+exact shapes, and why:
+
+| # | Proposal | Built | Why |
+|---|---|---|---|
+| 1 | World 2400 × 1740; sales floor ~1000 px deep | **2400 × 1860; sales floor 1140 deep** (y 540–1680) | Bakery's wing in the model (740 × 380) had no ~300 × 300 patch for its unpack pad clear of its shelves' slots, and three cooler shelves didn't fit Dairy's outside wall. 120 px more depth fixes both. Open floor rises a little above the proposal's 93 % of today's. |
+| 2 | Bakery 740 × 380, Dairy 740 × 600 | **Bakery 780 × 540, Dairy 780 × 600** | Same reason. The 240 px Bakery↔Dairy opening is kept. |
+| 3 | The Bakery↔Dairy opening left open (the model had no barrier there) | **A Bakery barrier piece across it** | Dairy/Frozen is bought before Bakery, so with Dairy open the opening would have let shoppers into the unbought Bakery lot. Several barrier pieces per section is the "barrier segments" step the proposal planned. |
+| 4 | Bakery: 3 shelves on the back wall + 1 on the outer wall + 1 on the wall facing the shop | **4 on the back wall + 1 on the outer wall** | The shop-facing one would have stood with its back to the knock-out wall, i.e. to open floor once Bakery is bought. |
+| 5 | Registers at x 840–1440, 150 apart | **x 850–1350, 125 apart; lane 1 (first to open) nearest the door** | At 150 apart the fifth counter stood in the 200 px door. 125 leaves a 64 px walk-through between a counter and the next lane's cashier. |
+| 6 | Dry Goods pad between the gondolas (1200, 1060) | **(1200, 1230), south of the gondolas** | Between them its spill ring (80–150 px) lands on the gondolas' slot rows. |
+| 7 | Gondola centre y 900 | **y 950** | Leaves a 90 px cross-aisle under the back-wall shelves' standing spots (the model's was ~50 px). |
+| 8 | Gondola end caps | **Not built** | The proposal flagged their mouths as stuck-point risks; nothing in the game needs them. Listed for the art pass (B16). |
+| 9 | Produce: 2 shelves on its west row at y 760 / 1000; pad at (2160, 1420) | **West row at y 880 / 1060 (level with the east row's), pad at (1790, 700) by the back door** | The forklift's lap visits "stations" along its lane; aligned rows give it the old pattern (stations with a shelf on each side). The pad by the back door makes the crew's carry from Storage short (that's the plan's carry win). |
+| 10 | Staff door 1000–1120, "widen to 200 in Part 2" | **200 px (1000–1200)** | As the proposal asked. Break room ↔ hall and hall ↔ Storage doorways are 230 px. |
+| 11 | The shop's tool rack (not placed in the proposal) | **Free-standing on the shop's west side, south of the aisles (850, 1300)** | First placed by the staff door; the upkeep tests showed fetching the broom then lost to sweeping by hand (the rack was ~990 px from the checkout's mess, vs ~540 in the old hub). Moved back to ~540. |
+| 12 | Manager "lookouts per wing" | **Every room's waypoint and lookouts are in the table**, his checkout stop (and start) inside the door | He walks straight lines with no collision; the old centre-to-centre legs would cross Plan B's shelves. `growth_test` ray-checks every leg. |
+| 13 | Spill/stock bands "per area" | **Each wing's band is open floor chosen in the table**; Produce's spans the wing's south half across the lane | A first, narrow Produce band put a Leaky Roof's leaks close together and the janitor alone finished it (the event is meant to need the crew). |
+
+**Nothing in the plan had to be abandoned.** No stuck-AI problem needed a
+different room shape: every stage's nav grids have every open slot
+reachable, no closed lot reachable and no cut-off pocket of floor
+(`growth_test`), and the shopper traffic test has 0 stuck shoppers.
 
 ## 3. Systems changed
 
