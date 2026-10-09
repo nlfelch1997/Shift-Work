@@ -1468,17 +1468,24 @@ func gate_of(sec_name: String) -> Node:
 		return null
 	return get_node_or_null("Gates/Gate%s" % SECTIONS[i]["node_name"])
 
-## The unowned section whose gate `pos` is standing at ("" if none).
+## PHASE 5B PART 2B: every barrier piece of a section (its main knock-out
+## wall first, in table order).
+func gates_of(sec_name: String) -> Array:
+	return $Gates.get_children().filter(func(g): return g.get_node("Gate").section == sec_name)
+
+## The unowned section whose gate `pos` is standing at ("" if none). PHASE 5B
+## PART 2B: any of its barrier pieces, on either side — except a back door
+## into Storage (you buy a wing from the shop, not from the back room).
 func for_sale_gate_at(pos: Vector2) -> String:
 	for i in range(sections_owned, SECTIONS.size()):
-		var g := gate_of(SECTIONS[i]["name"])
-		if g == null:
-			continue
-		var local: Vector2 = g.to_local(pos)
-		# Along its whole length (a gate seals the room's full edge).
-		var half_len: float = (g.get_node("CollisionShape2D").shape as RectangleShape2D).size.y / 2.0
-		if absf(local.x) <= GATE_BUY_RANGE and absf(local.y) <= half_len:
-			return SECTIONS[i]["name"]
+		for g in gates_of(SECTIONS[i]["name"]):
+			if g.get_node("Gate").back_door:
+				continue
+			var local: Vector2 = g.to_local(pos)
+			# Along its whole length (a gate seals the room's full edge).
+			var half_len: float = (g.get_node("CollisionShape2D").shape as RectangleShape2D).size.y / 2.0
+			if absf(local.x) <= GATE_BUY_RANGE and absf(local.y) <= half_len:
+				return SECTIONS[i]["name"]
 	return ""
 
 ## Why `sec_name` can't be bought right now ("" = it can).
@@ -1790,6 +1797,10 @@ func _status_text() -> String:
 	return "Shift %d  ·  Bank %s  ·  %s" % [current_day, _format_money(money), crew]
 
 func _ready() -> void:
+	# PHASE 5B PART 2B: the walls and the knock-out barriers come from the
+	# layout table (StoreLayout.gd), first — everything below that reads the
+	# structure (StoreArt's wall strips, the nav grids, the gates) finds it.
+	_build_structure()
 	# Children's _ready() runs before their parent's in Godot, so every
 	# Carryable component has already added its body to the "carryable"
 	# group by the time this line runs.
@@ -2036,16 +2047,55 @@ func _parse_cli_args() -> void:
 ## rather than each peer computing it once from its own local CLI flag.
 func _configure_gates() -> void:
 	# OCT 2026 PHASE 2: a gate is open once its section is owned; a locked
-	# one shows what it costs.
+	# one shows what it costs. PHASE 5B PART 2B: matched by the section each
+	# barrier piece names (a section may have several), not by node name.
 	for gate_body in get_tree().get_nodes_in_group("gate"):
 		var gate: Node = gate_body.get_node("Gate")
-		var section := {}
-		for s in SECTIONS:
-			if "Gate" + s["node_name"] == gate_body.name:
-				section = s
-		if section.is_empty():
+		var i := section_index(gate.section)
+		if i < 0:
 			continue
-		gate.configure_open(is_section_open(section), _gate_closed_text(section["name"]))
+		gate.configure_open(is_section_open(SECTIONS[i]), _gate_closed_text(gate.section))
+
+## PHASE 5B PART 2B — THE STORE'S STRUCTURE, FROM THE LAYOUT TABLE. Every
+## permanent wall becomes a StaticBody2D under Walls ("Wall00", ...) and every
+## knock-out barrier a Gate.tscn under Gates: the first of a section's pieces
+## is "Gate<node_name>" (gate_of()), the rest "Gate<node_name>_2", ... Built
+## identically on every peer (the table is a constant): no node here is
+## replicated, and each peer opens the barriers itself from the replicated
+## sections_owned (_configure_gates()), as before.
+const GateScene := preload("res://Gate.tscn")
+
+func _build_structure() -> void:
+	var walls: Node = $Walls
+	var rects: Array = areas.wall_rects()
+	for i in rects.size():
+		var r: Rect2 = rects[i]
+		var body := StaticBody2D.new()
+		body.name = "Wall%02d" % i
+		body.position = r.get_center()
+		var cs := CollisionShape2D.new()
+		cs.name = "CollisionShape2D"
+		var shape := RectangleShape2D.new()
+		shape.size = r.size
+		cs.shape = shape
+		body.add_child(cs)
+		walls.add_child(body)
+	var count := {}
+	for b in areas.barriers():
+		var sec: Dictionary = SECTIONS[section_index(b["section"])]
+		count[b["section"]] = int(count.get(b["section"], 0)) + 1
+		var gate_body: Node2D = GateScene.instantiate()
+		gate_body.name = "Gate%s" % sec["node_name"] + ("" if count[b["section"]] == 1 else "_%d" % count[b["section"]])
+		var r: Rect2 = b["rect"]
+		gate_body.position = r.get_center()
+		var along_x: bool = r.size.x > r.size.y
+		# A gate's long axis is its local y: turned a quarter for an east-west
+		# piece (its sign turned back upright).
+		gate_body.rotation = PI * 0.5 if along_x else 0.0
+		gate_body.get_node("Gate").setup(b["section"], r.size.x if along_x else r.size.y, b.get("back_door", false))
+		var label: Control = gate_body.get_node("Locked/Label")
+		label.rotation = -gate_body.rotation
+		$Gates.add_child(gate_body)
 
 ## What a locked gate's sign says.
 func _gate_closed_text(sec_name: String) -> String:

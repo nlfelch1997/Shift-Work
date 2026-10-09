@@ -40,11 +40,31 @@ class_name Gate
 
 var body: StaticBody2D
 var collision: CollisionShape2D
+## PHASE 5B PART 2B — BARRIER SEGMENTS: which section this piece opens with
+## (Main.gd matches gates by this, not by node name), and how long it is. A
+## section may have several (Produce: the shop's east wall and its back door
+## into Storage). Main.gd builds them from the layout table's BARRIERS
+## (StoreLayout.gd) and calls setup() before adding them.
+var section := ""
+var length := 0.0 # (setup() sets it)
+var back_door := false
 
 func _ready() -> void:
 	body = get_parent()
 	body.add_to_group("gate")
 	collision = body.get_node("CollisionShape2D")
+
+## Main.gd, before the body enters the tree: this piece's section and length
+## (the scene's own shape is a 20 x 540 placeholder; each piece gets its own).
+func setup(sec_name: String, len_px: float, is_back_door := false) -> void:
+	section = sec_name
+	length = len_px
+	back_door = is_back_door
+	var b: Node = get_parent()
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2(20.0, len_px)
+	(b.get_node("CollisionShape2D") as CollisionShape2D).shape = shape
+	(b.get_node("Locked/Line") as Line2D).points = PackedVector2Array([Vector2(0.0, -len_px * 0.5), Vector2(0.0, len_px * 0.5)])
 
 ## Open (invisible, passable) or closed (sealed, with closed_text on its sign).
 ## Phase 2: by ownership (PHASE 4 retired Week 21's endless postings).

@@ -101,11 +101,13 @@ const REPLAN_EVERY := 1.0
 ## A job that hasn't finished in this long is dropped and re-chosen (a slot
 ## that keeps getting taken from under it, an item a customer keeps nudging).
 const JOB_TIMEOUT := 12.0
-## The open band of a hireable room (room-local y) — between the two shelf
-## walls' slot rows, where fleeing the forklift keeps to. PHASE 5B PART 2A:
-## read from the room's "helper" entry in the layout table (StoreLayout.gd;
-## (150, 395) in every room today).
-var band_y := Vector2.ZERO
+## The open band of a hireable room — between the two shelf rows' slots,
+## where fleeing the forklift keeps to. PHASE 5B PART 2A: read from the
+## room's "helper" entry in the layout table (StoreLayout.gd). PHASE 5B PART
+## 2B: a world Rect2 (both axes), not a y range: Plan B's Produce lane runs
+## north-south, so the band is a strip of x. (The old rooms' band was room-
+## local y 150-395 with x kept 60 px off the walls: the same rect.)
+var band := Rect2()
 ## PHASE 5: how far past the band (or past where it stands, if that's already
 ## outside it, in a slot row) a helper may step to get out of the forklift.
 const ESCAPE_SLACK := 35.0
@@ -187,7 +189,7 @@ func _ready() -> void:
 	# in Plan B's wings); the band comes with it.
 	area_id = s["area"]
 	_room = main.areas.rect_of(area_id)
-	band_y = main.areas.area(area_id)["helper"]["band_y"]
+	band = main.areas.helper_band_of(area_id)
 	_astar.region = Rect2i(0, 0, int(_room.size.x / GRID), int(_room.size.y / GRID))
 	_astar.cell_size = Vector2(GRID, GRID)
 	_astar.offset = _room.position + Vector2(GRID, GRID) * 0.5
@@ -597,13 +599,22 @@ func _mark_solid_rect(xf: Transform2D, half: Vector2) -> void:
 			if absf(local.x) <= half.x and absf(local.y) <= half.y:
 				_astar.set_point_solid(Vector2i(x, y), true)
 
-## The room's own walls (20px thick) plus clearance.
+## The room's real walls plus clearance. PHASE 5B PART 2B (2A's report,
+## risk 2): only the walls and the still-closed barriers that are actually
+## there — the old rooms were walled all round, so this used to make the
+## room's whole edge solid, which in Plan B's wings would also wall off the
+## open side onto the shop (a wing's helper couldn't reach a slot or a pad
+## near it). The grid itself is the room, so a helper still never leaves it.
 func _mark_walls() -> void:
-	var edge := int(ceil((20.0 + CLEARANCE) / GRID))
-	for x in _astar.region.size.x:
-		for y in _astar.region.size.y:
-			if x < edge or y < edge or x >= _astar.region.size.x - edge or y >= _astar.region.size.y - edge:
-				_astar.set_point_solid(Vector2i(x, y), true)
+	for body in main.get_node("Walls").get_children() + main.get_node("Gates").get_children():
+		var cs: CollisionShape2D = body.get_node("CollisionShape2D")
+		if cs.disabled:
+			continue
+		var half: Vector2 = (cs.shape as RectangleShape2D).size * 0.5
+		var xf: Transform2D = cs.global_transform
+		var bounds := Rect2(xf.origin, Vector2.ZERO).grow(half.length() + CLEARANCE)
+		if bounds.intersects(_room):
+			_mark_solid_rect(xf, half + Vector2(CLEARANCE, CLEARANCE))
 
 func _mark_solid_circle(center: Vector2, radius: float) -> void:
 	if not _room.grow(radius).has_point(center):
@@ -707,21 +718,25 @@ func _forklift_step(delta: float) -> Vector2:
 		# Toward the room's middle if the near wall's in the way.
 		var out := heading.orthogonal() * s
 		var probe := position + out * 40.0
-		if probe.y < _room.position.y + band_y.x or probe.y > _room.position.y + band_y.y or probe.x < _room.position.x + 60.0 or probe.x > _room.end.x - 60.0:
+		if not band.has_point(probe):
 			out = -out
 		dir = out
 	if dir == Vector2.ZERO:
 		return Vector2.INF
 	forklift_yield_s += delta
 	var p := position + dir * maxf(speed, FLEE_SPEED) * delta
-	p.x = clampf(p.x, _room.position.x + 60.0, _room.end.x - 60.0)
-	if inside:
-		# PHASE 5: escaping the body (_escape_dir() picked a way that ends
-		# near where it stands) — the band clamp would drag it back across.
-		p.y = clampf(p.y, minf(_room.position.y + band_y.x, position.y - ESCAPE_SLACK), maxf(_room.position.y + band_y.y, position.y + ESCAPE_SLACK))
-	else:
-		p.y = clampf(p.y, _room.position.y + band_y.x, _room.position.y + band_y.y)
+	# PHASE 5: escaping the body (_escape_dir() picked a way that ends near
+	# where it stands) — the band clamp would drag it back across, so the band
+	# widens to wherever it stands plus a step.
+	var keep := _escape_band() if inside else band
+	p.x = clampf(p.x, keep.position.x, keep.end.x)
+	p.y = clampf(p.y, keep.position.y, keep.end.y)
 	return p
+
+## The band, widened to wherever the helper already stands (a slot row sits
+## outside it) plus a step (PHASE 5's escape rule, on both axes).
+func _escape_band() -> Rect2:
+	return band.merge(Rect2(position, Vector2.ZERO).grow(ESCAPE_SLACK))
 
 ## PHASE 5 FIX — out of the forklift's body by the SHORTEST way that ends in
 ## the room's open band (or the slot row the helper already stands in). Before, it took the nearer long side and, if that
@@ -748,10 +763,7 @@ func _escape_dir(fk: Node2D) -> Vector2:
 		var exit_pt := position + world_dir * (d + 4.0)
 		# The band, widened to wherever the helper already stands (a slot row
 		# sits outside it) plus a step: out the near side, never across.
-		var top: float = minf(_room.position.y + band_y.x, position.y - ESCAPE_SLACK)
-		var bot: float = maxf(_room.position.y + band_y.y, position.y + ESCAPE_SLACK)
-		var in_band := exit_pt.y >= top and exit_pt.y <= bot \
-			and exit_pt.x >= _room.position.x + 60.0 and exit_pt.x <= _room.end.x - 60.0
+		var in_band := _escape_band().has_point(exit_pt)
 		if in_band and d < best_d:
 			best_d = d
 			best = world_dir
