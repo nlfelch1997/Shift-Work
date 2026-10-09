@@ -217,6 +217,9 @@ Clean `main` against this branch gave this:
 
 Checksums for all 40 pairs: `docs/store-layout-refactor/proof_checksums.txt`.
 Re-run with `tools/run_layout_proof.sh OUT_DIR` in each checkout and `cmp`.
+The comparison was run twice: once mid-session, and **again on the final
+commit** (after the last game-code change, the practice shift's door marker
+moving into the table). Both times all 40 files were identical.
 
 The "after" screenshots (identical to "before"):
 
@@ -261,11 +264,26 @@ checks passed (bank moved by pay − wages exactly, lifetime grew by pay).
 No crashes and no script errors in 24 runs. Combined with 3.1 (every
 position query, nav grid and seeded roll identical), there is no mechanism
 by which the refactor could move income. The bot sims vary by ~±10 % on
-their own. The progression sim (`--test=progress`, 24+ shifts per run,
-hours each) wasn't re-run: with the per-state income unchanged and every
-purchase, gate, register tier and section rule reading the same values, it
-couldn't show anything the income runs don't. Re-run it with Part 2B, where
-the layout actually changes.
+their own. **Progression sim** (`--test=progress`, solo, events on, the
+event-answering bot, `--fixed-fps 60`), shortened to the first 8 shifts from
+a brand-new shop (the full 24+ shift run is hours per side). Both sides ran
+at the same time:
+
+| Milestone (shift reached) | clean main | this branch | Phase 5 (solo) |
+|---|---|---|---|
+| Produce (2nd section) | 3 | 3 | 3 |
+| First random event | 3 | 3 | 3 |
+| Rating moved (±0.5★) | 3 | 3 | 2 |
+| First helper | 4 | 4 | 4 |
+| Janitor | 5 | 4 | — |
+| Dairy/Frozen (3rd section) | 7 | 7 | — |
+| Lifetime earned at shift 7 | $4,704 | $4,679 | — |
+
+These are the same to within one shift (the janitor, whose timing depends
+on the bank after an event bonus), which is the ±1–2 shift noise Phase 5
+measured. Later milestones (all sections, top tier, the whole gear shop)
+weren't run. They follow from the same per-state income, which matched
+above.
 
 ### 3.3 Co-op: host + 2 clients through a full shift
 
