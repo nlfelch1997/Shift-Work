@@ -24,6 +24,13 @@ extends "res://tools/hazards_test.gd"
 ##                     answers. The late joiner arrives after everything is
 ##                     bought: every wing open, no knock-out played, the same
 ##                     answers.
+##   --test=checkout   the north-facing checkout at every tier (1-4 sections):
+##                     the open lanes are the ones nearest the door (2/3/4/5),
+##                     every queue runs north on open floor (its 4 spots and 6
+##                     overflow places past them), clear of the other lanes'
+##                     counters and cashiers, and a real crowd checks out
+##                     through them (sales rung at every open register, no
+##                     shopper stuck).
 ##   --test=growth-save --phase=1|2|3  phase 1 buys Produce and Dairy/Frozen
 ##                     and saves (still version 6); phase 2 reloads it: those
 ##                     two wings open with no knock-out, Bakery's lot closed;
@@ -57,6 +64,7 @@ func _initialize() -> void:
 		"growth": _run_growth.call_deferred()
 		"net-growth": _run_net_host.call_deferred()
 		"growth-save": _run_save.call_deferred()
+		"checkout": _run_checkout.call_deferred()
 		_:
 			print("FAIL  unknown --test=%s" % _mode)
 			quit(1)
@@ -380,6 +388,79 @@ func _run_net_client(is_late: bool) -> void:
 		_net_write("growth_stage_%d_ok.json" % stage, {"ok": true})
 	await _net_read("growth_done.json", 180.0)
 	_net_write("growth_bye_early.json", {"fails": fails})
+	finish()
+
+## --- THE CHECKOUT ---------------------------------------------------------------
+
+func _run_checkout() -> void:
+	await wait_until(func(): return main.shift_active and main.players.has(1), 30.0)
+	await wait(0.5)
+	player().teleport_to(main.areas.anchor("player_spawn"))
+	var door: Vector2 = main.areas.anchor("front_door")
+	var q_dir: Vector2 = Layout.CHECKOUT["queue_dir"]
+	var bn: RefCounted = Spots.nav(main)
+	for tier in range(1, 5):
+		main.sections_owned = tier
+		main._reconfigure_world()
+		await wait(0.3)
+		var active: Array = main.cashiers.filter(func(c): return c.get_node("Cashier").active)
+		var want: int = Layout.CHECKOUT["registers_by_tier"][tier - 1]
+		var by_door: Array = main.cashiers.duplicate()
+		by_door.sort_custom(func(a, b): return a.global_position.distance_to(door) < b.global_position.distance_to(door))
+		check(active.size() == want and active == by_door.slice(0, want), "C%d tiers: %d of 5 lanes open, the %d nearest the door" % [tier, active.size(), want])
+		bn.invalidate()
+		bn.path(door, door)
+		var bad := []
+		for c in active:
+			var cash: Node = c.get_node("Cashier")
+			var pts: Array = [cash.checkout.global_position]
+			for m in cash.queue_slots:
+				pts.append(m.global_position)
+			var last: Vector2 = pts[-1]
+			for k in 6:
+				pts.append(last + q_dir * 40.0 * (k + 1)) # Cashier.queue_slot_position()'s overflow
+			for i in pts.size():
+				var p: Vector2 = pts[i]
+				# The checkout spot itself is beside the counter, within its
+				# clearance: a shopper stands at the nearest open cell (within
+				# Customer.CHECKOUT_STOP_RANGE of it).
+				var cell: Vector2i = bn._to_cell(p)
+				var ok: bool = not bn._astar.is_point_solid(cell) if i > 0 else bn._cell_center(bn._open_cell_near(cell)).distance_to(p) <= 25.0
+				if not ok:
+					bad.append("%s#%d%s" % [c.name, i, str(p.round())])
+		check(bad.is_empty(), "C%d queues: every open lane's checkout spot, 4 queue spots and 6 overflow places are open floor %s" % [tier, str(bad.slice(0, 6))])
+		var reach := []
+		main.customer_path(door, door)
+		for c in active:
+			if not main._customer_nav.reachable(door + Vector2(0, -60), c.get_node("Cashier").checkout.global_position):
+				reach.append(String(c.name))
+		check(reach.is_empty(), "C%d reach: shoppers can walk from the door to every open register %s" % [tier, str(reach)])
+	# A real crowd through the checkout at the top tier, everything stocked.
+	main.sections_owned = 4
+	main._reconfigure_world()
+	await wait(0.3)
+	main.open_store(1)
+	var sold0 := {}
+	for c in main.cashiers:
+		sold0[c.name] = c.get_node("Cashier").total_sold
+	var t := 0.0
+	var max_q := 0
+	while t < 150.0:
+		for sb in main.shelves:
+			var shelf: Node = sb.get_node("Shelf")
+			if shelf.filled_count() < shelf.slot_count() / 2 and main.is_unlocked_at_pos(sb.global_position):
+				var sec: String = main.areas.section_of(sb.global_position)
+				main.spawn_product_at(sec, open_floor_near(sb.global_position - sb.global_transform.y.normalized() * 110.0))
+		for c in main.cashiers:
+			max_q = maxi(max_q, c.get_node("Cashier").queue_length())
+		await wait(3.0)
+		t += 3.0
+	var rung := []
+	for c in main.cashiers:
+		if c.get_node("Cashier").total_sold > sold0[c.name]:
+			rung.append(String(c.name))
+	print("INFO  checkout run: sales by register %s, longest queue %d" % [str(main.cashiers.map(func(c): return c.get_node("Cashier").total_sold - sold0[c.name])), max_q])
+	check(rung.size() >= 4, "C5: with a full crowd, sales rang at %d of 5 registers %s" % [rung.size(), str(rung)])
 	finish()
 
 ## --- SAVE / RELOAD -------------------------------------------------------------

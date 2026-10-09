@@ -616,7 +616,7 @@ func _run_fk_escape() -> void:
 			if signf(rel_start.y) != 0.0 and signf(rel_end.y) == -signf(rel_start.y) and absf(rel_end.y) > 20.0 and absf(rel_start.y) > 4.0:
 				through += 1
 				if through <= 10:
-					print("INFO  THROUGH forklift %s rot %.2f, helper from %s (local %s, band %.0f-%.0f) to %s (local %s) in %d frames" % [str(pose[0]), pose[1], str(start.round()), str(rel_start.round()), band_top, band_bot, str(h.position.round()), str(rel_end.round()), frames])
+					print("INFO  THROUGH forklift %s rot %.2f, helper from %s (local %s, band %s) to %s (local %s) in %d frames" % [str(pose[0]), pose[1], str(start.round()), str(rel_start.round()), str(band), str(h.position.round()), str(rel_end.round()), frames])
 			if frames > ESCAPE_FRAMES:
 				stuck += 1
 				if stuck <= 8:

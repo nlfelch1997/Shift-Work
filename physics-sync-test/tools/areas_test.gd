@@ -164,15 +164,25 @@ func _check_scene(areas: RefCounted) -> void:
 		"S9: 5 trash cans in save order %s (v6 saves store fills by index)" % str(order))
 	var can_rooms: Array = Layout.CANS.map(func(c): return areas.area_at(c["pos"]))
 	check(can_rooms[0] == "hub" and can_rooms.slice(1).all(func(r): return r == "hub" or areas.role_of(r) == "section"), "S10: the cans stand on the sales floor %s" % str(can_rooms))
-	# S11: each gate seals the edge between the hub-side room and its
-	# section: it stands on its section room's edge.
+	# S11: every barrier piece (PHASE 5B PART 2B: several per section, built
+	# from the table) lies on an edge of its section's room, and each section
+	# but the first has one.
 	var gates_ok := true
+	var bad_g := []
+	for g in main.get_node("Gates").get_children():
+		var sec: String = g.get_node("Gate").section
+		var r: Rect2 = areas.rect_of(areas.room_of_section(sec))
+		var p: Vector2 = g.global_position
+		var on_v: bool = (is_equal_approx(p.x, r.position.x) or is_equal_approx(p.x, r.end.x)) and p.y > r.position.y and p.y < r.end.y
+		var on_h: bool = (is_equal_approx(p.y, r.position.y) or is_equal_approx(p.y, r.end.y)) and p.x > r.position.x and p.x < r.end.x
+		if not (on_v or on_h):
+			gates_ok = false
+			bad_g.append(String(g.name))
 	for i in range(1, main.SECTIONS.size()):
-		var g: Node2D = main.gate_of(main.SECTIONS[i]["name"])
-		var r: Rect2 = areas.rect_of(main.SECTIONS[i]["area"])
-		var on_edge: bool = is_equal_approx(g.global_position.x, r.position.x) or is_equal_approx(g.global_position.x, r.end.x)
-		gates_ok = gates_ok and on_edge and g.global_position.y > r.position.y and g.global_position.y < r.end.y
-	check(gates_ok, "S11: every section's gate stands on its room's edge")
+		gates_ok = gates_ok and main.gate_of(main.SECTIONS[i]["name"]) != null
+	check(gates_ok and main.get_node("Gates").get_child_count() == Layout.BARRIERS.size(), "S11: every barrier piece stands on its section room's edge (%d pieces) %s" % [main.get_node("Gates").get_child_count(), str(bad_g)])
+	# S11b: the walls in the scene are the table's, one body each.
+	check(main.get_node("Walls").get_child_count() == Layout.WALLS.size(), "S11b: %d wall bodies built from the table's %d walls" % [main.get_node("Walls").get_child_count(), Layout.WALLS.size()])
 	# S12: the registers are in the checkout's room, and each queue runs the
 	# way the table says (Cashier.tscn's Queue* markers).
 	var q_dir: Vector2 = Layout.CHECKOUT["queue_dir"]
@@ -204,8 +214,8 @@ func _check_scene(areas: RefCounted) -> void:
 	var before: int = main.sections_owned
 	main.sections_owned = 2
 	main._reconfigure_world()
-	check(opened == ["produce", "produce_forklift_lane"] and areas.is_open("produce") and not areas.is_open("dairy_frozen") and areas.is_open("hub") and not areas.is_open("reserved"),
-		"S16: buying Produce opens its room and its forklift lane (area_opened %s), Dairy stays shut, the hub is always open, the empty lot never" % str(opened))
+	check(opened == ["produce", "produce_forklift_lane"] and areas.is_open("produce") and not areas.is_open("dairy_frozen") and not areas.is_open("bakery") and areas.is_open("hub") and areas.is_open("dry_goods"),
+		"S16: buying Produce opens its room and its forklift lane (area_opened %s), Dairy and Bakery stay shut, the shop is always open" % str(opened))
 	main.sections_owned = before
 	main._reconfigure_world()
 
@@ -219,10 +229,11 @@ func _answers() -> String:
 	out.append("owned=%d" % main.sections_owned)
 	for id in areas.room_ids() + Layout.FEATURES.map(func(f): return f["id"]):
 		out.append("%s:%s" % [id, str(areas.is_open(id))])
-	var y := -30.0
-	while y < 1660.0:
-		var x := -30.0
-		while x < 2920.0:
+	var wr: Rect2 = areas.world_rect()
+	var y := wr.position.y - 30.0
+	while y < wr.end.y + 40.0:
+		var x := wr.position.x - 30.0
+		while x < wr.end.x + 40.0:
 			var p := Vector2(x, y)
 			out.append("%s|%s|%s|%d%d%d%d%d%d" % [areas.area_at(p), areas.section_of(p), areas.feature_at(p, "exit"),
 				int(areas.is_section_open_at(p)), int(areas.is_open_shop_floor_at(p)), int(areas.shoppers_allowed_at(p)),

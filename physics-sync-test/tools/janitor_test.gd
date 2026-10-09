@@ -878,7 +878,7 @@ func _run_jan_events() -> void:
 	# inspector round (off the floor), the bar is tighter, the crew cleans
 	await _until_idle(30.0)
 	for i in 8:
-		cl.drop_litter(Vector2(1150 + i * 60, 900 + (i % 3) * 20))
+		cl.drop_litter(area_spot("hub", Vector2(-290 + i * 60, 90 + (i % 3) * 20)))
 	n0 = ev.log_today.size()
 	ev.force_next("inspection", 0.5)
 	await wait_until(func(): return ev.busy() and ev.key == "inspection", 20.0)

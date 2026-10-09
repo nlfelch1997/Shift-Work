@@ -26,8 +26,22 @@ func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
 	current_scene = main
-	main.events_on = false
-	_run.call_deferred()
+	main.events_on = "--event=" in " ".join(OS.get_cmdline_user_args())
+	if "--client" in OS.get_cmdline_user_args():
+		_run_client.call_deferred()
+	else:
+		_run.call_deferred()
+
+## --client: just a crew member for the host's clip shots (it moves where the
+## host puts it), until the host says it's done.
+func _run_client() -> void:
+	var t := 0.0
+	while t < float(_arg("--client-seconds=", "240")):
+		await create_timer(1.0).timeout
+		t += 1.0
+		if FileAccess.file_exists(_arg("--done-file=", "user://planb_shots_done")):
+			break
+	quit()
 
 func _arg(prefix: String, dflt: String) -> String:
 	for a in OS.get_cmdline_user_args():
@@ -40,6 +54,13 @@ func _run() -> void:
 		await physics_frame
 	for i in 120:
 		await physics_frame
+	# --players=N: wait for the clients (tools/planb_shots.gd --client).
+	var want := int(_arg("--players=", "1"))
+	while main.players.size() < want:
+		await physics_frame
+	# --hire=all: every helper and the janitor on the books.
+	if _arg("--hire=", "") == "all":
+		main.staff.staff = {"Produce": {"speed": 0, "carry": 0}, "Dairy/Frozen": {"speed": 0, "carry": 0}, "Bakery": {"speed": 0, "carry": 0}, "Janitor": {"speed": 0}}
 	var selling := float(_arg("--selling=", "0"))
 	if selling > 0.0:
 		main.open_store(1)
@@ -47,7 +68,30 @@ func _run() -> void:
 		while t < selling:
 			await physics_frame
 			t += 1.0 / 60.0
+	# --event=key: force a random event to start (Events.gd) and run 8 s.
+	var ev := _arg("--event=", "")
+	if ev != "":
+		main.events.force_next(ev, 0.1)
+		var te := 0.0
+		while te < 8.0:
+			await physics_frame
+			te += 1.0 / 60.0
 	main.debug_label.visible = false
+	# --clip=x:y,...: THE CLIP TEST — the host's own camera (960 x 540, zoom 1,
+	# HUD on) with every player standing round that spot, mid-shift.
+	for c in _arg("--clip=", "").split(",", false):
+		var f := c.split(":")
+		var at := Vector2(float(f[0]), float(f[1]))
+		var k := 0
+		for id in main.players:
+			main.players[id].rpc("teleport_to", at + Vector2(-70 + 70 * k, 30 * (k % 2)))
+			k += 1
+		main.status_hud = true
+		for i in 45:
+			await physics_frame
+		var path := out_dir.path_join("shot_%s_clip_%s.png" % [tag, c.replace(":", "_")])
+		root.get_texture().get_image().save_png(path)
+		print("SHOT  " + path)
 	var hud := "--hud" in OS.get_cmdline_user_args()
 	main.status_hud = hud
 	var alerts := main.get_node_or_null("AlertLayer")
@@ -90,6 +134,9 @@ func _run() -> void:
 			root.get_texture().get_image().save_png(path)
 			print("SHOT  " + path)
 	print("SHOTS done %s" % tag)
+	var df := FileAccess.open(_arg("--done-file=", "user://planb_shots_done"), FileAccess.WRITE)
+	df.store_string("done")
+	df.close()
 	quit()
 
 func _shot(cam: Camera2D, name: String, at: Vector2, zoom: float) -> void:

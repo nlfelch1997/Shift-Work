@@ -62,7 +62,7 @@ func park_world() -> void:
 	if main.multiplayer.is_server():
 		main.test_hold_customers = true
 		main.forklift._pause_timer = 1.0e9
-		pin_manager(area_spot("reserved"), 0.0)
+		pin_manager(out_of_the_way(), 0.0)
 		main._order_timer = 1.0e9
 		main.ambience._spill_timer = 1.0e9
 		main.ambience._lights_timer = 1.0e9
@@ -147,17 +147,21 @@ func check_caps(label: String, peaks: Array) -> void:
 		check(peaks[2] <= cap_o and peak_ok, "%s: pushed object's speed held: mean %.0fpx/s (cap %.0f), peak %.0f (clamp %.0f%s)" % [label, peaks[2], cap_o, peaks[1], OBJECT_CLAMP, "" if main.multiplayer.is_server() else ", not checked on a client"])
 
 const DIRS := {"down": Vector2.DOWN, "up": Vector2.UP, "left": Vector2.LEFT, "right": Vector2.RIGHT}
-## Open hub floor for a ~1s push each way, one lane per peer (host 0, the
-## clients 1 and 2), clear of the register rows (y 890+) and of each other:
-## vertical lanes at x 1000 / 1720 / 1820, horizontal ones at y 600 / 680 / 760.
+## Open shop floor for a ~1s push each way, one lane per peer (host 0, the
+## clients 1 and 2), clear of the gondolas, the registers and each other.
+## PHASE 5B PART 2B: laid on the shop's open floor (the Dry Goods spawn band
+## in the layout table: x 840-1560, y 1060-1320 in Plan B) — vertical lanes
+## down its west edge and its east end, horizontal ones across its middle;
+## they were raw coordinates of the old hub.
 func lane_start(dir_name: String, lane := 0) -> Vector2:
-	var vx: float = [1000.0, 1700.0, 1820.0][clampi(lane, 0, 2)]
-	var hy: float = [600.0, 680.0, 780.0][clampi(lane, 0, 2)]
+	var b: Rect2 = main.areas.spawn_band_of("dry_goods")
+	var vx: float = b.position.x + [60.0, 600.0, 660.0][clampi(lane, 0, 2)]
+	var hy: float = b.position.y + [20.0, 100.0, 190.0][clampi(lane, 0, 2)]
 	match dir_name: # a client's up and down (left and right) lanes are 50px apart: both its items are out at once
-		"down": return Vector2(vx, 560)
-		"up": return Vector2(vx + (50.0 if lane > 0 else 0.0), 860)
-		"left": return Vector2(1500, hy)
-	return Vector2(1100, hy + (50.0 if lane > 0 else 0.0))
+		"down": return Vector2(vx, b.position.y)
+		"up": return Vector2(vx + (50.0 if lane > 0 else 0.0), b.position.y + 300.0)
+		"left": return Vector2(b.position.x + 560.0, hy)
+	return Vector2(b.position.x + 160.0, hy + (50.0 if lane > 0 else 0.0))
 
 ## Host: a pushed item goes to a grid on the empty south floor afterwards, so
 ## no lane is ever cluttered by an earlier case's item.
@@ -167,7 +171,7 @@ func park(obj: RigidBody2D) -> void:
 		return
 	if obj.get_node_or_null("Carryable") and obj.get_node("Carryable").carrier_id != 0:
 		return
-	place(obj, Vector2(1400 + (_parked % 12) * 40, 1260 + (_parked / 12) * 40))
+	place(obj, area_spot("sidewalk", Vector2(-40 + (_parked % 12) * 40, -90 + (_parked / 12) * 40)))
 	_parked += 1
 
 func push_case(label: String, obj: RigidBody2D, dir_name: String, lane := 0, gap := 32.0) -> void:

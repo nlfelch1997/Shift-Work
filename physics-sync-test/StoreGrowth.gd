@@ -33,6 +33,19 @@ extends Node2D
 ## so the cover never hides a person; the wall strip is 20 px, like every
 ## other wall.
 
+## ART SWAP HOOK. Every look here is a code-drawn placeholder until a texture
+## is named for it below: put a res:// path in and that placeholder gives way
+## to the art (a data change, nothing else). Sizes are world px at the game's
+## art scale (a floor tile is 30 px — StoreArt.ART_SCALE; see
+## docs/store-layout-art-needs.md for each piece).
+const ART := {
+	"lot_ground": "", # tiling ground for an unbought wing (gravel / old asphalt), drawn at StoreArt.ART_SCALE
+	"fence": "", # tiling construction-fence strip round a lot, 12 px tall
+	"for_sale_board": "", # the FOR SALE board mid-lot, 280 x 120 (+ posts): text is drawn over it
+	"banner": "", # a FOR SALE banner hung on the knock-out wall, 168 x 18: text is drawn over it
+	"shutter": "", # tiling roller-shutter face (Produce's back door), 20 px thick
+}
+
 const Z := 4
 const ANNOUNCE_WINDOW := 1.5 # s: a flip and a purchase announcement this close are one purchase
 const KNOCK_SECONDS := 1.8
@@ -212,15 +225,21 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 	cover.name = "Cover"
 	root.add_child(cover)
 	# The ground: the whole wing, gravel with a scatter of stones and two ruts.
-	cover.add_child(_rect_poly(r, GROUND))
-	for i in 220:
+	var ground := _rect_poly(r, GROUND)
+	cover.add_child(ground)
+	if _art("lot_ground") != null:
+		ground.color = Color.WHITE
+		ground.texture = _art("lot_ground")
+		ground.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+		ground.texture_scale = Vector2.ONE / 0.625
+	for i in (0 if _art("lot_ground") != null else 220):
 		var dot := Polygon2D.new()
 		var c := Vector2(rng.randf_range(r.position.x, r.end.x), rng.randf_range(r.position.y, r.end.y))
 		var sz := rng.randf_range(2.0, 5.0)
 		dot.polygon = PackedVector2Array([c, c + Vector2(sz, 0), c + Vector2(sz, sz), c + Vector2(0, sz)])
 		dot.color = GROUND.lightened(rng.randf_range(0.08, 0.3)) if rng.randf() < 0.6 else GROUND.darkened(rng.randf_range(0.1, 0.3))
 		cover.add_child(dot)
-	for i in 2:
+	for i in (0 if _art("lot_ground") != null else 2):
 		var rut := Line2D.new()
 		var y0 := rng.randf_range(r.position.y + 80.0, r.end.y - 80.0)
 		rut.points = PackedVector2Array([Vector2(r.position.x + 40.0, y0), Vector2(r.get_center().x, y0 + rng.randf_range(-60.0, 60.0)), Vector2(r.end.x - 40.0, y0 + rng.randf_range(-90.0, 90.0))])
@@ -234,6 +253,12 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 	fence.points = PackedVector2Array(corners)
 	fence.width = 3.0
 	fence.default_color = FENCE
+	if _art("fence") != null:
+		fence.width = 12.0
+		fence.default_color = Color.WHITE
+		fence.texture = _art("fence")
+		fence.texture_mode = Line2D.LINE_TEXTURE_TILE
+		fence.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
 	cover.add_child(fence)
 	for i in 4:
 		var a: Vector2 = corners[i]
@@ -248,8 +273,11 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 	cover.add_child(board)
 	board.add_child(_rect_poly(Rect2(-96, 50, 8, 46), FENCE_POST))
 	board.add_child(_rect_poly(Rect2(88, 50, 8, 46), FENCE_POST))
-	board.add_child(_rect_poly(Rect2(-140, -64, 280, 120), Color(0.2, 0.2, 0.2, 1)))
-	board.add_child(_rect_poly(Rect2(-134, -58, 268, 108), SIGN_BG))
+	if _art("for_sale_board") != null:
+		board.add_child(_sprite(_art("for_sale_board"), Rect2(-140, -64, 280, 120)))
+	else:
+		board.add_child(_rect_poly(Rect2(-140, -64, 280, 120), Color(0.2, 0.2, 0.2, 1)))
+		board.add_child(_rect_poly(Rect2(-134, -58, 268, 108), SIGN_BG))
 	board.add_child(_label("FOR SALE", Vector2(-134, -56), Vector2(268, 40), 32, BANNER_BG))
 	board.add_child(_label("%s WING" % s["name"].to_upper(), Vector2(-134, -14), Vector2(268, 26), 18, Color(0.15, 0.15, 0.15)))
 	var board_text := _label("", Vector2(-134, 14), Vector2(268, 26), 15, Color(0.25, 0.25, 0.25))
@@ -284,7 +312,12 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 			chunk.set_meta("spin", rng.randf_range(-1.6, 1.6))
 			var local := Rect2(seg.position - home, seg.size)
 			if b.get("back_door", false):
-				chunk.add_child(_rect_poly(local, SHUTTER))
+				var face_poly := _rect_poly(local, SHUTTER)
+				if _art("shutter") != null:
+					face_poly.color = Color.WHITE
+					face_poly.texture = _art("shutter")
+					face_poly.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+				chunk.add_child(face_poly)
 				var slat := Line2D.new()
 				slat.points = PackedVector2Array([local.position + Vector2(0, 10), local.position + Vector2(local.size.x, 10)]) if along_x else PackedVector2Array([local.position + Vector2(10, 0), local.position + Vector2(10, local.size.y)])
 				slat.width = 2.0
@@ -307,7 +340,7 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 			var holder := Node2D.new()
 			holder.position = Vector2(at, 0.0) if along_x else Vector2(0.0, at)
 			holder.rotation = 0.0 if along_x else -PI * 0.5
-			holder.add_child(_rect_poly(Rect2(-84, -9, 168, 18), BANNER_BG))
+			holder.add_child(_sprite(_art("banner"), Rect2(-84, -9, 168, 18)) if _art("banner") != null else _rect_poly(Rect2(-84, -9, 168, 18), BANNER_BG))
 			var lab := _label("", Vector2(-84, -10), Vector2(168, 20), 12, Color(1, 0.96, 0.9))
 			holder.add_child(lab)
 			banners.append(lab)
@@ -317,6 +350,19 @@ func _build_lot(s: Dictionary, pieces: Array, rng: RandomNumberGenerator) -> voi
 	root.add_child(dust)
 	_lots[s["name"]] = {"room": room, "root": root, "cover": cover, "wall": wall, "dust": dust,
 		"board_text": board_text, "banners": banners, "open": false, "flip_t": -INF, "anim_t": -1.0}
+
+## The art named for `key` in ART (null = keep the placeholder).
+func _art(key: String) -> Texture2D:
+	var path: String = ART.get(key, "")
+	return load(path) if path != "" and ResourceLoader.exists(path) else null
+
+func _sprite(tex: Texture2D, r: Rect2) -> Sprite2D:
+	var spr := Sprite2D.new()
+	spr.texture = tex
+	spr.centered = false
+	spr.position = r.position
+	spr.scale = r.size / tex.get_size()
+	return spr
 
 func _rect_poly(r: Rect2, c: Color) -> Polygon2D:
 	var p := Polygon2D.new()

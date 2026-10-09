@@ -55,6 +55,7 @@ extends SceneTree
 ##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=route-len
 
 var main: Node
+const Spots := preload("res://tools/spots.gd")
 
 var fails := 0
 var shots := false
@@ -210,6 +211,29 @@ func mgr() -> Node2D:
 func fk() -> CharacterBody2D:
 	return main.forklift
 
+## PHASE 5B PART 2B — the Produce forklift's lane, whichever way it runs
+## (north-south in Plan B; east-west before): the way its forks point when
+## parked at home, its lane's rect, and a point given as [along the lane,
+## across it] measured from the lane's middle.
+func fk_forward() -> Vector2:
+	return Vector2.RIGHT.rotated(fk().home_rotation)
+
+func fk_lane() -> Rect2:
+	return main.areas.rect_of(main.areas.feature_at(fk().home_position, "forklift_lane"))
+
+func fk_lane_axis() -> Vector2:
+	var l := fk_lane()
+	return Vector2.RIGHT if l.size.x >= l.size.y else Vector2.DOWN
+
+func lane_point(along: float, across: float) -> Vector2:
+	var ax := fk_lane_axis()
+	return fk_lane().get_center() + ax * along + Vector2(ax.y, ax.x) * across
+
+## How far `p` is from the lane's centre line, across it.
+func lane_offset(p: Vector2) -> float:
+	var ax := fk_lane_axis()
+	return (p - fk_lane().get_center()).dot(Vector2(ax.y, ax.x))
+
 ## The player this process drives: the host's own (peer 1), or — in the
 ## net-orders client mode — this client's own, through the client_* actions.
 var me := 1
@@ -342,12 +366,12 @@ func _run_interact() -> void:
 	var chaos_before: float = st["last_chaos"]
 	fk().reset_for_new_day()
 	fk()._pause_timer = 0.5
-	var forks: Vector2 = fk().home_position + Vector2(-80, 0) # in the lane, right in front of the parked forklift's forks
+	var forks: Vector2 = fk().home_position + fk_forward() * 80.0 # in the lane, right in front of the parked forklift's forks
 	player().teleport_to(forks)
 	await physics_frame
 	var carried: Node2D = await pickup_near_player()
 	check(carried != null, "I1: player carrying %s in the forklift's lane" % (carried.name if carried else "nothing"))
-	var mgr_at := area_spot("produce", Vector2(160, -110))
+	var mgr_at: Vector2 = lane_point(0.0, 0.0) + (fk().home_position - fk_lane().get_center()) * 0.4 + Vector2(fk_lane_axis().y, fk_lane_axis().x) * -170.0 # beside the lane, in sight of the forks
 	pin_manager(mgr_at, (forks - mgr_at).angle())
 	var got_hit := await wait_until(func(): return player()._stun_timer > 0.0, 8.0)
 	check(got_hit, "I1: forklift hit the player")
@@ -381,9 +405,9 @@ func _run_interact() -> void:
 	for attempt in 4:
 		fk().reset_for_new_day()
 		fk()._pause_timer = 0.3
-		player().teleport_to(fk().home_position + Vector2(-80, 0)) # in front of its forks
+		player().teleport_to(fk().home_position + fk_forward() * 80.0) # in front of its forks
 		await physics_frame
-		move_body(display, fk().home_position + Vector2(-138, 0))
+		move_body(display, fk().home_position + fk_forward() * 138.0)
 		await wait(0.2)
 		var d_before: Vector2 = display.global_position
 		chaos_before = st["last_chaos"]
@@ -452,7 +476,7 @@ func _run_interact() -> void:
 				player().teleport_to(area_spot("produce"))
 				await shot("i3_manager_inside_forklift")
 				player().teleport_to(area_spot("break_room"))
-		if absf(mgr().global_position.y - fk().home_position.y) < 40.0:
+		if absf(lane_offset(mgr().global_position)) < 40.0:
 			lane_frames += 1
 	print("PATROL  %d Produce (forklift section) visits, %d frames there, min manager-forklift distance %.0fpx, %d frames overlapping the forklift, %d frames standing in its lane" % [meat_visits, meat_frames, min_dist, overlap_frames, lane_frames])
 	check(meat_visits >= 2, "I3: manager visited Produce (the forklift section) %d times while the forklift ran" % meat_visits)
@@ -467,7 +491,7 @@ func _run_interact() -> void:
 	fk().reset_for_new_day()
 	fk()._pause_timer = 0.0
 	player().teleport_to(area_spot("break_room"))
-	mgr().position = area_spot("produce", Vector2(-70, 0))
+	mgr().position = fk().home_position + fk_forward() * 330.0 # standing in the lane, ahead of the forks
 	mgr().target_position = mgr().position
 	mgr()._legs.clear()
 	mgr()._pause_timer = 20.0
@@ -494,8 +518,8 @@ func _run_interact() -> void:
 	mgr()._pause_timer = 0.0
 	while Time.get_ticks_msec() - tc < 40000:
 		if mgr()._legs.is_empty():
-			var top := mgr().position.y < 810.0
-			mgr()._legs = [{"pos": Vector2(2330 + randf_range(-120, 120), 905.0 if top else 715.0)}]
+			var top := lane_offset(mgr().position) < 0.0
+			mgr()._legs = [{"pos": lane_point(randf_range(-120, 120) + fk_lane().size.dot(fk_lane_axis()) * 0.15, 95.0 if top else -95.0)}]
 			crossings += 1
 		await physics_frame
 		mgr()._pause_timer = 0.0
@@ -550,29 +574,6 @@ func steer(dir: Vector2) -> void:
 ## PART 2A: rooms are the layout table's ids (main.areas), not grid cells —
 ## the same route, decision for decision (this bot is the income harness's
 ## player, so it must walk exactly as before).
-func route_next(from_room: String, to_room: String) -> String:
-	if from_room == to_room:
-		return to_room
-	var hub := "hub"
-	# WEEK 15: Storage hangs off the Sidewalk, which opens onto the hub.
-	var storage := "storage"
-	var south := "sidewalk"
-	if from_room == storage:
-		return south
-	if from_room == south:
-		return storage if to_room == storage else hub
-	if to_room == storage and from_room == hub:
-		return south
-	var dry := "dry_goods"
-	var off_dry := ["break_room", "bakery"]
-	if from_room in off_dry:
-		return dry
-	if from_room == dry:
-		return to_room if to_room in off_dry else hub
-	if from_room == hub:
-		return dry if to_room in off_dry else to_room
-	return hub # any spoke back to the hub first
-
 ## A room's centre (the layout table's rect).
 func room_center(id: String) -> Vector2:
 	return main.areas.center_of(id)
@@ -580,22 +581,48 @@ func room_center(id: String) -> Vector2:
 ## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
 ## plus an offset — so a test says WHICH room it means instead of repeating
 ## raw world coordinates (main.areas; StoreLayout.gd).
+##
+## PHASE 5B PART 2B: the offsets were chosen for the old nine rooms'
+## interiors (open boxes, shelves round the edge); Plan B's rooms have
+## gondolas, registers and pads inside. So the spot is kept inside the room
+## (40 px off its edges) and, if it lands on something solid, moved to the
+## nearest open floor of the store's real geometry (tools/bot_nav.gd: walls,
+## closed barriers, shelves, registers, displays, furniture). A test that
+## needs a particular spot names it in the layout table (an anchor) instead.
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
-	return main.areas.center_of(id) + offset
+	return Spots.area_spot(main, id, offset)
 
-## Where to walk to reach `goal`: straight there inside the same room,
-## otherwise toward the next room's center.
+## (tools/spots.gd)
+func open_floor_near(p: Vector2) -> Vector2:
+	return Spots.open_floor_near(main, p)
+
+## Somewhere nobody works — where tests park the manager (tools/spots.gd).
+func out_of_the_way(offset := Vector2.ZERO) -> Vector2:
+	return Spots.out_of_the_way(main, offset)
+
+## Where to walk to reach `goal`: the next point of a path over the store's
+## real geometry (tools/bot_nav.gd). PHASE 5B PART 2B: was a hand-written
+## graph of the old nine rooms (route_next()), walked in straight lines
+## between room centres — a second copy of the layout's connectivity that
+## only worked while every room was an empty box (Part 2A's report). The
+## path is re-planned when the goal moves or once a second; reached points
+## are dropped as the walker passes them.
+var _bot_nav: RefCounted = null
+var _bot_path := PackedVector2Array()
+var _bot_goal := Vector2.INF
+var _bot_planned_ms := -100000
+
 func waypoint(pos: Vector2, goal: Vector2) -> Vector2:
-	var a: String = main.areas.area_at(pos)
-	var b: String = main.areas.area_at(goal)
-	if a == b:
-		return goal
-	var nxt := route_next(a, b)
-	if nxt == b:
-		# Crossing straight into the goal room: aim at the goal once close to
-		# the shared edge, otherwise at the next room's center line.
-		return goal if pos.distance_to(goal) < 500.0 and nxt != "dry_goods" else room_center(nxt)
-	return room_center(nxt)
+	if _bot_nav == null:
+		_bot_nav = Spots.nav(main)
+	var now := Time.get_ticks_msec()
+	if goal.distance_to(_bot_goal) > 20.0 or now - _bot_planned_ms > 1000 or _bot_path.is_empty():
+		_bot_path = _bot_nav.path(pos, goal)
+		_bot_goal = goal
+		_bot_planned_ms = now
+	while _bot_path.size() > 1 and pos.distance_to(_bot_path[0]) < 14.0:
+		_bot_path.remove_at(0)
+	return _bot_path[0] if not _bot_path.is_empty() else goal
 
 func slot_color_ok(shelf_body: Node, obj: Node) -> bool:
 	return shelf_body.get_node("Shelf")._color_matches(obj)
@@ -1315,7 +1342,7 @@ func _run_orders() -> void:
 	main.open_store(0)
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	player().teleport_to(area_spot("break_room"))
 	await wait(0.5)
 	var cashier: Node = main.cashiers[0].get_node("Cashier")
@@ -1422,7 +1449,7 @@ func _run_orders() -> void:
 	await shot("o3_order_banner_with_look_busy")
 	release_manager()
 	main._clear_priority_order()
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	st["meter"] = 0.0
 	st["cooldown"] = 1000.0
 
@@ -1677,7 +1704,7 @@ func _run_net_orders_host() -> void:
 	main._order_timer = 1.0e9
 	main.prep_time_left = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	_watch_tags()
 	_watch_orders_view()
 	await wait(2.0)
@@ -1697,7 +1724,7 @@ func _run_net_orders_host() -> void:
 	# physics engine fling it apart, straight into slots.
 	var k := 0
 	for id in main.players:
-		main.players[id].rpc("teleport_to", Vector2(1335 + 70 * k, 470))
+		main.players[id].rpc("teleport_to", area_spot("dry_goods", Vector2(-105 + 70 * k, 70)))
 		k += 1
 	await wait(1.5)
 	var qty := PER_PLAYER * want
@@ -1941,7 +1968,7 @@ func park_everything() -> void:
 	main.test_hold_customers = true
 	main.open_store(0)
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -2083,9 +2110,12 @@ func _run_ambience() -> void:
 	check(cells.size() == 3 and none < 40, "A2: spills land in all 3 open sections (%s), rarely no spot (%d/400)" % [str(cells), none])
 
 	# --- A3: forming = harmless telegraph; then wet = slide, not a wall.
-	var y := 455.0
-	clear_strip(y, 1150.0, 1750.0)
-	var cx := 1450.0
+	# PHASE 5B PART 2B: along the shop's open floor (the Dry Goods spawn band,
+	# StoreLayout.gd) — was a raw strip of the old Dry Goods room.
+	var strip: Rect2 = main.areas.spawn_band_of("dry_goods")
+	var y := strip.position.y + 40.0
+	clear_strip(y, strip.position.x, strip.end.x)
+	var cx := strip.position.x + 360.0
 	var r := 48.0
 	player().teleport_to(Vector2(cx - r - 110.0, y))
 	await wait(0.3)
@@ -2274,9 +2304,18 @@ func _run_ambience() -> void:
 
 ## One lane per player across the hub; spills staggered in x so neighbouring
 ## lanes' spills never touch (and turns go UP, away from the registers).
-const E_LANE_YS := [600.0, 680.0, 760.0, 840.0]
-const E_LANE_CXS := [1350.0, 1600.0, 1350.0, 1600.0]
+## One slip lane per player (up to 4), 80 px apart, staggered — PHASE 5B
+## PART 2B: laid on the shop's open floor (the Dry Goods spawn band in the
+## layout table); they were raw strips of the old Dry Goods/hub rooms.
 const E_LANE_R := 48.0
+var E_LANE_YS: Array:
+	get:
+		var b: Rect2 = main.areas.spawn_band_of("dry_goods")
+		return [b.position.y + 20.0, b.position.y + 100.0, b.position.y + 180.0, b.position.y + 260.0]
+var E_LANE_CXS: Array:
+	get:
+		var b: Rect2 = main.areas.spawn_band_of("dry_goods")
+		return [b.position.x + 340.0, b.position.x + 460.0, b.position.x + 340.0, b.position.x + 460.0]
 var E2_SPOT: Vector2: # (PHASE 5B PART 2A: open hub floor, from the layout table)
 	get: return area_spot("hub", Vector2(0, -120))
 const E2_R := 54.0
@@ -2622,7 +2661,7 @@ func _run_net_ambience_host() -> void:
 	var r7 := await _net_read("e7_%d.json" % target, 30.0)
 	var fuse: float = mgr().catch_time()
 	check(main.writeups_by_peer.get(target, 0) >= 1 and absf(r7.get("fuse", -1.0) - fuse) < 0.35, "E7: %s's own LOOK BUSY -> write-up toast took %.2fs on its screen (today's fuse %.1fs)" % [names[target], r7.get("fuse", -1.0), fuse])
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	mgr()._state.clear()
 	await wait(1.0)
 
@@ -2834,7 +2873,7 @@ func time_to_writeup() -> float:
 	var t0 := Time.get_ticks_msec()
 	await wait_until(func(): return main.writeups_today > w0, 8.0)
 	var dt := (Time.get_ticks_msec() - t0) / 1000.0
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	mgr()._state.clear()
 	return dt
 
@@ -3097,7 +3136,7 @@ func _run_delivery() -> void:
 	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 
 	# --- D2: the truck, on its own schedule.
 	var t0 := Time.get_ticks_msec()
@@ -3364,10 +3403,10 @@ func _run_net_delivery_host() -> void:
 	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	d._truck_timer = 1.0e9
 	for k in ids.size():
-		main.players[ids[k]].rpc("teleport_to", Vector2(2040 + 70 * k, 1150))
+		main.players[ids[k]].rpc("teleport_to", area_spot("storage", Vector2(-360 + 70 * k, -200)))
 	await wait(1.0)
 
 	# --- N1: one truck, rolled on the host, the same load on every screen.
@@ -3449,10 +3488,10 @@ func _run_net_delivery_host() -> void:
 		var victim: int = ids[1]
 		for b in boxes():
 			b.queue_free()
-		main.players[victim].rpc("teleport_to", Vector2(2560, d.LANE_Y))
+		main.players[victim].rpc("teleport_to", Vector2(d.DOCK_X - 180.0, d.LANE_Y)) # (PHASE 5B PART 2B: was raw x 2560, the old dock - 180)
 		for k in ids.size():
 			if ids[k] != victim:
-				main.players[ids[k]].rpc("teleport_to", Vector2(2040 + 70 * k, 1150))
+				main.players[ids[k]].rpc("teleport_to", area_spot("storage", Vector2(-360 + 70 * k, -200)))
 		dfk().reset_for_new_day()
 		dfk()._pause_timer = 0.3
 		await wait(0.5)
@@ -4331,7 +4370,7 @@ func _run_cleanup() -> void:
 	# Known mess for the checks below: a spill, a knocked-over display and a
 	# knocked-off stocked item, all in reach of open floor.
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	amb()._spill_timer = 1.0e9
 	var spill_id: int = amb().spawn_spill(area_spot("hub", Vector2(0, -110)), 44.0)
 	# A second one, so CL2's ">= 3 mop messes at close" doesn't hang on the
@@ -5058,7 +5097,7 @@ func _run_polish() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
 	await wait(1.0)
 	_po_static_checks("")
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	fk()._pause_timer = 1.0e9
 	# Stand clear of every queue lane (--shots frames a lane on its own).
 	player().teleport_to(area_spot("hub", Vector2(0, -210)))
@@ -5108,7 +5147,7 @@ func _run_net_polish_host() -> void:
 	var ids: Array = main.players.keys()
 	ids.sort()
 	check(main.players.size() == want, "net: %d players connected" % main.players.size())
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	fk()._pause_timer = 1.0e9
 	await wait(1.0)
 	var census := _po_static_checks("Host: ")
