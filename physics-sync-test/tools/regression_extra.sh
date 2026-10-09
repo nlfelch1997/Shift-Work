@@ -103,3 +103,13 @@ TESTS+=(
 "p5-fk-helpers|phase5|0|0|0|--server --day=7 --no-save --prep-seconds=0 --shift-seconds=300 --test=fk-helpers|"
 "p5-shots|phase5|0|0|1|--save-file=user://p5_shots/save.json --test=shots|"
 )
+# OCT 2026 PHASE 5B PART 2A (the named-area registry) — tools/areas_test.gd:
+# the layout table's snapshot + its fit to Main.tscn, and the scan that keeps
+# screen-cell arithmetic out of the game scripts. Real wall-clock time.
+TESTS+=(
+"areas-snapshot|areas|0|0|0|--server --no-save --test=snapshot|"
+"areas-no-cell-math|areas|0|0|0|--no-save --test=no-cell-math|"
+)
+TESTS+=(
+"areas-net|areas|0|2|0|--server --players=3 --no-save --test=net|"
+)
