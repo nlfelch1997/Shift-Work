@@ -277,7 +277,47 @@ the layout actually changes.
 
 ### 3.5 Soak and performance
 
-<<SOAK>>
+`tools/staff_test.gd --test=soak --day=7 --shifts=8 --events=on
+--hire=Produce:0:0,Dairy/Frozen:0:0,Bakery:0:0,Janitor:0` (8 top-tier shifts,
+every helper and the janitor, events on, a full crowd, real time). Clean
+`main` and this branch ran side by side on the same 4-core machine with
+nothing else running, the same set-up as Phase 5's soak.
+
+| | clean main | this branch |
+|---|---|---|
+| Real time for 8 shifts | 73.5 min | 73.5 min |
+| Frame time, average per shift | 10.4–13.8 ms (mean 12.15) | 9.6–14.4 ms (mean 12.31) |
+| Frame time, p95 per shift | 19–30 ms | 17–32 ms |
+| Nodes at each report | 2770, 3044, 3037, 3146, 3137, 3014, 3097, 2974 | 2848, 2913, 2976, 3063, 3146, 3167, 3159, 3215 |
+| Nodes outside the stock/mess subtrees (Walls, StoreArt, Gates, checkout, labels, break room, …) | **748 every shift** | **748 every shift** |
+| Orphan nodes | 0 every shift | 0 every shift |
+| Static memory | 112.5 → 117.2 MB | 113.4 → 118.5 MB |
+| Peak customers | 17–20 | 17–21 |
+| Helpers inside the forklift (every frame) | 0 of 264,511 | 0 of 264,509 |
+| Helpers stuck / out of their room | 0 / 0 | 0 / 0 |
+| Forklift rams | 22 | 22 |
+| Soak's own checks | 34 pass | 33 pass, **1 fail**: "node count steady" |
+
+**The one failed check, looked at.** The soak flags a last shift more than 150
+nodes above the highest of the first three. The branch's first shifts
+opened emptier (2848–2976) and its last report came after a busy shift with
+43 loose products on the floor (main's last had 9). The whole difference sits
+in the two subtrees that follow stocking (`Sections`, the shelf facings,
+bounded by the slot count: 2153 vs main's 2123; `Products`, loose stock: 266
+vs 62) and in litter. Every other subtree is 748 nodes in every shift on both
+sides, there are no orphans, and memory grew by the same ~5 MB. The branch's
+highest count (3215) is 69 nodes above main's own peak (3146). This is the
+stock-level effect Phase 5 found, not a leak; the threshold is sensitive to
+how full the store is at each report. The registry adds no nodes (it's a
+RefCounted, and the 3.1 tree dumps match line for line).
+
+**Frame time:** +0.16 ms on average (+1.3 %), well inside the shift-to-shift
+spread on both sides (about 4 ms). **Per call** (200,000 random points, a
+micro-benchmark of the old code against the registry): a section lookup is
+0.79–0.86 µs vs 0.75–0.82 µs before; an "is this section open" check is
+0.91–0.94 µs vs 0.78–0.79 µs. Bare `area_at()` (0.76–0.80 µs) costs more than
+a bare `floor(x / 960)` (0.24–0.25 µs), but that division never answered
+anything on its own; every caller then looped over SECTIONS.
 
 ## 4. Part 2B (Plan B in greybox): revised estimate
 
