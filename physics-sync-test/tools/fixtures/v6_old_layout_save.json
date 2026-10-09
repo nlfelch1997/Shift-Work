@@ -1,0 +1,28 @@
+{
+	"events": {
+		"completed": 0,
+		"seen": []
+	},
+	"gear": {},
+	"saved_at": "2026-10-09T16:09:42",
+	"shop": {
+		"completed_day": 0,
+		"lifetime_earned": 5678,
+		"lifetime_sold": 0,
+		"money": 1234,
+		"sections_owned": 3,
+		"stage": 3
+	},
+	"staff": {},
+	"upkeep": {
+		"cans": [
+			3,
+			0,
+			5,
+			1,
+			0
+		],
+		"rating": 3.0
+	},
+	"version": 6
+}

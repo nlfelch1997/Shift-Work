@@ -874,6 +874,7 @@ const StoreRatingScript := preload("res://StoreRating.gd")
 const SaveGameScript := preload("res://SaveGame.gd")
 const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
+const StoreGrowthScript := preload("res://StoreGrowth.gd")
 const PauseMenuScript := preload("res://PauseMenu.gd")
 const SettingsMenuScript := preload("res://SettingsMenu.gd")
 const MainMenuScript := preload("res://MainMenu.gd")
@@ -1564,6 +1565,7 @@ func _announce_purchase(sec_name: String, by_peer: int, price: int, extra: Strin
 	var who := "You" if Net.is_active() and by_peer == multiplayer.get_unique_id() else player_display_name(by_peer)
 	show_notice("%s IS OPEN" % sec_name.to_upper(), "%s bought it for $%d%s" % [who, price, extra], 5.0)
 	Sfx.play("store_open")
+	growth.note_purchase(sec_name) # PHASE 5B PART 2B: the wall comes down
 
 ## Every peer, local: a one-off notice on the big banner band.
 func show_notice(big: String, small: String, seconds: float) -> void:
@@ -1646,6 +1648,7 @@ var cleanup: Node2D
 ## (They replace Week 21's Endless Mode — Endless.gd and HubUI.gd are gone.)
 var shop: Node2D
 var events: Node2D
+var growth: Node2D # PHASE 5B PART 2B (StoreGrowth.gd)
 ## OCT 2026 PHASE 4: random events on/off for this session (--events=off, or
 ## a test harness before the scene is ready). Events.gd reads it.
 var events_on := true
@@ -1873,6 +1876,13 @@ func _ready() -> void:
 	staff.name = "Staff"
 	add_child(staff)
 	move_child(staff, $Players.get_index())
+	# PHASE 5B PART 2B — the growing store's look (StoreGrowth.gd): each
+	# unbought wing's empty lot and knock-out wall, over the wing's furniture
+	# and under the people. Cosmetic, every peer.
+	growth = StoreGrowthScript.new()
+	growth.name = "StoreGrowth"
+	add_child(growth)
+	move_child(growth, $Players.get_index())
 	events = EventsScript.new()
 	events.name = "Events"
 	add_child(events)

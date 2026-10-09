@@ -65,6 +65,11 @@ func setup(sec_name: String, len_px: float, is_back_door := false) -> void:
 	shape.size = Vector2(20.0, len_px)
 	(b.get_node("CollisionShape2D") as CollisionShape2D).shape = shape
 	(b.get_node("Locked/Line") as Line2D).points = PackedVector2Array([Vector2(0.0, -len_px * 0.5), Vector2(0.0, len_px * 0.5)])
+	# The closed look is StoreGrowth.gd's (the shop's outside wall, its FOR
+	# SALE banners and the lot's board); this thin red line and its sign were
+	# the old interior gate's. The sign keeps its text (what it would say).
+	(b.get_node("Locked/Line") as Line2D).visible = false
+	(b.get_node("Locked/Label") as Label).visible = false
 
 ## Open (invisible, passable) or closed (sealed, with closed_text on its sign).
 ## Phase 2: by ownership (PHASE 4 retired Week 21's endless postings).

@@ -69,6 +69,11 @@ func _ready() -> void:
 	_dress_displays()
 	main.products_root.child_entered_tree.connect(_dress_product)
 
+## PHASE 5B PART 2B: the shop's wall face, for StoreGrowth.gd's knock-out
+## walls (the same blue tile as every other sales-floor wall).
+func market_wall_face() -> Texture2D:
+	return _a4_face(MARKET_WALLS_PATH, MARKET_WALL_FACE)
+
 ## Lower 96x96 of an A2 block, as a repeatable texture.
 func _a2_floor(block: Vector2i) -> Texture2D:
 	var img: Image = load(A2_PATH).get_image()

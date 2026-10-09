@@ -68,6 +68,27 @@ func _run() -> void:
 	root.size = Vector2i(960, 540)
 	for v in views:
 		await _shot(cam, v[0], v[1], v[2])
+	# --buy: buy the next section now and film the wall coming down
+	# (--buy-view=x:y:zoom, frames at --buy-frames=t1,t2,... seconds).
+	if "--buy" in OS.get_cmdline_user_args():
+		var bv := _arg("--buy-view=", "%f:%f:1" % [w.get_center().x, w.get_center().y]).split(":")
+		var at := Vector2(float(bv[0]), float(bv[1]))
+		var z := float(bv[2])
+		var sec: Dictionary = main.next_section_for_sale()
+		main.money = 100000
+		if z < 0.9:
+			root.content_scale_mode = Window.CONTENT_SCALE_MODE_DISABLED
+			root.size = Vector2i(int(960 * 1.25), int(540 * 1.25))
+		cam.global_position = at
+		cam.zoom = Vector2.ONE * z
+		print("BUY %s -> %s" % [sec["name"], str(main.buy_section(sec["name"], 1))])
+		var t0 := Time.get_ticks_msec()
+		for ft in _arg("--buy-frames=", "0.1,0.4,0.8,1.2,2.2").split(","):
+			while (Time.get_ticks_msec() - t0) / 1000.0 < float(ft):
+				await process_frame
+			var path := out_dir.path_join("shot_%s_buy_%s.png" % [tag, ft])
+			root.get_texture().get_image().save_png(path)
+			print("SHOT  " + path)
 	print("SHOTS done %s" % tag)
 	quit()
 
