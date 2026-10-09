@@ -120,6 +120,8 @@ func _text_rect(c: Control) -> Rect2:
 	var l: Label = c if c is Label else c.get_child(0)
 	var w: float = l.get_theme_font("font").get_string_size(l.text, HORIZONTAL_ALIGNMENT_LEFT, -1, l.get_theme_font_size("font_size")).x
 	var g := l.get_global_rect()
+	if l.autowrap_mode != TextServer.AUTOWRAP_OFF:
+		w = minf(w, g.size.x) # PHASE 5: the prep line wraps inside its own box
 	return Rect2(g.get_center().x - w * 0.5, g.position.y, w, g.size.y)
 
 func _f3_checks(tag: String) -> void:
@@ -154,15 +156,15 @@ func _run_story() -> void:
 	root.size = Vector2i(960, 540)
 	await frames(3)
 	_common_checks("S1")
-	check(status().text == "Day %d  ·  Bank %s  ·  1 player" % [main.current_day, main._format_money(main.money)], "S1: story line reads '%s'" % status().text)
+	check(status().text == "Shift %d  ·  Bank %s  ·  1 player" % [main.current_day, main._format_money(main.money)], "S1: story line reads '%s'" % status().text)
 	await _f3_checks("S2")
 	var day0: int = main.current_day
 	await _end_day()
-	check(status().text == "Day %d  ·  Bank %s  ·  1 player" % [day0, main._format_money(main.money)], "S3: still Day %d on the report ('%s')" % [day0, status().text])
+	check(status().text == "Shift %d  ·  Bank %s  ·  1 player" % [day0, main._format_money(main.money)], "S3: still Day %d on the report ('%s')" % [day0, status().text])
 	main._on_continue_pressed()
 	await wait_until(func(): return main.current_day == day0 + 1 and main.shift_active, 8.0)
 	await frames(2)
-	check(status().text == "Day %d  ·  Bank %s  ·  1 player" % [day0 + 1, main._format_money(main.money)], "S3: rolls over live to '%s'" % status().text)
+	check(status().text == "Shift %d  ·  Bank %s  ·  1 player" % [day0 + 1, main._format_money(main.money)], "S3: rolls over live to '%s'" % status().text)
 	check(status().visible and not dbg().visible, "S3: next day — status up, dump still hidden")
 	main.status_hud = false
 	await frames(2)
@@ -178,13 +180,13 @@ func _run_past_week() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1), 15.0)
 	root.size = Vector2i(960, 540)
 	await frames(3)
-	check(status().text == "Day 7  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E0: Day 7 ('%s')" % status().text)
+	check(status().text == "Shift 7  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E0: Shift 7 ('%s')" % status().text)
 	await _end_day()
 	main._on_continue_pressed()
 	await wait_until(func(): return main.current_day == 8 and main.shift_active, 8.0)
 	await frames(3)
 	_common_checks("E1")
-	check(status().text == "Day 8  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E1: Day 8 is an ordinary shift ('%s')" % status().text)
+	check(status().text == "Shift 8  ·  Bank %s  ·  1 player" % main._format_money(main.money), "E1: Day 8 is an ordinary shift ('%s')" % status().text)
 	for word in ["Endless", "Shift #", "Bucks", "Break Room  ·"]:
 		check(not status().text.contains(word), "E1: no '%s' on the line" % word)
 	check(main.get_node_or_null("HubUI") == null and main.get_node_or_null("Endless") == null, "E2: no hub screen or Endless node any more")
@@ -213,7 +215,7 @@ func _run_net_host() -> void:
 		DirAccess.remove_absolute(NET_DIR + f)
 	await wait_until(func(): return main.shift_active and main.players.size() >= want, 40.0)
 	await wait(1.5)
-	var line := "Day %d  ·  Bank %s  ·  %d players" % [main.current_day, main._format_money(main.money), want]
+	var line := "Shift %d  ·  Bank %s  ·  %d players" % [main.current_day, main._format_money(main.money), want]
 	check(status().text == line, "N1 host: '%s'" % status().text)
 	check(not dbg().visible, "N1 host: dump hidden")
 	_net_write("phase1.json", {"line": line})
@@ -244,7 +246,7 @@ func _run_net_host() -> void:
 	_net_write("phase4.json", {"leave": leaver})
 	await wait_until(func(): return main.players.size() == want - 1, 15.0)
 	await frames(3)
-	var line2 := "Day %d  ·  Bank %s  ·  %d player%s" % [main.current_day, main._format_money(main.money), want - 1, "" if want - 1 == 1 else "s"]
+	var line2 := "Shift %d  ·  Bank %s  ·  %d player%s" % [main.current_day, main._format_money(main.money), want - 1, "" if want - 1 == 1 else "s"]
 	check(status().text == line2, "N4 host: after %d left, '%s'" % [leaver, status().text])
 	_net_write("phase5.json", {"line": line2})
 	for id in ids:

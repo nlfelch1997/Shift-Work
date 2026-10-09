@@ -271,7 +271,7 @@ func _phase7() -> void:
 	check(await wait_shift() and main.current_day == 8 and main.get_node_or_null("HubUI") == null, "P7: a Day 7 save resumes on Day 8 — past the old week, no WEEK COMPLETE")
 	check(main.money == int(expect["money"]) and main.lifetime_earned == int(expect["earned"]) and main.sections_owned == int(expect["owned"]), "P7: bank %s, lifetime $%d, %d sections — as saved" % [main._format_money(main.money), main.lifetime_earned, main.sections_owned])
 	check(main.complication_stage >= int(expect["stage"]), "P7: stage %d (saved %d; at most one step on at this shift's start)" % [main.complication_stage, int(expect["stage"])])
-	check(main.status_label.text.begins_with("Day 8  ·  Bank %s" % main._format_money(main.money)), "P7: status line '%s'" % main.status_label.text)
+	check(main.status_label.text.begins_with("Shift 8  ·  Bank %s" % main._format_money(main.money)), "P7: status line '%s'" % main.status_label.text)
 	check(FileAccess.get_file_as_string(SOLO) == raw, "P7: nothing written (no checkpoint yet)")
 	finish()
 
@@ -281,7 +281,8 @@ func _phase7() -> void:
 func _phase3() -> void:
 	check(main.load_status == SaveGameScript.LOAD_OK, "P3: loaded")
 	check(await wait_shift() and main.current_day == 8 and not main.store_open, "P3: Day 8, in prep")
-	main.money = 1000 # enough for two pieces of gear (test plumbing)
+	main.money = 1000 + shop().next_cost("shoes") + shop().next_cost("boots") # enough for two pieces of gear (test plumbing; PHASE 5: priced from Shop.gd)
+	var bank_p3: int = main.money
 	player().teleport_to(shop().LOCKER_SPOT)
 	await wait(0.3)
 	Input.action_press(act + "interact")
@@ -290,7 +291,7 @@ func _phase3() -> void:
 	check(await wait_until(func(): return shop().panel.visible and shop().buttons.has("shoes"), 3.0), "P3: E at the gear lockers opens the shop")
 	press(shop().buttons["shoes"], "P3: buy Comfy Sneakers")
 	await wait(0.2)
-	check(shop().upgrade_level("shoes") == 1 and main.money == 1000 - 200, "P3: Sneakers level 1, bank $1000 -> %s" % main._format_money(main.money))
+	check(shop().upgrade_level("shoes") == 1 and main.money == bank_p3 - shop().UPGRADES[0]["costs"][0], "P3: Sneakers level 1, bank %s -> %s" % [main._format_money(bank_p3), main._format_money(main.money)])
 	var d := disk()
 	check(d["gear"].get("shoes") == 1 and d["shop"]["money"] == main.money and d["shop"]["completed_day"] == 7, "P3: the purchase autosaved at once (%s, bank %s) — the day itself still isn't" % [str(d["gear"]), main._format_money(d["shop"]["money"])])
 	await wait(0.2)
@@ -480,11 +481,14 @@ func _run_host() -> void:
 	finish()
 
 func _host_gear() -> void:
+	# PHASE 5: enough for the boots at whatever Shop.gd charges.
+	var boots_cost: int = shop().next_cost("boots")
+	main.money = maxi(main.money, boots_cost + 300)
 	var m0: int = main.money
 	var saves0: int = main.saves_written
 	_step("buy", {"key": "boots"})
 	await _client_answer()
-	check(await wait_until(func(): return shop().upgrade_level("boots") == 1, 5.0) and main.money == m0 - 150, "N2 host: the client's purchase applied once (boots 1, bank %s -> %s)" % [main._format_money(m0), main._format_money(main.money)])
+	check(await wait_until(func(): return shop().upgrade_level("boots") == 1, 5.0) and main.money == m0 - boots_cost, "N2 host: the client's purchase applied once (boots 1, bank %s -> %s)" % [main._format_money(m0), main._format_money(main.money)])
 	check(main.saves_written > saves0 and disk(HOST_SAVE)["gear"].get("boots") == 1 and disk(HOST_SAVE)["shop"]["money"] == main.money, "N2 host: and it autosaved to MY file (bank %s)" % main._format_money(disk(HOST_SAVE)["shop"]["money"]))
 	_step("view", {"view": view(), "tag": "N2 after the purchase"})
 	await _client_answer()
@@ -520,7 +524,7 @@ func _run_client() -> void:
 	var raw_before := FileAccess.get_file_as_string(CLIENT_SAVE)
 	check(await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0), "client: connected")
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	check(main.load_status == -1, "client: never reads a save of its own (status %d)" % main.load_status)
 	var n := 0
 	while true:

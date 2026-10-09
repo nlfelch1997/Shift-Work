@@ -276,14 +276,14 @@ func _run_solo() -> void:
 	await wait(0.3)
 	check(br().coffee_cups_today == 0 and not br().has_coffee(1), "C11: Day 8 starts with a fresh pot")
 	# --- E1: sneakers (the Break Room Shop, out of the bank) + coffee stack ADDITIVELY.
-	main.money = 1000
+	main.money = 1000 + shop().UPGRADES[0]["costs"][0] # PHASE 5: priced from Shop.gd
 	p.teleport_to(shop().LOCKER_SPOT)
 	await wait(0.3)
 	await tap("host_interact") # E at the lockers opens the shop panel
 	await wait_until(func(): return shop().panel.visible and shop().buttons.has("shoes"), 3.0)
 	shop().buttons["shoes"].pressed.emit()
 	await wait(0.1)
-	check(shop().upgrade_level("shoes") == 1 and main.money == 1000 - 200, "E1: bought Comfy Sneakers 1 at the lockers for $200 (bank %s)" % main._format_money(main.money))
+	check(shop().upgrade_level("shoes") == 1 and main.money == 1000, "E1: bought Comfy Sneakers 1 at the lockers (bank %s)" % main._format_money(main.money))
 	await tap("host_interact")
 	var v3 := await measure_speed()
 	check(absf(v3 - S * 1.08) < S * 0.03, "E1: sneakers alone: %.0f px/s = SPEED x 1.08" % v3)
@@ -401,7 +401,7 @@ func _run_host() -> void:
 	# Sneakers at the Break Room Shop out of the bank, during prep.
 	main.continue_button.pressed.emit()
 	await wait_until(func(): return main.shift_active and main.current_day == 8 and not main.is_day_report_active(), 10.0)
-	main.money = maxi(main.money, 500)
+	main.money = maxi(main.money, shop().next_cost("shoes"))
 	check(shop().buy("shoes", 1, 0), "N7: the host bought Comfy Sneakers for the crew (bank %s)" % main._format_money(main.money))
 	await wait(0.5)
 	check(br().coffee_peers.is_empty() and br().coffee_cups_today == 0 and shop().upgrade_level("shoes") == 1, "N8: Day 8: fresh pot, sneakers 1")
@@ -439,7 +439,7 @@ func _run_host() -> void:
 func _run_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var n := 0
 	while true:

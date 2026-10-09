@@ -40,8 +40,12 @@ const MESS_SPILL := 3.0
 const MESS_FULL_CAN := 4.0
 const MESS_PER_STAR_BASE := 6.0
 const MESS_PER_STAR_PER_SECTION := 3.0
-const FALL_PER_SEC := 1.0 / 60.0 # a star a minute, at most
-const RISE_PER_SEC := 1.0 / 90.0
+## PHASE 5 BALANCE: was a star a minute down / 90 s up — tuned when a store
+## sold for 111 s. Early openers sell 4-6 min, and the progression runs saw
+## 3.0 -> 1.0 and 1.0 -> 4.1 inside one shift: whiplash. Now a star per 2 min
+## down, per 3 min up: a shift moves it 1-2 stars at most.
+const FALL_PER_SEC := 1.0 / 120.0
+const RISE_PER_SEC := 1.0 / 180.0
 const MIN_RATING := 1.0
 const MAX_RATING := 5.0
 ## The trend arrow only shows when the target is this far off.

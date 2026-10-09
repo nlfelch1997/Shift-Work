@@ -36,13 +36,21 @@ extends Node2D
 ## current and is refused — no double charge.
 
 const UPGRADES := [
-	{"key": "shoes", "name": "Comfy Sneakers", "desc": "+8% walking speed per level", "costs": [200, 450, 800]},
-	{"key": "brace", "name": "Back Brace", "desc": "+1 product at once: {interact} grabs till full, {interact} again sets all down", "costs": [400, 1000]},
-	{"key": "soles", "name": "Non-Slip Soles", "desc": "spills slow you less, you slide less", "costs": [200, 450]},
-	{"key": "boots", "name": "Steel-Toe Boots", "desc": "shorter stun when the forklift hits you", "costs": [150, 350]},
-	{"key": "alibi", "name": "Plausible Deniability", "desc": "manager takes +0.5s longer to write you up", "costs": [250, 550]},
-	{"key": "janitor", "name": "Janitor's Kit", "desc": "mop & sweep 20% faster, dustpan +4", "costs": [150, 350]},
-	{"key": "badge", "name": "Employee of the Month", "desc": "cosmetic: a gold star over the crew", "costs": [300]},
+	# PHASE 5 BALANCE: every price x7 (the whole shop $5,600 -> $39,200). It's
+	# the long-term sink after the store is bought and staffed: measured, a
+	# trained, full crew banks ~$4,000 a shift net, and the old prices were all
+	# bought within a couple of shifts of the last section (x4 still finished by
+	# shift ~19 solo; the target is ~24).
+	{"key": "shoes", "name": "Comfy Sneakers", "desc": "+8% walking speed per level", "costs": [1400, 3150, 5600]},
+	{"key": "brace", "name": "Back Brace", "desc": "+1 product at once: {interact} grabs till full, {interact} again sets all down", "costs": [2800, 7000]},
+	{"key": "soles", "name": "Non-Slip Soles", "desc": "spills slow you less, you slide less", "costs": [1400, 3150]},
+	{"key": "boots", "name": "Steel-Toe Boots", "desc": "shorter stun when the forklift hits you", "costs": [1050, 2450]},
+	{"key": "alibi", "name": "Plausible Deniability", "desc": "manager takes +0.5s longer to write you up", "costs": [1750, 3850]},
+	# PHASE 5: shown as "Cleaning Cart" (was "Janitor's Kit", which read like
+	# the hireable janitor). The key stays "janitor": it's what every save's
+	# "gear" block (and the v2-v4 endless upgrades) store.
+	{"key": "janitor", "name": "Cleaning Cart", "desc": "mop & sweep 20% faster, dustpan +4", "costs": [1050, 2450]},
+	{"key": "badge", "name": "Employee of the Month", "desc": "cosmetic: a gold star over the crew", "costs": [2100]},
 ]
 ## The old Bucks price x this = the $ price above (documentation; see header).
 const BUCKS_TO_DOLLARS := 10

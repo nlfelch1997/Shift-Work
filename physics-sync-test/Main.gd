@@ -6,6 +6,16 @@ extends Node2D
 ## - player spawning via MultiplayerSpawner
 ## - a simple on-screen debug readout of the crate's synced state
 ##
+## PHASE 5 READING NOTE: most of this header (and many notes further down,
+## and in the other scripts) is a dated dev log — "WEEK N" entries written
+## while the game was a 7-day story. In those entries "Day N" means the old
+## story's day; since the Oct 2026 shopkeeper pivot nothing is gated on the
+## day: current_day is just the shift counter (shown to players as "Shift N"),
+## and what each old day switched on now arrives by COMPLICATION_STAGES
+## (sections owned + lifetime earned). Constants those entries name, like
+## MANAGER_START_DAY, FINALE_START_DAY and PRIORITY_ORDER_START_DAY, no longer
+## exist; --day=N in tests maps to the old day's economy (DEBUG_DAY_PRESETS).
+##
 ## NOTE on spawning: an earlier version of this file spawned players by hand
 ## with a custom RPC. That raced against the crate/player state-sync packets:
 ## those are sent UNRELIABLE (for speed), while a hand-written spawn RPC is
@@ -403,6 +413,8 @@ extends Node2D
 ##   forklift stun, the Back Brace's carry capacity), Carryable.gd (the host's
 ##   capacity check, the carried stack), Manager.gd (fuse) and Cleanup.gd.
 ##
+## (PHASE 5: a historical table — the old day numbers, see the reading note
+## at the top of this file; the live economy numbers are by the constants.)
 ## TUNABLE NUMBERS — DAY 3+ BALANCE REFERENCE (documentation only; the
 ## constants below are the source of truth, and every one is still a FLAGGED
 ## placeholder, none human-playtest-tuned yet). One place to see every knob
@@ -416,7 +428,7 @@ extends Node2D
 ##
 ##   SHIFT CLOCK & PREP (WEEK 16; replaced the grace-period knobs) — Main.gd
 ##     PREP_CEILING_BASE                 180.0 s  store-closed prep, at most...
-##     PREP_CEILING_PER_SECTION          180.0 s  ...+ this per section open beyond Dry Goods
+##     PREP_CEILING_PER_SECTION   (P5: 90) 180.0 s  ...+ this per section open beyond Dry Goods
 ##     SHIFT_DURATION_DEFAULT            111.0 s  the selling window (--shift-seconds= overrides)
 ##     FINALE_SELLING_CUT                 15.0 s  Day 7 selling window 96s
 ##     -> day clock = ceiling + selling: Day 1-2 180+111=291s, Day 3-4 360+111=471s,
@@ -665,7 +677,10 @@ extends Node2D
 ##   crew, and a longer climb solo now that there's no week to fit into.
 const STARTING_MONEY := 0
 ## In SECTIONS order after Dry Goods (owned from the start).
-const SECTION_PRICES := {"Produce": 500, "Dairy/Frozen": 900, "Bakery": 1400}
+## PHASE 5: 500 / 900 / 1400 -> 600 / 2500 / 6000. Measured: a typical crew
+## with helpers banked $1100-1300 a shift with two sections and $1600-2300 with
+## three, so the old prices fell by shifts 4-5 (target: all sections ~10).
+const SECTION_PRICES := {"Produce": 600, "Dairy/Frozen": 2500, "Bakery": 6000}
 ## Lifetime-earned thresholds for the two money-gated stages and the top tier,
 ## each about ONE solo shift of pay past the purchase it follows — the old
 ## one-day gap (Day 3 forklift -> Day 4 manager, Day 5 orders -> Day 6 lights):
@@ -674,9 +689,21 @@ const SECTION_PRICES := {"Produce": 500, "Dairy/Frozen": 900, "Bakery": 1400}
 ## - top tier: the whole store ($2800) + ~$700 — "owns everything and has
 ##   plenty of money" — $3500. Lifetime, not the bank, so spending (and later,
 ##   Phase 3's wages) never switches it back off.
-const MANAGER_EARNED := 800
-const ENVIRONMENT_EARNED := 1700
-const RUSH_EARNED := 3500
+## PHASE 5 BALANCE PASS — the numbers below were retuned against the pacing
+## targets in Pacing.gd (all sections ~shift 10, the top tier with helpers ~16,
+## the janitor + every helper's training + the whole gear shop ~24), from
+## MEASURED per-shift income (tools/staff_test.gd --test=income, the "typical
+## crew" bot: --open-rule=typical, events on, solo/2/3 players, with and without
+## helpers) run through the purchase policy of --test=progress, then checked
+## with full progression runs. Before -> after, and why, in the Phase 5 report.
+## The money-gated stages keep their shape (about one shift's pay past the
+## purchase they follow): manager Produce + $300, lights + spills Produce +
+## Dairy/Frozen + $600. The top tier is no longer "the whole store + a bit":
+## lifetime $32,000 is the target's shift ~16 for a typical crew with helpers
+## (measured: solo ~16, 2 players ~14, 3 players ~12-13 — co-op runs ahead).
+const MANAGER_EARNED := 900
+const ENVIRONMENT_EARNED := 3700
+const RUSH_EARNED := 32000
 ## The complication ladder. Stage i is on once stage i-1 is AND its own needs
 ## are met (checked at shift start, one step per shift). "sections" = sections
 ## owned (Dry Goods counts), "earned" = lifetime_earned. title/line: the
@@ -840,6 +867,9 @@ const ForkliftScene := preload("res://Forklift.tscn")
 const StoreArtScript := preload("res://StoreArt.gd")
 const PauseMenuScript := preload("res://PauseMenu.gd")
 const SettingsMenuScript := preload("res://SettingsMenu.gd")
+const MainMenuScript := preload("res://MainMenu.gd")
+const WINDOW_TITLE := "Shift Work"
+const PacingScript := preload("res://Pacing.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
 const CustomerScript := preload("res://Customer.gd")
@@ -1271,7 +1301,14 @@ const RESTOCK_CHECK_INTERVAL := 3.0
 ## ceiling left over becomes selling time. Using the whole ceiling gets
 ## exactly the old selling window.
 const PREP_CEILING_BASE := 180.0
-const PREP_CEILING_PER_SECTION := 180.0
+## PHASE 5 BALANCE: 180 -> 90. Measured (tools/staff_test.gd --test=progress):
+## the day's clock is ceiling + selling window, so a full store's shift ran
+## ~15 min (3+3x3 min prep + 1:51 + cleanup) — 30 shifts of that is 7+ hours
+## against the 4-6 h target — and a crew that opens early turned up to 9 min
+## of unused prep into selling time (3-6x a late opener's income, the main
+## reason a crew owned every section by shift 4). At 90 s a section a full
+## store's shift is ~10.5 min and opening early is still the biggest lever.
+const PREP_CEILING_PER_SECTION := 90.0
 
 ## WEEK 19 — the cleanup ceiling: how long the closed store waits for someone
 ## to clock out before it clocks everyone out itself. Doesn't scale with the
@@ -1558,6 +1595,8 @@ func _priority_order_window() -> float:
 ## rows at the bottom, the debug HUD above them, and the modal end-of-day
 ## report above both (the relative order the scene's own layers already had
 ## is unchanged).
+## PHASE 5: the prep/cleanup line keeps this far from each screen edge.
+const PREP_LINE_SIDE_MARGIN := 262.0
 const UI_LAYER_ALERTS := 1
 const UI_LAYER_MENU := 2
 const UI_LAYER_DEBUG := 3
@@ -1642,6 +1681,18 @@ var _host_from_menu := false
 ## back to its main menu with a note, instead of the window just closing.
 var pause_menu: CanvasLayer
 var settings_menu: CanvasLayer
+## PHASE 5 — the main menu (MainMenu.gd).
+var main_menu: Node
+## PHASE 5 — THE DEMO CAP (Pacing.gd). demo_mode: the host runs the demo
+## build; demo_over: the crew finished the last demo shift — every peer shows
+## the thanks screen (_demo_end). Both host-written, replicated (DaySync).
+var demo_mode := false
+var demo_over := false
+var _demo_end: CanvasLayer
+var demo_end_wishlist: Button
+var demo_end_menu: Button
+var demo_end_quit: Button
+var _demo_end_body: Label
 var _esc_hint: Label
 var _menu_notice: Label
 var _menu_settings_button: Button
@@ -1744,7 +1795,7 @@ func _status_text() -> String:
 	var crew := "%d player%s" % [players.size(), "" if players.size() == 1 else "s"]
 	if tutorial.active:
 		return "Practice shift  ·  %s" % crew
-	return "Day %d  ·  Bank %s  ·  %s" % [current_day, _format_money(money), crew]
+	return "Shift %d  ·  Bank %s  ·  %s" % [current_day, _format_money(money), crew]
 
 func _ready() -> void:
 	# Children's _ready() runs before their parent's in Godot, so every
@@ -1856,7 +1907,7 @@ func _ready() -> void:
 	# transition message a client should see.
 	var day_sync := MultiplayerSynchronizer.new()
 	var day_config := SceneReplicationConfig.new()
-	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover", ".:money", ".:lifetime_earned", ".:sections_owned", ".:complication_stage", ".:shelf_rows", ".:stage_banner", ".:bounced_today", ".:bounced_week", ".:rating_sales_today", ".:rating_sales_week"]:
+	for prop in [".:current_day", ".:_day_report_active", ".:_sold_at_day_start", ".:shift_active", ".:shift_time_left", ".:writeups_today", ".:writeups_week", ".:writeups_by_peer", ".:order_section", ".:order_needed", ".:order_stocked", ".:order_time_left", ".:orders_called_today", ".:orders_filled_today", ".:priority_sales_today", ".:priority_sales_week", ".:finale_banner_left", ".:store_open", ".:prep_time_left", ".:store_opened_by", ".:store_opened_at", ".:cleanup_active", ".:cleanup_time_left", ".:clocked_out_by", ".:sold_carryover", ".:money", ".:lifetime_earned", ".:sections_owned", ".:complication_stage", ".:shelf_rows", ".:stage_banner", ".:bounced_today", ".:bounced_week", ".:rating_sales_today", ".:rating_sales_week", ".:demo_mode", ".:demo_over"]:
 		var path := NodePath(prop)
 		day_config.add_property(path)
 		day_config.property_set_replication_mode(path, SceneReplicationConfig.REPLICATION_MODE_ALWAYS)
@@ -1898,6 +1949,17 @@ func _ready() -> void:
 	_build_gate_hint()
 	_build_report_extras()
 	_build_pause_and_settings()
+	# PHASE 5: the window says the game's name. project.godot's config/name
+	# ("ShiftWork Physics Sync Test", from the prototype) is left as it is:
+	# it names the user:// folder every existing save and settings file lives
+	# in, so renaming it would orphan them.
+	DisplayServer.window_set_title(WINDOW_TITLE)
+	# PHASE 5: the main menu's structure (MainMenu.gd) over the scene's nodes.
+	main_menu = MainMenuScript.new()
+	main_menu.name = "MainMenu"
+	add_child(main_menu)
+	main_menu.setup(self)
+	_build_demo_end()
 
 	_parse_cli_args()
 
@@ -2127,6 +2189,12 @@ func _on_host_pressed() -> void:
 		_apply_debug_day_preset(debug_day)
 	# WEEK 24: the host's save decides where this crew picks up.
 	var resume := _load_progress()
+	# PHASE 5: the demo build (Pacing.gd). A save already past the cap opens
+	# straight onto the thanks screen.
+	demo_mode = PacingScript.is_demo()
+	if demo_mode and completed_story_day >= PacingScript.DEMO_SHIFT_CAP:
+		demo_over = true
+		print("[Main] Demo save already past Shift %d — showing the end screen" % PacingScript.DEMO_SHIFT_CAP)
 	if debug_money >= 0:
 		money = debug_money
 	if debug_rating > 0.0:
@@ -2139,10 +2207,22 @@ func _on_host_pressed() -> void:
 	# save file at all) gets the practice shift first; the menu's Practice
 	# Shift button (or --practice) asks for it on any save.
 	var fresh_crew: bool = _host_from_menu and save_enabled and not _skip_load and load_status == SaveGameScript.LOAD_NONE and resume == "story" and current_day == 1
+	if demo_over:
+		return
 	if _practice_requested or fresh_crew:
 		tutorial.begin(resume)
 	else:
 		get_tree().create_timer(PRODUCT_SPAWN_DELAY).timeout.connect(_start_shift)
+
+## PHASE 5 — New Game over an existing save (MainMenu.gd confirms first and
+## copies the old file aside): host a brand-new shop and write it at once, so
+## the old save is never continued by accident.
+func start_new_game() -> void:
+	_skip_load = true
+	_host_from_menu = true
+	_on_host_pressed()
+	if Net.is_active() and multiplayer.is_server():
+		save_progress("new game")
 
 ## Host-only: --day=N -> old Day N's sections, stage and lifetime earnings.
 func _apply_debug_day_preset(day: int) -> void:
@@ -2521,6 +2601,7 @@ func _update_store_sign(delta: float) -> void:
 	if _sign_hint.visible:
 		_sign_hint.text = Settings.key("interact") + ": open the store" # PHASE 4C: the bound key
 	_open_banner_t = maxf(0.0, _open_banner_t - delta)
+	_update_open_early_hint()
 	_update_time_clock(me)
 	_update_gate_hint(me)
 	if cleanup_active and not _day_report_active:
@@ -2530,17 +2611,62 @@ func _update_store_sign(delta: float) -> void:
 	elif closed and not _day_report_active and tutorial.active:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
-		_prep_label.text = "PRACTICE SHIFT — no clock, no customers, no pay. Flip the sign at the entrance to start Day 1."
+		_prep_label.text = "PRACTICE SHIFT — no clock, no customers, no pay. Flip the sign at the entrance to start your first real shift."
 	elif closed and not _day_report_active:
 		_prep_label.visible = true
-		_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
-		_prep_label.text = "PREP — store closed. Opens by itself in %d:%02d. Flip the sign at the entrance to open early." % [int(prep_time_left) / 60, int(prep_time_left) % 60]
+		var left := "%d:%02d" % [int(prep_time_left) / 60, int(prep_time_left) % 60]
+		if open_early_nudge:
+			# PHASE 5: the open-early hint (_update_open_early_hint()).
+			_prep_label.add_theme_color_override("font_color", Color(0.6, 1, 0.45))
+			_prep_label.text = "PREP — shelves stocked! Flip the sign to open early: %s more selling time." % left
+		else:
+			_prep_label.add_theme_color_override("font_color", Color(1, 0.85, 0.3))
+			_prep_label.text = "PREP — store closed, opens by itself in %s. Open early: unused prep = selling time." % left
 	elif _open_banner_t > 0.0 and not _day_report_active:
 		_prep_label.visible = true
 		_prep_label.add_theme_color_override("font_color", Color(0.45, 1, 0.45))
 		_prep_label.text = _open_banner_text
 	else:
 		_prep_label.visible = false
+
+## --- PHASE 5: the open-early hint -------------------------------------------
+## Opening early is the biggest income lever (the day's clock is fixed, so
+## every second of prep left when the sign flips is selling time) and players
+## don't find it. Every peer, locally, from replicated state: during a real
+## shift's prep, once the open shelves are Pacing.OPEN_EARLY_HINT_FILL full
+## with at least Pacing.OPEN_EARLY_HINT_MIN_PREP left, the prep line turns
+## into the nudge, and a toast says it once that shift — until this session's
+## crew has opened early (that much prep unused) Pacing.OPEN_EARLY_HINT_RETIRE
+## times; the prep line's own wording always says it.
+var open_early_nudge := false
+var open_early_toasts := 0 # tests
+var opened_early_shifts := 0
+var _open_early_toast_day := -1
+var _last_prep_left := 0.0
+var _was_open := false
+
+## The open sections' shelves: filled slots / all slots.
+func open_shelf_fill() -> float:
+	var f := 0
+	var n := 0
+	for sb in shelves:
+		if is_unlocked_at_pos(sb.global_position):
+			f += sb.get_node("Shelf").filled_count()
+			n += sb.get_node("Shelf").slot_count()
+	return float(f) / maxf(1.0, n)
+
+func _update_open_early_hint() -> void:
+	var prep: bool = shift_active and not store_open and not cleanup_active and not _day_report_active and not tutorial.active and Net.is_active()
+	if store_open and not _was_open and _last_prep_left >= PacingScript.OPEN_EARLY_HINT_MIN_PREP:
+		opened_early_shifts += 1
+	_was_open = store_open
+	if prep:
+		_last_prep_left = prep_time_left
+	open_early_nudge = prep and prep_time_left >= PacingScript.OPEN_EARLY_HINT_MIN_PREP and open_shelf_fill() >= PacingScript.OPEN_EARLY_HINT_FILL
+	if open_early_nudge and _open_early_toast_day != current_day and opened_early_shifts < PacingScript.OPEN_EARLY_HINT_RETIRE:
+		_open_early_toast_day = current_day
+		open_early_toasts += 1
+		show_toast("Shelves are stocked — open early! Prep you don't use becomes selling time.", Color(0.6, 1, 0.45), 6.0)
 
 ## Host-only. by_peer = who flipped the sign; 0 = the prep ceiling ran out.
 ## Ends prep: customers start arriving on the next restock tick, priority
@@ -2756,7 +2882,7 @@ func _end_shift() -> void:
 	# PHASE 4: event bonuses are already part of Pay Today (Events.gd).
 	_bank_shift_pay(_pay_today(), staff.close_books())
 	completed_story_day = maxi(completed_story_day, current_day)
-	save_progress("Day %d complete" % current_day)
+	save_progress("Shift %d complete" % current_day)
 
 ## Any peer's Continue click routes here. Only the host actually drives the
 ## day advance (current_day/gates/shift are all host-authoritative), so a
@@ -2866,7 +2992,7 @@ func _load_progress() -> String:
 	events.completed_total = d["events"]["completed"]
 	current_day = completed_story_day + 1
 	print("[Save] Loaded %s — completed day %d, resuming Day %d, bank %s, lifetime earned $%d, %d section(s), stage %d, rating %.2f, cans %s, gear %s, events seen %s" % [save_path, completed_story_day, current_day, _format_money(money), lifetime_earned, sections_owned, complication_stage, store_rating.rating, str(cleanup.cans), str(self.shop.upgrades), str(events.seen.keys())])
-	show_toast("Welcome back — Day %d  ·  Bank %s" % [current_day, _format_money(money)], Color(0.55, 1, 0.6), 4.0)
+	show_toast("Welcome back — Shift %d  ·  Bank %s" % [current_day, _format_money(money)], Color(0.55, 1, 0.6), 4.0)
 	return "story"
 
 const LEGACY_NOTICE_SECONDS := 10.0
@@ -2884,6 +3010,13 @@ const LEGACY_NOTICE_SECONDS := 10.0
 ## started" unambiguously means something.
 func _advance_to_next_day() -> void:
 	if not multiplayer.is_server() or not _day_report_active:
+		return
+	# PHASE 5: the demo ends here (Pacing.gd) — the report stays under the
+	# thanks screen; nothing advances.
+	if demo_cap_reached():
+		if not demo_over:
+			demo_over = true
+			print("[Main] Demo complete after Shift %d (Pacing.DEMO_SHIFT_CAP %d)" % [current_day, PacingScript.DEMO_SHIFT_CAP])
 		return
 	_day_report_active = false
 	current_day += 1
@@ -3347,11 +3480,19 @@ func _build_alert_layer() -> void:
 	_prep_label.name = "PrepLabel"
 	_prep_label.anchor_left = 0.0
 	_prep_label.anchor_right = 1.0
-	_prep_label.anchor_top = 0.07
-	_prep_label.anchor_bottom = 0.07
-	_prep_label.offset_bottom = 34.0
+	_prep_label.anchor_top = 0.0
+	_prep_label.anchor_bottom = 0.0
+	# PHASE 5: between the corner status line (top-left) and the store
+	# rating panel (top-right, StoreRating.gd: 232 px wide), wrapping, instead
+	# of the full width — a long prep/cleanup line ran under both.
+	_prep_label.offset_left = PREP_LINE_SIDE_MARGIN
+	_prep_label.offset_right = -PREP_LINE_SIDE_MARGIN
+	_prep_label.offset_top = 8.0
+	_prep_label.offset_bottom = 80.0
+	_prep_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prep_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_prep_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_prep_label.add_theme_font_size_override("font_size", 20)
+	_prep_label.add_theme_font_size_override("font_size", 17)
 	_prep_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.95))
 	_prep_label.add_theme_constant_override("shadow_offset_x", 2)
 	_prep_label.add_theme_constant_override("shadow_offset_y", 2)
@@ -3904,14 +4045,15 @@ func _active_cashier_count() -> int:
 
 ## Enables the first N of the central checkout's Cashier stations (N =
 ## _active_cashier_count()) and disables the rest — called alongside
-## _configure_gates() both from _process()'s day-change poll and explicitly
+## _configure_gates() both from _process()'s config-key poll and explicitly
 ## from _advance_to_next_day(), same "every peer reacts uniformly, and the
-## host also does it immediately at the moment a new day starts" shape
-## those two already use. `cashiers` is populated once in _ready() from the
+## host also does it immediately at the moment a new shift starts" shape
+## those two already use (PHASE 5: N follows the open sections, see
+## _active_cashier_count(), not the day). `cashiers` is populated once in _ready() from the
 ## "cashier" group, which (for CentralCheckout's Cashier1..Cashier5, static
 ## scene nodes, not dynamically spawned) reflects their declaration order in
 ## Main.tscn — stations activate in that same fixed order every time, not a
-## different subset day to day.
+## different subset shift to shift.
 func _configure_cashiers() -> void:
 	var count := _active_cashier_count()
 	for i in cashiers.size():
@@ -4130,11 +4272,12 @@ func _process(delta: float) -> void:
 	# already-replicated state (_total_sold()/_sold_at_day_start), not a
 	# separate replicated pair, so there's nothing new to keep in sync here.
 	report_layer.visible = _day_report_active
+	_update_demo_end()
 	if report_layer.visible:
 		var week_sold := _total_sold()
 		var today_sold := week_sold - _sold_at_day_start
 		var lv := hazard_levels()
-		report_title_label.text = "Day %d Complete!" % current_day
+		report_title_label.text = "Shift %d Complete!" % current_day
 		report_today_label.text = "Sold Today: %d" % today_sold
 		# OCT 2026 PHASE 2: no week any more — the bank is the running number.
 		report_week_label.text = "Bank: %s   ·   lifetime earned $%d" % [_format_money(money), lifetime_earned]
@@ -4163,7 +4306,7 @@ func _process(delta: float) -> void:
 		# OCT 2026 PHASE 4: the day's random events and their bonuses.
 		report_event_label.text = events.report_line()
 		report_event_label.visible = report_event_label.text != ""
-		continue_button.text = "Continue"
+		continue_button.text = "Finish Demo" if demo_cap_reached() else "Continue"
 		report_pay_label.get_parent().add_theme_constant_override("separation", 6 if report_event_label.visible else 10)
 		report_shop_label.visible = true
 		_fill_shop_forecast()
@@ -4370,6 +4513,75 @@ func _build_pause_and_settings() -> void:
 	_esc_hint.visible = false
 	$DebugLayer.add_child(_esc_hint)
 
+## --- PHASE 5: the demo's end screen --------------------------------------------
+
+## The report of the last demo shift is up (Continue would end the demo).
+func demo_cap_reached() -> bool:
+	return demo_mode and current_day >= PacingScript.DEMO_SHIFT_CAP and not tutorial.active
+
+func _build_demo_end() -> void:
+	_demo_end = CanvasLayer.new()
+	_demo_end.name = "DemoEnd"
+	_demo_end.layer = UI_LAYER_REPORT + 1 # over the report, under the pause menu
+	_demo_end.visible = false
+	add_child(_demo_end)
+	var bg := ColorRect.new()
+	bg.color = Color(0.05, 0.05, 0.08, 1.0) # opaque: the report sits under it
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_demo_end.add_child(bg)
+	var box := VBoxContainer.new()
+	box.anchor_left = 0.5
+	box.anchor_right = 0.5
+	box.anchor_bottom = 1.0
+	box.offset_left = -260.0
+	box.offset_right = 260.0
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 14)
+	_demo_end.add_child(box)
+	var head := Label.new()
+	head.text = "Thanks for playing the Shift Work demo!"
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	head.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	head.add_theme_font_size_override("font_size", 30)
+	box.add_child(head)
+	_demo_end_body = Label.new()
+	_demo_end_body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_demo_end_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_demo_end_body.add_theme_font_size_override("font_size", 17)
+	_demo_end_body.add_theme_color_override("font_color", Color(0.9, 0.95, 1))
+	box.add_child(_demo_end_body)
+	demo_end_wishlist = Button.new()
+	demo_end_wishlist.name = "WishlistButton"
+	demo_end_wishlist.text = "Wishlist on Steam"
+	demo_end_wishlist.custom_minimum_size = Vector2(300, 40)
+	demo_end_wishlist.add_theme_font_size_override("font_size", 20)
+	demo_end_wishlist.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	demo_end_wishlist.pressed.connect(main_menu._on_wishlist)
+	box.add_child(demo_end_wishlist)
+	demo_end_menu = Button.new()
+	demo_end_menu.name = "MainMenuButton"
+	demo_end_menu.text = "Main Menu"
+	demo_end_menu.custom_minimum_size = Vector2(300, 32)
+	demo_end_menu.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	demo_end_menu.pressed.connect(func(): leave_session(false))
+	box.add_child(demo_end_menu)
+	demo_end_quit = Button.new()
+	demo_end_quit.name = "QuitButton"
+	demo_end_quit.text = "Quit"
+	demo_end_quit.custom_minimum_size = Vector2(300, 32)
+	demo_end_quit.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	demo_end_quit.pressed.connect(func(): leave_session(true))
+	box.add_child(demo_end_quit)
+
+## Every peer, every frame, from the replicated demo_over.
+func _update_demo_end() -> void:
+	var show := demo_over and in_game()
+	if show and not _demo_end.visible:
+		demo_end_wishlist.grab_focus.call_deferred()
+	_demo_end.visible = show
+	if show:
+		_demo_end_body.text = "That's the end of the demo: %d shifts on the job, %s in the bank.\n\nThe full game keeps the shop going — every section, a full crew of helpers, random events, the gear shop and a store rating to protect, shift after shift.\n\nWishlist Shift Work on Steam to hear when it launches." % [PacingScript.DEMO_SHIFT_CAP, _format_money(money)]
+
 ## Past the main menu: hosting, joined, or still connecting.
 func in_game() -> bool:
 	return not menu_layer.visible
@@ -4393,17 +4605,17 @@ func pause_info_text() -> String:
 		return "Not connected yet."
 	var where := ""
 	if _day_report_active:
-		where = "Day %d is over and saved." % current_day if multiplayer.is_server() and save_enabled else "Day %d is over." % current_day
+		where = "Shift %d is over and saved." % current_day if multiplayer.is_server() and save_enabled else "Shift %d is over." % current_day
 	elif tutorial.active:
 		where = "Practice shift."
 	elif cleanup_active:
-		where = "Day %d — cleanup." % current_day
+		where = "Shift %d — cleanup." % current_day
 	elif shift_active and not store_open:
-		where = "Day %d — prep (store closed)." % current_day
+		where = "Shift %d — prep (store closed)." % current_day
 	elif shift_active:
-		where = "Day %d — store open." % current_day
+		where = "Shift %d — store open." % current_day
 	else:
-		where = "Day %d." % current_day
+		where = "Shift %d." % current_day
 	var crew := players.size()
 	return "%s  ·  %s\nSaving happens at clock-out, at the end of each shift." % [where, "solo" if crew <= 1 else "%d on the crew" % crew]
 
@@ -4418,12 +4630,12 @@ func quit_loss_text() -> String:
 	var others := multiplayer.get_peers().size()
 	var crew_line := ("\n\nEveryone else on the crew (%d) will be sent back to their main menu." % others) if others > 0 else ""
 	if _day_report_active:
-		return ("Day %d is saved." % current_day + crew_line) if others > 0 else ""
+		return ("Shift %d is saved." % current_day + crew_line) if others > 0 else ""
 	if tutorial.active:
 		return "The practice shift isn't saved — next time you host, your shop picks up where your save left off." + crew_line
 	if not save_enabled:
 		return "Saving is off for this session — nothing from it will be kept." + crew_line
-	return "Today's shift isn't saved — saving happens at clock-out. Sales, pay and cleanup from Day %d's shift so far will be lost, and next time you host the crew starts Day %d again from the last save.\n(Sections, gear and staff you bought are already saved.)" % [current_day, current_day] + crew_line
+	return "This shift isn't saved — saving happens at clock-out. Sales, pay and cleanup from Shift %d so far will be lost, and next time you host, the crew replays Shift %d from the last save.\n(Sections, gear and staff you bought are already saved.)" % [current_day, current_day] + crew_line
 
 ## Quit to desktop (to_desktop) or to the main menu. Closes the network
 ## first, so nobody is left waiting on a timeout; never writes the save.

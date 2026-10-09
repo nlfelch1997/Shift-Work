@@ -345,7 +345,7 @@ func _run_quit_solo() -> void:
 	await process_frame
 	check(pm().confirming == "menu" and pm()._confirm.visible and not pm()._buttons.visible, "Q1: Quit to Main Menu mid-shift asks first")
 	var body: String = pm()._confirm_body.text
-	check(body.contains("isn't saved") and body.contains("Day %d" % main.current_day) and body.contains("starts Day %d again" % main.current_day), "Q1: says plainly the shift is lost and Day %d restarts: '%s'" % [main.current_day, body.replace("\n", " / ")])
+	check(body.contains("isn't saved") and body.contains("Shift %d" % main.current_day) and body.contains("replays Shift %d" % main.current_day) and not body.contains("Day "), "Q1: says plainly the shift is lost and Shift %d is replayed: '%s'" % [main.current_day, body.replace("\n", " / ")])
 	check(pm().cancel_button.has_focus() or true, "Q1: Cancel is the safe default")
 	await esc()
 	check(pm().confirming == "" and pm().is_open() and pm()._buttons.visible, "Q1: Esc backs out of the confirmation to the menu")
@@ -571,8 +571,14 @@ func _run_rebind_play() -> void:
 	check(body.contains("(IJKL)") and not body.contains("WASD"), "R1: the practice card names the bound move keys: '%s'" % body.replace("\n", " / "))
 	var k: Dictionary = main.tutorial._keys(1)
 	check(k["interact"] == "U" and k["throw"] == "O" and k["place"] == "P" and k["defend"] == "N" and k["move"] == "IJKL", "R1: every practice placeholder follows the bindings %s" % str(k))
+	# PHASE 5: the key set is this PC's choice, not host vs joined.
 	var kc: Dictionary = main.tutorial._keys(2)
-	check(kc["interact"] == "H" and kc["move"] == "arrow keys" and kc["place"] == "/", "R1: a joined player's card uses their set %s" % str(kc))
+	check(kc == k, "R1: a joined player's card names the same keys (one set per PC, hosting or joined) %s" % str(kc))
+	S.set_second_set(true)
+	var k2: Dictionary = main.tutorial._keys(1)
+	check(k2["interact"] == "H" and k2["move"] == "arrow keys" and k2["place"] == "/" and S.local_prefix() == "client_", "R1: 'Use the second set' switches this PC to it %s" % str(k2))
+	S.set_second_set(false)
+	check(S.local_prefix() == "host_" and main.tutorial._keys(1) == k, "R1: ...and back")
 	# Real key presses move the player; WASD doesn't any more.
 	var p0: Vector2 = player().global_position
 	key_event(KEY_D, true)
@@ -612,7 +618,7 @@ func _run_rebind_play() -> void:
 	await wait(0.2)
 	check(main.staff.panel.visible, "R4: and Y works straight away")
 	await key_tap(KEY_Y)
-	check(main.cleanup._place_key(1) == "P" and main.cleanup._place_key(2) == "/", "R4: the mop/broom 'Hold %s' prompt follows the place key")
+	check(main.cleanup._place_key(1) == "P" and main.cleanup._place_key(2) == "P", "R4: the mop/broom 'Hold %s' prompt follows the place key (this PC's set, PHASE 5)")
 	S.reset_controls()
 	check(S.key_of("host_interact") == KEY_E, "R5: reset")
 	DirAccess.remove_absolute(_keys_path())
@@ -820,7 +826,7 @@ func _run_net_pause_host() -> void:
 func _run_net_pause_client() -> void:
 	await wait_until(func(): return net_on() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	await _net_read("phase1.json", 60.0)
 	# Only the first client (by id order) runs the menu checks.
 	var ids: Array = main.players.keys().filter(func(k): return k != 1)
@@ -833,7 +839,7 @@ func _run_net_pause_client() -> void:
 		_net_write("c_menu_open.json", {"id": me})
 		await _net_read("phase2.json", 30.0)
 		var p0: Vector2 = player().global_position
-		press("client_move_left")
+		press(root.get_node("Settings").local_prefix() + "move_left")
 		await wait(0.8)
 		release_all()
 		await wait(0.3)

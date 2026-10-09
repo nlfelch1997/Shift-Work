@@ -14,8 +14,17 @@ extends Node
 ## Every change applies at once and is saved at once.
 ##
 ## KEYS. The game has two key sets (project.godot): host_* (WASD/E/F/C/
-## Space), read when this PC hosts or plays solo, and client_* (arrows/
-## Enter/./Slash/Space), read when it joined someone else's game (Player.gd).
+## Space), the PRIMARY set, and client_* (arrows/Enter/./Slash/Space), the
+## SECOND set. PHASE 5: every player uses the primary set by default, hosting
+## or joined (before, a joined player was switched to the arrows, which
+## confused remote friends). The second set existed for one developer running
+## a host and a client window on one keyboard (commit 6eb3145); there's no
+## local split-screen, so nobody else ever shares a keyboard. It stays as a
+## choice per PC — Settings > Controls "Use the second set" (saved here), or
+## --second-keys on the command line (that process only, e.g. the second test
+## window) — and local_prefix() is the one rule for which set is read. The
+## action and settings-file names keep their old host_/client_ prefixes, so
+## existing settings files load unchanged.
 ## Both can be rebound; each binding is one physical key, stored by
 ## physical keycode. Binding a key already used by another action in the same
 ## set SWAPS the two, so no action is ever left without a key. Esc (menu),
@@ -51,6 +60,9 @@ var music := 1.0
 var sfx := 1.0
 var fullscreen := false
 var vsync := true
+## PHASE 5: this PC reads the second key set (client_*) instead of the primary.
+var second_set := false
+var _force_second := "--second-keys" in OS.get_cmdline_user_args()
 ## What load_settings() found: "ok", "missing" or "corrupt" (tests read it).
 var load_status := "missing"
 ## full action name -> physical keycode, as project.godot ships them.
@@ -83,6 +95,7 @@ func load_settings() -> String:
 	sfx = 1.0
 	fullscreen = false
 	vsync = true
+	second_set = false
 	_restore_default_keys()
 	if not FileAccess.file_exists(path):
 		load_status = "missing"
@@ -101,6 +114,8 @@ func load_settings() -> String:
 	fullscreen = fs if fs is bool else false
 	var vs = cfg.get_value("display", "vsync", true)
 	vsync = vs if vs is bool else true
+	var ss = cfg.get_value("controls", "use_second_set", false)
+	second_set = ss if ss is bool else false
 	if cfg.has_section("controls"):
 		for p in PREFIXES:
 			var used := {}
@@ -131,6 +146,7 @@ func save_settings() -> bool:
 	cfg.set_value("audio", "sfx", sfx)
 	cfg.set_value("display", "fullscreen", fullscreen)
 	cfg.set_value("display", "vsync", vsync)
+	cfg.set_value("controls", "use_second_set", second_set)
 	for p in PREFIXES:
 		for a in ACTIONS:
 			cfg.set_value("controls", p + a, key_of(p + a))
@@ -249,11 +265,14 @@ func rebind(full: String, physical: int) -> Dictionary:
 
 func reset_controls() -> void:
 	_restore_default_keys()
+	second_set = false
 	save_settings()
 	changed.emit()
 	print("[Settings] controls reset to defaults")
 
 func controls_are_default() -> bool:
+	if second_set:
+		return false
 	for full in _defaults:
 		if key_of(full) != _defaults[full]:
 			return false
@@ -278,13 +297,19 @@ func key_name(physical: int) -> String:
 func key_label(full: String) -> String:
 	return key_name(key_of(full))
 
-## Which key set this PC is reading right now (Player.gd's rule): host_ when
-## hosting, playing solo or not connected; client_ when joined to a host.
+## Which key set this PC reads (Player.gd's input, every prompt): the primary
+## set (host_*), unless this PC chose the second one (PHASE 5 — see KEYS).
 func local_prefix() -> String:
-	var mp := get_tree().get_multiplayer()
-	var peer := mp.multiplayer_peer
-	var connected := peer != null and not (peer is OfflineMultiplayerPeer) and peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
-	return "client_" if connected and not mp.is_server() else "host_"
+	return "client_" if second_set or _force_second else "host_"
+
+## PHASE 5: Settings > Controls' "Use the second set" box.
+func set_second_set(on: bool) -> void:
+	if second_set == on:
+		return
+	second_set = on
+	save_settings()
+	changed.emit()
+	print("[Settings] key set -> %s" % ("second (arrows)" if on else "primary (WASD)"))
 
 ## The key this PC presses for `action` ("interact", "place", ...).
 func key(action: String, prefix := "") -> String:

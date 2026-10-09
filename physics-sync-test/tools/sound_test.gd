@@ -609,7 +609,7 @@ func _run_net_host() -> void:
 func _run_net_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var banner_seen := false
 	var deadline := Time.get_ticks_msec() + 240000
 	var snap := {}

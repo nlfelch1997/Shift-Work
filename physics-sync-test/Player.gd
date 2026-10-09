@@ -262,24 +262,18 @@ func _physics_process(delta: float) -> void:
 	if bot_mode:
 		dir = _bot_input(delta)
 		_bot_maybe_interact(delta)
-	elif multiplayer.is_server():
-		# This whole branch only ever runs for the ONE player this process
-		# owns (is_multiplayer_authority() above), so "is this process the
-		# host" is exactly the same question as "is this the host's own
-		# player" — no per-player role tracking needed.
-		dir = Input.get_vector("host_move_left", "host_move_right", "host_move_up", "host_move_down")
-		interact_pressed = Input.is_action_just_pressed("host_interact")
-		throw_pressed = Input.is_action_just_pressed("host_throw")
-		place_pressed = Input.is_action_just_pressed("host_place")
-		place_held = Input.is_action_pressed("host_place")
-		defend_pressed = Input.is_action_just_pressed("host_defend")
 	else:
-		dir = Input.get_vector("client_move_left", "client_move_right", "client_move_up", "client_move_down")
-		interact_pressed = Input.is_action_just_pressed("client_interact")
-		throw_pressed = Input.is_action_just_pressed("client_throw")
-		place_pressed = Input.is_action_just_pressed("client_place")
-		place_held = Input.is_action_pressed("client_place")
-		defend_pressed = Input.is_action_just_pressed("client_defend")
+		# This branch only ever runs for the ONE player this process owns
+		# (is_multiplayer_authority() above). PHASE 5: which key set it reads
+		# is this PC's choice (Settings.local_prefix(): the primary WASD set
+		# unless the second set was picked), no longer host vs joined.
+		var k: String = Settings.local_prefix()
+		dir = Input.get_vector(k + "move_left", k + "move_right", k + "move_up", k + "move_down")
+		interact_pressed = Input.is_action_just_pressed(k + "interact")
+		throw_pressed = Input.is_action_just_pressed(k + "throw")
+		place_pressed = Input.is_action_just_pressed(k + "place")
+		place_held = Input.is_action_pressed(k + "place")
+		defend_pressed = Input.is_action_just_pressed(k + "defend")
 	# OCT 2026 PHASE 4C: the pause menu (or Settings) is up — in co-op the
 	# world keeps running, so this player just stands still meanwhile.
 	if not bot_mode and get_tree().current_scene.pause_menu.blocks_input():

@@ -127,9 +127,9 @@ func _run_economy() -> void:
 	check(main._gate_hint.visible and main._gate_hint.text == hint[1], "E2: the prompt is on screen over the gate")
 	check(main._toast_label.visible and main._toast_label.text.contains("need $"), "E2: pressing E says why too ('%s')" % main._toast_label.text)
 	# --- E3 payday: the day's pay goes into the bank
-	# Enough for Produce ($500) but under the manager's $800 lifetime — the
+	# Enough for Produce ($600 since Phase 5) but under the manager's $900 lifetime — the
 	# same shape as the old Day 1-2 (each day here is a sales injection).
-	add_sales(42)
+	add_sales(62)
 	var pay := await end_day()
 	check(pay > 0 and main.money == main.STARTING_MONEY + pay and main.lifetime_earned == pay, "E3: Day 1 paid %s -> bank %s, lifetime $%d" % [main._format_money(pay), main._format_money(main.money), main.lifetime_earned])
 	check(main.report_week_label.text.begins_with("Bank: %s" % main._format_money(main.money)) and not main.report_week_label.text.contains("Week"), "E3: report shows the bank, no week ('%s')" % main.report_week_label.text)
@@ -489,7 +489,7 @@ func _run_net_host() -> void:
 func _run_net_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var n := 0
 	while true:
@@ -555,7 +555,26 @@ func _counts() -> Dictionary:
 		"mem_mb": snappedf(Performance.get_monitor(Performance.MEMORY_STATIC) / 1048576.0, 0.1),
 		"products": get_nodes_in_group("carryable").size(),
 		"customers": get_nodes_in_group("customer").size(),
+		# PHASE 5: nodes under each of Main's children (and root's other
+		# children), to find where a node-count creep lives.
+		"tree": _subtree_counts(),
 	}
+
+func _subtree_counts() -> Dictionary:
+	var out := {}
+	for c in root.get_children():
+		if c == main:
+			for k in main.get_children():
+				out[String(k.name)] = _count_nodes(k)
+		else:
+			out["/" + String(c.name)] = _count_nodes(c)
+	return out
+
+func _count_nodes(n: Node) -> int:
+	var t := 1
+	for c in n.get_children(true):
+		t += _count_nodes(c)
+	return t
 
 ## Keeps every open shelf stocked (spawning stock at the section if none is
 ## loose), for as long as the store is open — a crew on top of its job, so
@@ -639,12 +658,28 @@ func _run_soak() -> void:
 	print("SOAK SUMMARY — %d shifts, %.1f min of real time" % [shifts, (Time.get_ticks_msec() - t0) / 60000.0])
 	for r in rows:
 		print("SOAK  ", r)
+	# PHASE 5: which subtrees grew from the first shift to the last.
+	var grew := {}
+	var tree0: Dictionary = rows[0]["tree"]
+	var tree1: Dictionary = rows[-1]["tree"]
+	for k in tree1:
+		var d: int = tree1[k] - int(tree0.get(k, 0))
+		if d != 0:
+			grew[k] = d
+	print("SOAK GROWTH (nodes, first -> last shift, by subtree): %s" % str(grew))
 	# Drift checks: compare the last shift's between-shifts counts with the
 	# first's (both taken at the report, when the floor has just been cleared
 	# of customers but still holds the shift's stock).
 	var a: Dictionary = rows[0]
 	var b: Dictionary = rows[-1]
-	check(b["nodes"] <= a["nodes"] + 150, "SOAK: node count steady (%d -> %d)" % [a["nodes"], b["nodes"]])
+	# PHASE 5: against the highest of the first three shifts, not the first:
+	# the first report comes after a store that started with empty shelves,
+	# and the node count follows how stocked it is (StoreArt's shelf facings,
+	# loose stock) — found by the Phase 5 soak, where every subtree but
+	# Sections (facings) and Products held still and both went up AND down.
+	# A leak still shows: it keeps climbing past the early plateau.
+	var early: int = rows.slice(0, mini(3, rows.size())).map(func(r): return int(r["nodes"])).max()
+	check(b["nodes"] <= early + 150, "SOAK: node count steady (first shifts up to %d -> last %d)" % [early, b["nodes"]])
 	check(b["objects"] <= a["objects"] * 1.15 + 500, "SOAK: object count steady (%d -> %d)" % [a["objects"], b["objects"]])
 	check(b["orphans"] <= a["orphans"] + 20, "SOAK: orphan nodes steady (%d -> %d)" % [a["orphans"], b["orphans"]])
 	check(b["mem_mb"] <= a["mem_mb"] * 1.15 + 16.0, "SOAK: memory steady (%.1f -> %.1f MB)" % [a["mem_mb"], b["mem_mb"]])

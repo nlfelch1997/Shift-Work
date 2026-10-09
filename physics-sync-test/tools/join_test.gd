@@ -112,11 +112,14 @@ func _run_menu() -> void:
 	await frames(3)
 	var ip: LineEdit = main.ip_input
 	check(main.menu_layer.visible, "J1: main menu up")
-	check(ip != null and ip.visible, "J1: IP field present and visible")
+	# PHASE 5: the IP field and Join live on the menu's Play Together page.
+	main.main_menu.play_together_button.pressed.emit()
+	await frames(2)
+	check(ip != null and ip.is_visible_in_tree(), "J1: IP field present and visible (Play Together page)")
 	check(ip.text == "", "J1: IP field starts blank ('%s')" % ip.text)
 	check(ip.placeholder_text == "127.0.0.1", "J1: placeholder shows 127.0.0.1 ('%s')" % ip.placeholder_text)
-	check(main.join_button.text == "Join", "J1: Join button no longer claims a fixed IP ('%s')" % main.join_button.text)
-	var kids: Array = main.get_node("MenuLayer/Menu").get_children()
+	check(main.join_button.text == "Join Co-op", "J1: Join button no longer claims a fixed IP ('%s')" % main.join_button.text)
+	var kids: Array = main.main_menu.coop_page.get_children()
 	check(kids.find(ip) == kids.find(main.join_button) - 1, "J1: IP field sits right above Join")
 	var cases := {
 		"": "127.0.0.1",

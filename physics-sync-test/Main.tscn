@@ -467,7 +467,7 @@ offset_bottom = 20.0
 theme_override_colors/font_color = Color(1, 0.94, 0.82, 1)
 theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_status")
-text = "Day 1"
+text = "Shift 1"
 
 [node name="DebugLabel" type="Label" parent="DebugLayer"]
 visible = false
@@ -507,7 +507,7 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 40
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 horizontal_alignment = 1
-text = "Day 1 Complete!"
+text = "Shift 1 Complete!"
 
 [node name="TodayLabel" type="Label" parent="ReportLayer/Panel"]
 layout_mode = 2
@@ -521,7 +521,7 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 26
 theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
 horizontal_alignment = 1
-text = "Week Total: 0"
+text = "Bank: $0"
 
 [node name="WriteupLabel" type="Label" parent="ReportLayer/Panel"]
 layout_mode = 2

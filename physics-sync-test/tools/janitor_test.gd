@@ -755,7 +755,7 @@ func _run_jan_net_host() -> void:
 func _run_jan_net_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 30.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var n := 0
 	while true:
 		n += 1

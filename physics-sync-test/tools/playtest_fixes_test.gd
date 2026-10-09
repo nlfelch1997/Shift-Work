@@ -519,7 +519,7 @@ func _run_net_shelf_host() -> void:
 func _run_net_shelf_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var info := await _net_read("shelf.json", 60.0)
 	var sb: Node = main.get_node_or_null(NodePath(info.get("path", "")))
 	if sb == null:
@@ -1123,17 +1123,18 @@ func _run_practice_skip() -> void:
 	await wait(0.5)
 	check(not tut.active, "PK1: Tab skipped practice")
 	check(main.shift_active and main.current_day == 1 and main.prep_time_left < 1000.0, "PK1: straight into a real Day 1 (prep %.0fs)" % main.prep_time_left)
-	check(main._status_text().begins_with("Day 1"), "PK1: status line: %s" % main._status_text())
+	check(main._status_text().begins_with("Shift 1"), "PK1: status line: %s" % main._status_text())
 	finish()
 
 func _run_net_practice_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var tut := _tut()
 	await wait_until(func(): return tut.active and main.shift_active, 20.0)
 	await wait(0.5)
-	check(tut._card.visible and tut._body.text.contains("arrow keys"), "NC0: client sees its own card with its own keys")
+	# PHASE 5: a joined player plays with the same default keys as the host.
+	check(tut._card.visible and tut._body.text.contains("WASD") and not tut._body.text.contains("arrow keys"), "NC0: client sees its own card, with the same default keys as the host (WASD)")
 	check(main.manager.active, "NC0: the manager is on for the client too")
 	# Walk out, grab stock and place one — the client's own steps.
 	await _walk_to(Vector2(1440, 700), 20.0, 80.0)

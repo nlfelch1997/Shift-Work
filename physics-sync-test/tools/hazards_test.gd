@@ -770,7 +770,16 @@ func _play_shift(stop: Callable = func(): return not main.shift_active or main.c
 		# WEEK 16: prep. A person opens the store once the shelves are mostly
 		# full, or once there's been nothing to do for a while with at least
 		# half of them stocked. --never-open leaves it to the ceiling.
-		if not main.store_open and not never_open and main.shift_active:
+		# PHASE 5 — --open-rule=typical: the crew the open-early hint is
+		# written for: it opens once the open shelves are as full as the hint
+		# asks (Pacing.OPEN_EARLY_HINT_FILL), or once half the prep ceiling has
+		# gone by, whichever comes first — a measurement assumption, not a
+		# claim about real players (the host decides; one flip for the crew).
+		if open_rule == "typical" and not main.store_open and main.shift_active and main.multiplayer.is_server():
+			var ceiling: float = main._prep_ceiling()
+			if main.open_shelf_fill() >= load("res://Pacing.gd").OPEN_EARLY_HINT_FILL or ceiling - main.prep_time_left >= 0.5 * ceiling:
+				main.open_store(me)
+		if not main.store_open and not never_open and open_rule == "" and main.shift_active:
 			var busy := false
 			for o in get_nodes_in_group("carryable"):
 				if o.get_node("Carryable").carrier_id == me:
@@ -1075,6 +1084,12 @@ func _haul_line() -> String:
 var trace := "--trace" in OS.get_cmdline_user_args()
 ## WEEK 16 — the solo brain's prep phase.
 var never_open := "--never-open" in OS.get_cmdline_user_args()
+## PHASE 5: --open-rule=typical (see _play_shift()); "" = the brain's own rule.
+var open_rule: String = (func():
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--open-rule="):
+			return a.substr("--open-rule=".length())
+	return "").call()
 const OPEN_WHEN_FILLED := 0.9
 const OPEN_WHEN_IDLE := 12.0
 var _prep_idle_t := 0.0
@@ -1271,7 +1286,10 @@ func _run_orders() -> void:
 		table[d] = [main._prep_ceiling(), main._current_shift_duration()]
 	_econ_restore(real_day)
 	print("PREP  day -> [prep ceiling, day clock]: %s" % str(table))
-	var want := {1: [180.0, sd], 2: [180.0, sd], 3: [360.0, sd], 4: [360.0, sd], 5: [540.0, sd], 6: [540.0, sd], 7: [720.0, sd - main.FINALE_SELLING_CUT]}
+	# (PHASE 5: per section from the constant — 180 s until then, 90 s now.)
+	var ps: float = main.PREP_CEILING_BASE
+	var pp: float = main.PREP_CEILING_PER_SECTION
+	var want := {1: [ps, sd], 2: [ps, sd], 3: [ps + pp, sd], 4: [ps + pp, sd], 5: [ps + 2 * pp, sd], 6: [ps + 2 * pp, sd], 7: [ps + 3 * pp, sd - main.FINALE_SELLING_CUT]}
 	for d in range(1, 8):
 		check(is_equal_approx(table[d][0], want[d][0]) and is_equal_approx(table[d][1] - table[d][0], want[d][1]), "G: Day %d: prep ceiling %.0fs, clock %.0fs -> %.0fs selling if the whole ceiling is used (as before: %.0fs)" % [d, table[d][0], table[d][1], table[d][1] - table[d][0], want[d][1]])
 	check(absf(prep_now - table[5][0]) < 0.5 and not main.store_open, "G: the live Day 5 shift started closed, with %.1fs of prep" % prep_now)
@@ -1445,7 +1463,7 @@ func _run_orders() -> void:
 	main._on_continue_pressed()
 	await wait_until(func(): return main.shift_active and main.current_day == 6, 5.0)
 	check(main.current_day == 6, "O5: advanced to Day 6")
-	check(absf(main.prep_time_left - 540.0) < 0.5 and not main.store_open, "O5: Day 6 opens closed, %.1fs of prep" % main.prep_time_left)
+	check(absf(main.prep_time_left - (main.PREP_CEILING_BASE + 2 * main.PREP_CEILING_PER_SECTION)) < 0.5 and not main.store_open, "O5: Day 6 opens closed, %.1fs of prep" % main.prep_time_left)
 	check(main.orders_called_today == 0 and main.orders_filled_today == 0 and main.priority_sales_today == 0, "O5: Day 6 order tallies reset")
 	check(main.priority_sales_week == week_bonus, "O5: week keeps its %d bonus sales" % main.priority_sales_week)
 	check(is_equal_approx(main._order_timer, main._priority_order_interval()) or main._order_timer > main._priority_order_interval() - 1.0, "O5: first Day 6 call-out due in %.0fs" % main._order_timer)
@@ -1832,7 +1850,7 @@ func _n0_walk_then_stop() -> Array:
 func _run_net_orders_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	await wait_until(func(): return main.shift_active and main.current_day == 5, 20.0)
 	check(main.current_day == 5, "%s: Day 5 (replicated)" % who)
@@ -2663,7 +2681,7 @@ func _watch_finale_banner() -> void:
 func _run_net_ambience_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	_watch_finale_banner()
 	await wait_until(func(): return main.shift_active and main.current_day >= 6, 20.0)
@@ -2820,7 +2838,7 @@ func _run_finale() -> void:
 			day_numbers_ok = false
 	_econ_restore(real_day)
 	check(day_numbers_ok, "F0 Days 1-6: full selling window and order cadence are the pre-finale numbers")
-	check(main._current_shift_duration() == 540.0 + base_shift and main._prep_ceiling() == 540.0, "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
+	check(main._current_shift_duration() == (main.PREP_CEILING_BASE + 2 * main.PREP_CEILING_PER_SECTION) + base_shift and main._prep_ceiling() == (main.PREP_CEILING_BASE + 2 * main.PREP_CEILING_PER_SECTION), "F0 Day 6: %.0fs clock, %.0fs prep ceiling" % [main._current_shift_duration(), main._prep_ceiling()])
 	check(a.spill_cap() == a.SPILL_MAX and main._order_timer <= main._priority_order_interval() and main._order_timer > main._priority_order_interval() - 5.0, "F0 Day 6: spill cap %d, orders every %.0fs" % [a.spill_cap(), main._priority_order_interval()])
 	# OCT 2026 PHASE 2: Day 6's start announces stage 4 (lights + spills).
 	await wait_until(func(): return main._finale_banner.visible, 1.0)
@@ -2855,7 +2873,7 @@ func _run_finale() -> void:
 	var banner_start := Time.get_ticks_msec()
 	check(main.shift_active and main.is_finale() and fk().finale and mgr().finale and a.finale, "F1 Day 7: finale on for forklift, manager, spills/lights")
 	check(saw_banner_at_start and main._finale_banner.get_child(0).text == "RUSH SEASON", "F1 Day 7: the top tier's RUSH SEASON banner up as the shift starts ('%s')" % main._finale_banner.get_child(0).text)
-	check(main._prep_ceiling() == 720.0 and main._current_shift_duration() == 720.0 + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
+	check(main._prep_ceiling() == (main.PREP_CEILING_BASE + 3 * main.PREP_CEILING_PER_SECTION) and main._current_shift_duration() == (main.PREP_CEILING_BASE + 3 * main.PREP_CEILING_PER_SECTION) + base_shift - main.FINALE_SELLING_CUT, "F1 Day 7: clock %.0fs = %.0fs prep ceiling + %.0fs selling (finale cut %.0fs)" % [main._current_shift_duration(), main._prep_ceiling(), main._selling_window(), main.FINALE_SELLING_CUT])
 	check(main._selling_window() < base_shift, "F1 Day 7: tighter selling window than Day 6 — %.0fs < %.0fs" % [main._selling_window(), base_shift])
 	check(main._order_timer > main._priority_order_interval() - 1.0 and main._order_timer <= main._priority_order_interval() and main._priority_order_interval() == maxf(main.FINALE_PRIORITY_ORDER_INTERVAL, main._priority_order_window() + main.PRIORITY_ORDER_MIN_GAP_AFTER_WINDOW), "F1 Day 7: priority orders every %.0fs (first due in %.0fs)" % [main._priority_order_interval(), main._order_timer])
 	check(main._priority_order_interval() >= main._priority_order_window() + 5.0, "F1: an order is always closed before the next is due (gap %.0fs >= window %.0fs + 5)" % [main._priority_order_interval(), main._priority_order_window()])
@@ -3055,7 +3073,7 @@ func _run_delivery() -> void:
 	var names: Array = main._unlocked_sections().map(func(s): return s["name"])
 	# --- D1 (WEEK 16): the store opens empty and closed — all stock arrives
 	# by truck, starting during prep.
-	check(floor_total() == 0 and not main.store_open and main.prep_time_left > 300.0, "D1: day opens with no stock on the floor (%d), store closed, %.0fs of prep" % [floor_total(), main.prep_time_left])
+	check(floor_total() == 0 and not main.store_open and main.prep_time_left > 200.0, "D1: day opens with no stock on the floor (%d), store closed, %.0fs of prep" % [floor_total(), main.prep_time_left])
 	check(boxes().is_empty() and not d.truck_parked(), "D1: no boxes, no truck at opening")
 	check(dfk().active and dfk().visible and not dfk().is_in_group("forklift") and main.manager.get_tree().get_first_node_in_group("forklift") == fk(), "D1: delivery forklift live; the manager's 'forklift' is still the Produce one")
 	# Quiet store for the mechanics checks.
@@ -3432,7 +3450,7 @@ func _run_net_delivery_host() -> void:
 func _run_net_delivery_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var go := await _net_read("n1_go.json", 60.0)
 	await wait(0.3)
@@ -3783,7 +3801,7 @@ func _watch_open_banner() -> void:
 func _run_net_prep_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	_watch_open_banner()
 	var g1 := await _net_read("np1_go.json", 60.0)
@@ -3973,7 +3991,7 @@ func _run_net_hazard_pause_host() -> void:
 func _run_net_hazard_pause_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	await _net_read("nh1_go.json", 60.0)
 	var h := await _watch_hazards(20.0)
@@ -4001,7 +4019,7 @@ func _run_net_hazard_pause_client() -> void:
 func _run_coop_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	while true:
 		await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 1.0e9)
 		stats = {"placed": 0, "hits": 0, "watched_s": 0.0, "idle_s": 0.0, "reasons": {}, "wrecks": 0, "overlap": 0, "banner_and_busy_s": 0.0, "banner_clash": 0, "first_customer_s": -1.0, "shift_len": main.shift_time_left, "grace": main.prep_time_left, "slip_s": 0.0}
@@ -4722,7 +4740,7 @@ func _jnorm(v) -> String:
 func _run_net_cleanup_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me)
 	var g1 := await _net_read("nc1_go.json", 120.0)
 	await wait(0.3)
@@ -5114,7 +5132,7 @@ func _run_net_polish_host() -> void:
 func _run_net_polish_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()), 20.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var who: String = main.player_display_name(me) + ": "
 	var g := await _net_read("np1_go.json", 120.0)
 	var census := _po_static_checks(who)

@@ -1114,7 +1114,7 @@ func _compare_views(tag: String, ids: Array) -> void:
 func _run_net_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()) and main.shift_active, 60.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	var ids := _client_ids()
 	var slot: int = ids.find(me)
 	var t0 := Time.get_ticks_msec()

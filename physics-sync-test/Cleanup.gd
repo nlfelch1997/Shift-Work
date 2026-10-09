@@ -686,7 +686,7 @@ func bonus_for(gross: int) -> int:
 	return int(round(maxf(0.0, float(gross)) * CLEAN_BONUS_MAX * (0.5 * mop_fraction() + 0.5 * litter_fraction())))
 
 ## Every peer (replicated counters): share of the category cleaned.
-## WEEK 21: + the Break Room's Janitor's Kit (Shop.gd since PHASE 4). Every peer (the
+## WEEK 21: + the Break Room's Cleaning Cart gear ("Janitor's Kit" until PHASE 5; Shop.gd since PHASE 4). Every peer (the
 ## pan's fill art reads it too).
 func pan_capacity() -> int:
 	return PAN_CAPACITY + main.shop.pan_bonus()
@@ -1577,5 +1577,5 @@ func _my_player(me: int) -> Node2D:
 	var p = main.players.get(me)
 	return p if p != null and is_instance_valid(p) and p.is_inside_tree() else null
 
-func _place_key(me: int) -> String:
-	return Settings.key("place", "host_" if me == 1 else "client_") # PHASE 4C: the bound key
+func _place_key(_me: int) -> String:
+	return Settings.key("place") # PHASE 4C: the bound key (PHASE 5: this PC's key set)

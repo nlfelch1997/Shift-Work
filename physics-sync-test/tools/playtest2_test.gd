@@ -381,7 +381,7 @@ func _run_net_host() -> void:
 func _run_net_client() -> void:
 	await wait_until(func(): return root.get_node("Net").is_active() and main.multiplayer.get_unique_id() != 1 and main.players.has(main.multiplayer.get_unique_id()) and main.shift_active, 60.0)
 	me = main.multiplayer.get_unique_id()
-	act = "client_"
+	act = root.get_node("Settings").local_prefix()
 	await _net_read("go_%d" % me, 300.0)
 	await wait(0.5)
 	# Pushes (products: the host lays each one out where this client asks).

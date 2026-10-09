@@ -95,16 +95,27 @@ const HELPER_LOOKS := {"Produce": "cashier_4", "Dairy/Frozen": "cashier_5", "Bak
 ## FLAGGED for Phase 5: they want a demand-side reason to matter.
 ## ============================================================================
 ## Paid once, at the board, on hiring.
-const HIRE_FEE := {"Produce": 150, "Dairy/Frozen": 200, "Bakery": 250}
+## PHASE 5 BALANCE PASS — the numbers below were retuned against the pacing
+## targets in Pacing.gd (all sections ~shift 10, the top tier with helpers ~16,
+## the janitor + every helper's training + the whole gear shop ~24), from
+## MEASURED per-shift income (tools/staff_test.gd --test=income, the "typical
+## crew" bot: --open-rule=typical, events on, solo/2/3 players, with and without
+## helpers) run through the purchase policy of --test=progress, then checked
+## with full progression runs. Before -> after, and why, in the Phase 5 report.
+## Fees x2, training x4, wages x2 (60/70/80 -> 120/140/160; janitor 50
+## -> 100): a staffed top-tier store measured ~4.6x an unstaffed one's pay, so
+## more of what helpers earn goes back out as wages — still well in the black
+## for every hire (Produce's helper adds ~$500 a shift at two sections).
+const HIRE_FEE := {"Produce": 300, "Dairy/Frozen": 400, "Bakery": 500}
 ## Per shift worked, out of the bank at clock-out.
-const WAGE := {"Produce": 60, "Dairy/Frozen": 70, "Bakery": 80}
+const WAGE := {"Produce": 120, "Dairy/Frozen": 140, "Bakery": 160}
 ## Level 0 = as hired. Speed in px/s (a customer browses at 90, a player
 ## walks at 220); carry in items per trip.
 const SPEED_BY_LEVEL := [80.0, 110.0, 140.0]
 const CARRY_BY_LEVEL := [1, 2, 3]
 ## Price of the NEXT level (index = current level).
-const SPEED_COSTS := [100, 200]
-const CARRY_COSTS := [100, 200]
+const SPEED_COSTS := [400, 800]
+const CARRY_COSTS := [400, 800]
 ## ============================================================================
 ## OCT 2026 PHASE 4B — THE JANITOR (Janitor.gd): one store-wide cleaning hire,
 ## on the same board, under the same rules as a section helper — prep-only
@@ -156,12 +167,12 @@ const JANITOR_NAME := "Pat"
 const JANITOR_LOOK := "cashier_3"
 const JANITOR_COLOR := Color(0.55, 0.78, 0.82) # a grey-teal ring: not any section's color
 const JANITOR_MIN_SECTIONS := 2
-const JANITOR_HIRE_FEE := 200
-const JANITOR_WAGE := 50
+const JANITOR_HIRE_FEE := 400 # PHASE 5: 200 -> 400 (see the balance note above HIRE_FEE)
+const JANITOR_WAGE := 100 # PHASE 5: 50 -> 100
 ## Level 0 = as hired; ONE upgrade (walking speed, px/s). A helper starts at
 ## 80 in one room; the janitor crosses the store, so starts a bit quicker.
 const JANITOR_SPEED_BY_LEVEL := [95.0, 135.0]
-const JANITOR_SPEED_COSTS := [150]
+const JANITOR_SPEED_COSTS := [600] # PHASE 5: 150 -> 600
 ## Everyone the board can hire, in board order.
 const ROLES := ["Produce", "Dairy/Frozen", "Bakery", "Janitor"]
 

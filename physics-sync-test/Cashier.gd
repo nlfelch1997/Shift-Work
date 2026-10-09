@@ -45,11 +45,12 @@ const CHECKOUT_WAIT_SECONDS := 3.0
 ## instead of one per section, and Main.gd's _configure_cashiers() enables
 ## only the first N of them (N scaling with the customer cap — see that
 ## constant's comment) via set_active() below, toggling both this flag and
-## visibility. Not replicated: like Gate.gd's required_day/configure(), every
-## peer runs the exact same host-authoritative current_day through the exact
-## same _active_cashier_count() formula and gets the identical result
-## independently, so there's no live, unpredictable state here that needs a
-## broadcast source of truth.
+## visibility. Not replicated: every peer runs the same host-authoritative,
+## replicated sections_owned (PHASE 5 note: this said current_day from the
+## 7-day story — the count has followed the open sections since the Oct 2026
+## shopkeeper pivot) through the same _active_cashier_count() formula and gets
+## the identical result independently, so there's no live, unpredictable state
+## here that needs a broadcast source of truth.
 var active := true
 
 var body: StaticBody2D
@@ -87,7 +88,7 @@ const CharacterSpriteScript := preload("res://CharacterSprite.gd")
 
 ## WEEK 25 — which fixed staff look stands at this register: Cashier1 always
 ## wears cashier_1, Cashier2 cashier_2... (from the station's node name in
-## Main.tscn, identical on every peer, every day, every session). Uniform
+## Main.tscn, identical on every peer, every shift, every session). Uniform
 ## shared with the players (see CharacterSprite.gd).
 func look_name() -> String:
 	var digits := String(body.name).trim_prefix("Cashier")
@@ -145,8 +146,8 @@ func request_join_queue(carry_id: int) -> void:
 
 ## Called by Customer.gd's _leave() on whatever cashier it was queued at,
 ## covering every exit path (successful purchase — see _complete_purchase()
-## below, which calls this too — lifetime timeout, and the day-boundary
-## force-despawn) so a customer that's gone never leaves a permanently
+## below, which calls this too — lifetime timeout, and the end-of-selling
+## force-despawn at close) so a customer that's gone never leaves a permanently
 ## stuck gap in the line.
 func leave_queue(carry_id: int) -> void:
 	_queue.erase(carry_id)

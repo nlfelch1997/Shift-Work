@@ -85,3 +85,21 @@ TESTS+=(
 "menu-net-pause|menu|0|2|0|--server --players=3 --day=5 --no-save --test=net-pause|"
 "menu-net-host-quit|menu|0|2|0|--server --players=3 --day=5 --save-file=user://menu_test/net_host.json --test=net-host-quit|"
 )
+# OCT 2026 PHASE 5 (polish) — tools/phase5_test.gd: the main menu, the demo
+# cap, the open-early hint, the Cleaning Cart rename, the helper's escape from
+# the forklift. Real wall-clock time throughout.
+TESTS+=(
+"p5-menu|phase5|0|0|0|--save-file=user://p5_menu/save.json --test=menu|"
+"p5-menu-continue|phase5|0|0|0|--save-file=user://p5_cont/save.json --test=menu-continue|"
+"p5-menu-host|phase5|0|0|0|--no-save --test=menu-host|"
+"p5-menu-demo|phase5|0|0|0|--no-save --demo --test=menu-demo|"
+"p5-demo-cap|phase5|0|0|0|--server --demo --day=4 --no-save --shift-seconds=4 --prep-seconds=0 --cleanup-seconds=0 --test=demo-cap|"
+"p5-demo-off|phase5|0|0|0|--server --day=4 --no-save --shift-seconds=4 --prep-seconds=0 --cleanup-seconds=0 --test=demo-off|"
+"p5-demo-save|phase5|0|0|0|--server --demo --save-file=user://p5_demo/save.json --test=demo-save|"
+"p5-net-demo|phase5|0|1|0|--server --demo --day=4 --players=2 --no-save --shift-seconds=6 --prep-seconds=0 --cleanup-seconds=0 --test=net-demo|"
+"p5-open-early|phase5|0|0|0|--server --day=1 --no-save --test=open-early|"
+"p5-gear|phase5|0|0|0|--server --save-file=user://p5_gear/save.json --test=gear|"
+"p5-fk-escape|phase5|0|0|0|--server --day=3 --no-save --prep-seconds=900 --test=fk-escape|"
+"p5-fk-helpers|phase5|0|0|0|--server --day=7 --no-save --prep-seconds=0 --shift-seconds=300 --test=fk-helpers|"
+"p5-shots|phase5|0|0|1|--save-file=user://p5_shots/save.json --test=shots|"
+)

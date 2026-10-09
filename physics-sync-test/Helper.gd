@@ -104,6 +104,9 @@ const JOB_TIMEOUT := 12.0
 ## The open band of a hireable room (room-local y) — between the two shelf
 ## walls' slot rows, where fleeing the forklift keeps to.
 const BAND_Y := Vector2(150.0, 395.0)
+## PHASE 5: how far past the band (or past where it stands, if that's already
+## outside it, in a slot row) a helper may step to get out of the forklift.
+const ESCAPE_SLACK := 35.0
 
 var section := ""
 var helper_name := ""
@@ -689,13 +692,7 @@ func _forklift_step(delta: float) -> Vector2:
 	if rel.length() < FORKLIFT_FLEE or inside:
 		dir = rel.normalized() if rel.length() > 0.01 else Vector2.UP
 		if inside:
-			# Out the nearer long side (pinned against a wall, straight away
-			# from its centre can't get clear).
-			var lateral := heading.orthogonal() * (1.0 if rel.dot(heading.orthogonal()) >= 0.0 else -1.0)
-			var probe := position + lateral * 40.0
-			if probe.y < _room.position.y + BAND_Y.x or probe.y > _room.position.y + BAND_Y.y:
-				lateral = -lateral
-			dir = lateral
+			dir = _escape_dir(fk)
 	if ahead > -30.0 and ahead < FORKLIFT_PATH_AHEAD and absf(side) < FORKLIFT_HALF.y + FORKLIFT_PATH_SIDE and (fk.velocity.length() > 5.0 or fk.alert):
 		var s := signf(side)
 		if s == 0.0:
@@ -711,8 +708,50 @@ func _forklift_step(delta: float) -> Vector2:
 	forklift_yield_s += delta
 	var p := position + dir * maxf(speed, FLEE_SPEED) * delta
 	p.x = clampf(p.x, _room.position.x + 60.0, _room.end.x - 60.0)
-	p.y = clampf(p.y, _room.position.y + BAND_Y.x, _room.position.y + BAND_Y.y)
+	if inside:
+		# PHASE 5: escaping the body (_escape_dir() picked a way that ends
+		# near where it stands) — the band clamp would drag it back across.
+		p.y = clampf(p.y, minf(_room.position.y + BAND_Y.x, position.y - ESCAPE_SLACK), maxf(_room.position.y + BAND_Y.y, position.y + ESCAPE_SLACK))
+	else:
+		p.y = clampf(p.y, _room.position.y + BAND_Y.x, _room.position.y + BAND_Y.y)
 	return p
+
+## PHASE 5 FIX — out of the forklift's body by the SHORTEST way that ends in
+## the room's open band (or the slot row the helper already stands in). Before, it took the nearer long side and, if that
+## side left the band, turned round and walked out the other side — THROUGH
+## the forklift (tools/phase5_test.gd --test=fk-escape: 36 of 225 placements),
+## which against a moving forklift is the frames of overlap Phase 4B's soak
+## saw. Each of the body's four sides is a candidate exit (straight across
+## it, local axes); one whose exit point the band clamp would pull back is
+## skipped unless nothing else is possible.
+func _escape_dir(fk: Node2D) -> Vector2:
+	var local: Vector2 = (position - fk.global_position).rotated(-fk.rotation) - Vector2(FORKLIFT_BOX_OFFSET, 0.0)
+	var half := FORKLIFT_HALF + Vector2(8.0, 8.0)
+	var cands := [
+		[Vector2.RIGHT, half.x - local.x], [Vector2.LEFT, half.x + local.x],
+		[Vector2.DOWN, half.y - local.y], [Vector2.UP, half.y + local.y],
+	]
+	var best := Vector2.ZERO
+	var best_d := INF
+	var fallback := Vector2.ZERO
+	var fallback_d := INF
+	for c in cands:
+		var d: float = maxf(0.0, c[1])
+		var world_dir: Vector2 = (c[0] as Vector2).rotated(fk.rotation)
+		var exit_pt := position + world_dir * (d + 4.0)
+		# The band, widened to wherever the helper already stands (a slot row
+		# sits outside it) plus a step: out the near side, never across.
+		var top: float = minf(_room.position.y + BAND_Y.x, position.y - ESCAPE_SLACK)
+		var bot: float = maxf(_room.position.y + BAND_Y.y, position.y + ESCAPE_SLACK)
+		var in_band := exit_pt.y >= top and exit_pt.y <= bot \
+			and exit_pt.x >= _room.position.x + 60.0 and exit_pt.x <= _room.end.x - 60.0
+		if in_band and d < best_d:
+			best_d = d
+			best = world_dir
+		if d < fallback_d:
+			fallback_d = d
+			fallback = world_dir
+	return best if best != Vector2.ZERO else fallback
 
 ## The forklift's rotation one physics frame ago (turning-on-the-spot check):
 ## this frame's reading becomes "last" for the next one.
