@@ -62,12 +62,21 @@ func _run() -> void:
 	if _arg("--hire=", "") == "all":
 		main.staff.staff = {"Produce": {"speed": 0, "carry": 0}, "Dairy/Frozen": {"speed": 0, "carry": 0}, "Bakery": {"speed": 0, "carry": 0}, "Janitor": {"speed": 0}}
 	var selling := float(_arg("--selling=", "0"))
+	var stock := "--stock" in OS.get_cmdline_user_args()
+	if stock:
+		_restock()
+		for i in 60:
+			await physics_frame
 	if selling > 0.0:
 		main.open_store(1)
 		var t := 0.0
+		var k := 0
 		while t < selling:
 			await physics_frame
 			t += 1.0 / 60.0
+			k += 1
+			if stock and k % 300 == 0:
+				_restock()
 	# --event=key: force a random event to start (Events.gd) and run 8 s.
 	var ev := _arg("--event=", "")
 	if ev != "":
@@ -138,6 +147,17 @@ func _run() -> void:
 	df.store_string("done")
 	df.close()
 	quit()
+
+## --stock: a product on every empty slot of every open shelf (the shelves
+## settle them in), so the crowd has something to buy.
+func _restock() -> void:
+	for sb in main.shelves:
+		if not main.is_unlocked_at_pos(sb.global_position):
+			continue
+		var shelf: Node = sb.get_node("Shelf")
+		for i in shelf.slots.size():
+			if not shelf._is_filled(i):
+				main.spawn_product_at(main._section_name_at(sb.global_position), shelf.slots[i].global_position)
 
 func _shot(cam: Camera2D, name: String, at: Vector2, zoom: float) -> void:
 	cam.global_position = at

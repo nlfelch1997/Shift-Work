@@ -24,6 +24,14 @@ extends SceneTree
 var main: Node
 
 ## A spot in a named room of the layout table (tools/spots.gd).
+## PHASE 5B PART 2B: where a throw straight down hits nothing but the shop's
+## front wall: midway between two checkout lanes (Cashier3 and Cashier4),
+## a little north of their queues' start.
+func _wall_shot() -> Vector2:
+	var a: Vector2 = main.get_node("CentralCheckout/Cashier3").global_position
+	var b: Vector2 = main.get_node("CentralCheckout/Cashier4").global_position
+	return Vector2((a.x + b.x) * 0.5, a.y - 140.0)
+
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
 	return preload("res://tools/spots.gd").area_spot(main, id, offset)
 
@@ -262,11 +270,11 @@ func _run_solo() -> void:
 	check(peak_rate(heard, "footstep", 0.25) <= 1, "S2 never two footsteps within 0.25s")
 
 	# S3 pickup / drop / throw, and the throw's impact.
-	# Oct 2026: from the hub's open north-west corner, so the throw goes
-	# straight up into the bare wall. (It was Dry Goods, where the impact came
-	# from the stocked shelf — and stocked items no longer collide with thrown
-	# stock: Carryable.gd's LAYER_SHELF_STOCK.)
-	player().teleport_to(area_spot("hub", Vector2(-380, -150)))
+	# Oct 2026: thrown into a bare wall. (It was Dry Goods, where the impact
+	# came from the stocked shelf — and stocked items no longer collide with
+	# thrown stock: Carryable.gd's LAYER_SHELF_STOCK.) PHASE 5B PART 2B: down
+	# into the shop's front wall, between two checkout lanes (_wall_shot()).
+	player().teleport_to(_wall_shot())
 	await wait(0.3)
 	var obj := free_product()
 	move_body(obj, player().global_position + Vector2(42, 0)) # clear of the player's body, inside PICKUP_RANGE
@@ -283,7 +291,7 @@ func _run_solo() -> void:
 	var t0 := count("throw")
 	var i0: int = main.sound_director.impacts_detected
 	var hits0: int = count("impact_light") + count("impact_heavy")
-	obj.get_node("Carryable").try_throw(1, Vector2.UP)
+	obj.get_node("Carryable").try_throw(1, Vector2.DOWN)
 	check(await heard_after("throw", t0), "S3 whoosh on my own throw")
 	check(await wait_until(func(): return main.sound_director.impacts_detected > i0, 2.0), "S3 host spotted the thrown item hitting the wall")
 	check(count("impact_light") + count("impact_heavy") > hits0, "S3 ...and played an impact")
@@ -513,8 +521,8 @@ func _run_net_host() -> void:
 		s.get_node("Shelf").wreck(s.global_position + Vector2(0, 80)))
 	await host_event.call("impact", "impact_heavy|impact_light", func():
 		var o := free_product()
-		move_body(o, area_spot("dry_goods", Vector2(0, -110)))
-		o.linear_velocity = Vector2(0, -620)) # a throw's speed, straight into Dry Goods' back wall
+		move_body(o, _wall_shot())
+		o.linear_velocity = Vector2(0, 620)) # a throw's speed, straight into the front wall
 	var target: int = clients[0]
 	await host_event.call("forklift bump", "forklift_bonk", func(): main.players[target].rpc("forklift_hit", main.players[target].global_position + Vector2(40, 0)))
 

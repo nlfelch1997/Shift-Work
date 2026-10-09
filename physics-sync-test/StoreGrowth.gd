@@ -119,8 +119,8 @@ func _process(delta: float) -> void:
 		for sec in _lots:
 			var i: int = main.section_index(sec)
 			var price := "$%d" % main.section_price(sec)
-			var banner := "NOT FOR SALE IN PRACTICE" if main.tutorial.active else "FOR SALE · %s" % price
-			var board := "practice shift" if main.tutorial.active else (price if i <= main.sections_owned else "%s · after %s" % [price, main.SECTIONS[i - 1]["name"]])
+			var banner := "COMING SOON" if main.tutorial.active else "FOR SALE · %s" % price
+			var board := "buy it in a real shift" if main.tutorial.active else (price if i <= main.sections_owned else "%s · after %s" % [price, main.SECTIONS[i - 1]["name"]])
 			_lots[sec]["board_text"].text = board
 			for b in _lots[sec]["banners"]:
 				b.text = banner

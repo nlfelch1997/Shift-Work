@@ -238,6 +238,32 @@ func _check_nav(stage: String) -> void:
 				hbad.append("%s->%s" % [sec, str(g.round())])
 	check(hbad.is_empty(), "G-%s nav5: %d helper(s) reach every slot and their pad in their own grid %s" % [stage, hn, str(hbad.slice(0, 6))])
 
+## Legs (pairs of points) of the manager's rounds to every open section that
+## a ray hits a static body on: [] if none.
+func _manager_leg_hits() -> Array:
+	var m: Node2D = main.manager
+	var space := m.get_world_2d().direct_space_state
+	var out := []
+	var seen := {}
+	for n in 40:
+		m._legs.clear()
+		m._plan_visit(main)
+		var pts := [main.areas.waypoint_of("hub")]
+		for leg in m._legs:
+			pts.append(leg["pos"])
+		for i in range(1, pts.size()):
+			var key := "%s>%s" % [str(pts[i - 1].round()), str(pts[i].round())]
+			if seen.has(key):
+				continue
+			seen[key] = true
+			var q := PhysicsRayQueryParameters2D.create(pts[i - 1], pts[i])
+			q.collide_with_areas = false
+			var hit := space.intersect_ray(q)
+			if not hit.is_empty() and hit["collider"] is StaticBody2D:
+				out.append("%s (%s)" % [key, String(hit["collider"].name)])
+	m._legs.clear()
+	return out
+
 ## --- SOLO --------------------------------------------------------------------
 
 func _run_growth() -> void:
@@ -258,7 +284,7 @@ func _run_growth() -> void:
 	var back: Node2D = main.gates_of("Produce")[1]
 	check(back.get_node("Gate").back_door and main.for_sale_gate_at(back.global_position + Vector2(0, -40)) == "", "G-buy2: Storage's side of Produce's back door doesn't sell it")
 	var bk: Vector2 = main.gate_of("Bakery").global_position + Vector2(40, 0)
-	check(main.for_sale_gate_at(bk) == "Bakery" and main.purchase_blocker("Bakery") == "buy Dairy/Frozen first", "G-buy3: Bakery's wall says what it is, and that Dairy/Frozen comes first ('%s')" % main.purchase_blocker("Bakery"))
+	check(main.for_sale_gate_at(bk) == "Bakery" and main.purchase_blocker("Bakery") == "buy Produce first", "G-buy3: Bakery's wall says what it is, and that the sections before it come first ('%s')" % main.purchase_blocker("Bakery"))
 	for stage in range(2, 5):
 		var sec: Dictionary = main.SECTIONS[stage - 1]
 		_opened.clear()
@@ -276,6 +302,11 @@ func _run_growth() -> void:
 		check(_stage_wrong(stage) == "", "G-%d look: %d sections — bought wings open, the rest closed lots %s" % [stage, stage, _stage_wrong(stage)])
 		check(int(main.growth.animations_played.get(sec["name"], 0)) == 1, "G-%d look: the knock-out played once for %s" % [stage, sec["name"]])
 		_check_nav(str(stage))
+	# The manager walks straight between his stops with no collision (he
+	# drifts through whatever's between): every leg of every round, in the
+	# full store, must clear the walls, shelves, registers and barriers.
+	var hits := _manager_leg_hits()
+	check(hits.is_empty(), "G-mgr: every straight leg of the manager's rounds (each section) clears walls, shelves and registers %s" % str(hits.slice(0, 6)))
 	# A wing that opens with no purchase moment (the practice shift ending,
 	# a reload) snaps: shut everything, then open it again.
 	var played: Dictionary = main.growth.animations_played.duplicate()

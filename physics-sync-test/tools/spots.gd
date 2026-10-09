@@ -47,16 +47,17 @@ static func area_spot(main: Node, id: String, offset := Vector2.ZERO) -> Vector2
 
 ## The point a room's test offsets are measured from. They were written
 ## against the old rooms' centres, so this is the place in Plan B that plays
-## the same part, read from the layout table: the checkout's is 250 px inside
-## the front door (the old hub's centre was 250 px from its open south edge,
-## the way out); a section's is the middle of its open floor (its spawn band —
+## the same part, read from the layout table: the checkout's is its waypoint,
+## 250 px inside the front door (the old hub's centre was 250 px from its open
+## south edge, the way out, and was where the manager stopped on his rounds —
+## Plan B's checkout waypoint is both); a section's is the middle of its open floor (its spawn band —
 ## the old sections' centre was their open middle aisle); anything else's
 ## (the break room, which didn't move; Storage, which moved as one block)
 ## its centre.
 static func reference_of(main: Node, id: String) -> Vector2:
 	var a: RefCounted = main.areas
 	if a.role_of(id) == "hub":
-		return a.anchor("front_door") + Vector2(0.0, -250.0)
+		return a.waypoint_of(id) # 250 px inside the front door: the manager's checkout stop
 	if a.role_of(id) == "section":
 		return a.spawn_band_of(id).get_center()
 	return a.center_of(id)

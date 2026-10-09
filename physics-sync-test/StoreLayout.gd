@@ -63,7 +63,10 @@ extends RefCounted
 ##             a barrier that opens — not a wall). The manager's rounds route
 ##             over it (Areas.route()). Listed both ways.
 ##   waypoint  (optional) the open spot that stands for the room on a walk
-##             through it (the manager's rounds); the rect's centre if absent
+##             through it (the manager's rounds); the rect's centre if absent.
+##             He walks straight between stops and has no collision, so each
+##             waypoint/lookout is placed so the straight legs between them
+##             clear the shelves (tools/growth_test.gd checks it).
 ##   lookouts  (sections) the open spots the manager stops at on his rounds
 ##   spawn_band (sections) room-local Rect2 of open floor where spawned
 ##             stock and spills land (Main._spawn_pos_in_section(),
@@ -125,8 +128,8 @@ const ROOMS := [
 	{"id": "dairy_frozen", "role": "section", "section": "Dairy/Frozen", "rect": Rect2(0.0, 1080.0, 780.0, 600.0),
 		"shop_floor": true, "bg": "DairyFrozenBg", "wall_art": "market",
 		"links": ["bakery", "dry_goods", "hub"],
-		"waypoint": Vector2(690.0, 1440.0),
-		"lookouts": [Vector2(690.0, 1440.0), Vector2(300.0, 1290.0)],
+		"waypoint": Vector2(690.0, 1250.0),
+		"lookouts": [Vector2(690.0, 1250.0), Vector2(300.0, 1250.0)],
 		"spawn_band": Rect2(240.0, 20.0, 520.0, 210.0),
 		"helper": {"band": Rect2(60.0, 60.0, 660.0, 480.0)}},
 	{"id": "dry_goods", "role": "section", "section": "Dry Goods", "rect": Rect2(780.0, 540.0, 840.0, 840.0),
@@ -138,7 +141,7 @@ const ROOMS := [
 	{"id": "hub", "role": "hub", "rect": Rect2(780.0, 1380.0, 840.0, 300.0),
 		"shop_floor": true, "bg": "EntranceBg", "wall_art": "market",
 		"links": ["dry_goods", "dairy_frozen", "produce", "sidewalk"],
-		"waypoint": Vector2(1200.0, 1350.0)},
+		"waypoint": Vector2(1510.0, 1430.0)}, # inside the door, overlooking the queues
 	{"id": "produce", "role": "section", "section": "Produce", "rect": Rect2(1620.0, 540.0, 780.0, 1140.0),
 		"shop_floor": true, "bg": "MeatDeliBg", "wall_art": "market",
 		"links": ["dry_goods", "hub", "storage"],
