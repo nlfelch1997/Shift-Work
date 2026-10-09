@@ -215,7 +215,7 @@ func press_f(settle := 0.25) -> void:
 ## wants it to be) — host only.
 func clear_hub_stock() -> void:
 	for obj in get_nodes_in_group("carryable"):
-		if main.areas.area_at(obj.global_position) == "hub" and obj.get_node("Carryable").carrier_id == 0:
+		if main.areas.area_at(obj.global_position) in ["hub", "dry_goods"] and obj.get_node("Carryable").carrier_id == 0: # (PHASE 5B PART 2B: the shop floor round the checkout too)
 			move_body(obj, area_spot("storage", Vector2(-100 + randf() * 300, 150)))
 
 func clear_floor() -> void:

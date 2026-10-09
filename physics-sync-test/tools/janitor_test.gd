@@ -327,7 +327,7 @@ func _watch_janitor() -> void:
 		var why := ""
 		if cell == "break_room":
 			why = "in the Break Room"
-		elif cell != "hub" and cell != "storage" and cell != "sidewalk" and not main.is_unlocked_at_pos(p):
+		elif main.areas.role_of(cell) == "section" and not main.is_unlocked_at_pos(p): # (PHASE 5B PART 2B: the staff hall is his way to the dumpster)
 			why = "in a locked section"
 		elif load("res://CustomerNav.gd").JANITOR_KEEP_OUT.has_point(p):
 			why = "on the delivery forklift's floor"

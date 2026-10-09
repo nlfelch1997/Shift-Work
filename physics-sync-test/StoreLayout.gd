@@ -147,7 +147,7 @@ const ROOMS := [
 		"links": ["dry_goods", "hub", "storage"],
 		"waypoint": Vector2(1780.0, 1080.0),
 		"lookouts": [Vector2(1780.0, 1080.0), Vector2(2050.0, 1450.0)],
-		"spawn_band": Rect2(40.0, 340.0, 240.0, 720.0),
+		"spawn_band": Rect2(40.0, 640.0, 680.0, 420.0), # the wing's open south half, across the lane (as the old room's band crossed its lane)
 		"helper": {"band": Rect2(414.0, 60.0, 216.0, 1020.0)}},
 	# --- outside ---
 	{"id": "sidewalk", "role": "sidewalk", "rect": Rect2(0.0, 1680.0, 2400.0, 180.0),
