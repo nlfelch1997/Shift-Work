@@ -12,6 +12,7 @@ feature produce_forklift_lane role=forklift_lane room=produce rect=[P: (1920.0, 
 feature storage_forklift_floor role=forklift_floor room=storage rect=[P: (2150.0, 1150.0), S: (730.0, 360.0)] janitor=false
 feature front_door_outside role=exit room=sidewalk rect=[P: (960.0, 1104.0), S: (960.0, 516.0)] janitor=true
 feature customer_arrival role=customer_spawn room=sidewalk rect=[P: (1320.0, 1080.0), S: (240.0, 300.0)] janitor=true
+anchor bounce_target (1440.0, 1130.0)
 anchor coffee_machine (180.0, 66.0)
 anchor delivery_forklift_home (2270.0, 1250.0)
 anchor dumpster (2030.0, 1530.0)

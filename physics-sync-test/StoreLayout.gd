@@ -125,6 +125,7 @@ const ANCHORS := {
 	"player_spawn": Vector2(480.0, 270.0), # Main.SPAWN_CENTER: you clock in in the break room
 	"janitor_home": Vector2(1760.0, 650.0), # Janitor.HOME: the hub's tool rack corner
 	"front_door": Vector2(1440.0, 1100.0), # Cleanup.FRONT_DOOR: the hauling arrow points here
+	"bounce_target": Vector2(1440.0, 1130.0), # the practice shift's "walk them out" marker, just past the door
 	# --- the sales floor ---
 	"store_sign": Vector2(1610.0, 1115.0), # Main.STORE_SIGN_POS
 	"tool_rack": Vector2(1822.0, 588.0), # Cleanup.RACK_POS (hub)

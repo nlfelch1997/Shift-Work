@@ -552,7 +552,7 @@ func _target(p: Node2D, id: String) -> Vector2:
 			return _nearest_can(p.global_position, false)
 		"bounce":
 			if p.escorting():
-				return Vector2(1440, 1130) # out the front door
+				return main.areas.anchor("bounce_target") # out the front door (the layout table)
 			var best := Vector2.INF
 			for c in get_tree().get_nodes_in_group("customer"):
 				if c.role == "disruptive" and (best == Vector2.INF or p.global_position.distance_to(c.global_position) < p.global_position.distance_to(best)):
