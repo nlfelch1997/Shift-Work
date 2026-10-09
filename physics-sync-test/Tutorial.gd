@@ -200,8 +200,9 @@ func tick_host() -> void:
 	_keep_props()
 
 ## PHASE 3D — host: the upkeep steps always have something to practice on.
-const PROP_LITTER := [Vector2(1180, 650), Vector2(1215, 690), Vector2(1250, 640), Vector2(1160, 720)]
-const PROP_PUDDLE := Vector2(1640, 660)
+## (PHASE 5B PART 2A: where they lie is in the layout table, StoreLayout.gd.)
+const PROP_LITTER: Array = preload("res://StoreLayout.gd").PRACTICE_LITTER
+const PROP_PUDDLE: Vector2 = preload("res://StoreLayout.gd").ANCHORS["practice_puddle"]
 const PROP_CAN := 0 # the hub's
 var _prop_t := 0.0
 func _keep_props() -> void:

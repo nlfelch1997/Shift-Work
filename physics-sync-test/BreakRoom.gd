@@ -59,9 +59,9 @@ const COFFEE_COST_DOLLARS := 40
 const COFFEE_SPEED_BONUS := 0.2
 const COFFEE_TOAST := Color(1, 0.8, 0.45)
 
-const COFFEE_POS := Vector2(180.0, 66.0) # the machine's footprint centre
+const COFFEE_POS: Vector2 = preload("res://StoreLayout.gd").ANCHORS["coffee_machine"] # the machine's footprint centre
 const COFFEE_RANGE := 70.0
-const VENDING_POS := Vector2(610.0, 70.0)
+const VENDING_POS: Vector2 = preload("res://StoreLayout.gd").ANCHORS["vending_machine"]
 const VENDING_RANGE := 70.0
 
 const FURNITURE_SHEET := "res://assets/breakroom-furniture/PixelFurniture.png"

@@ -91,12 +91,16 @@ const SPILL_RING_MAX := 150.0
 const SPILL_ATTEMPTS := 12
 
 ## --- LAYOUT (world px; Storage is x 1920-2880, y 1080-1620) ---
-const LANE_Y := 1250.0 # the forklift's east-west lane, dock door centered on it
-const DOCK_X := 2740.0 # the dock edge: the truck's back doors, and the bay's west face
+## PHASE 5B PART 2A: the positions below are aliases of the layout table
+## (StoreLayout.gd — written there relative to Storage's corner, so the back
+## room can move as one block); the values are unchanged.
+const Layout := preload("res://StoreLayout.gd")
+const LANE_Y: float = Layout.DOCK_LANE_Y # the forklift's east-west lane, dock door centered on it
+const DOCK_X: float = Layout.DOCK_X # the dock edge: the truck's back doors, and the bay's west face
 const DOCK_HALF_WIDTH := 75.0 # the bay (and the truck) span LANE_Y +- this
 const TRUCK_LENGTH := 330.0
 const TRUCK_AWAY_OFFSET := 420.0 # fully past the world's east edge
-const FORKLIFT_HOME := Vector2(2270.0, LANE_Y)
+const FORKLIFT_HOME: Vector2 = Layout.ANCHORS["delivery_forklift_home"]
 ## The receiving row: where the forklift sets boxes down, south of its lane.
 ## 75px apart: the forklift (44 wide) drives down between two parked boxes
 ## (44 wide) with ~15px to spare on each side. FOUND BY THE 4-PLAYER NET TEST:
@@ -107,7 +111,7 @@ const FORKLIFT_HOME := Vector2(2270.0, LANE_Y)
 ## Filled from the dock end first (free_receiving_spot() takes the first free
 ## one): the forklift's shortest trip, and its trips are the delivery chain's
 ## bottleneck — the crew walks the rest.
-const RECEIVING_SPOTS := [Vector2(2680, 1450), Vector2(2605, 1450), Vector2(2530, 1450), Vector2(2455, 1450), Vector2(2380, 1450), Vector2(2305, 1450), Vector2(2230, 1450)]
+const RECEIVING_SPOTS: Array = Layout.RECEIVING_SPOTS
 const SPOT_CLEAR_RADIUS := 36.0 # a spot with a box (or anything) within this is taken
 ## WEEK 18: one pad per section, keyed by the section's name (Main.gd's
 ## SECTIONS). Each sits in open floor that no customer has to cross to reach a
@@ -122,12 +126,7 @@ const SPOT_CLEAR_RADIUS := 36.0 # a spot with a box (or anything) within this is
 ##   south): the middle of the room, in the open floor between the side
 ##   shelves' slot columns and below the top shelves' — the only floor that
 ##   size in there. Shoppers heading for the top shelves walk round it.
-const PAD_CENTERS := {
-	"Dry Goods": Vector2(1440.0, 300.0),
-	"Produce": Vector2(2400.0, 665.0),
-	"Dairy/Frozen": Vector2(480.0, 665.0),
-	"Bakery": Vector2(2400.0, 125.0),
-}
+const PAD_CENTERS: Dictionary = Layout.PADS
 const PAD_HALF := 56.0
 ## Spilled stock stays this far inside its section's room edges.
 const SPILL_ROOM_MARGIN := 40.0
@@ -508,8 +507,7 @@ func unpack_into_section(section: String, event_text: String) -> void:
 ## crowded, like Main.gd does.
 func _spill_spot(section: String, taken: Array) -> Vector2:
 	var c: Vector2 = PAD_CENTERS[section]
-	var cell: Vector2i = main._grid_cell_of(c)
-	var room := Rect2(Vector2(cell.x * main.ROOM_WIDTH, cell.y * main.ROOM_HEIGHT), Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT)).grow(-SPILL_ROOM_MARGIN)
+	var room: Rect2 = main.areas.rect_of(main.areas.area_at(c)).grow(-SPILL_ROOM_MARGIN)
 	var fallback := c + Vector2(0, SPILL_RING_MIN) # the pad's open (aisle) side
 	for attempt in SPILL_ATTEMPTS * 2:
 		var pos := c + Vector2.RIGHT.rotated(randf() * TAU) * randf_range(SPILL_RING_MIN, SPILL_RING_MAX)
@@ -579,7 +577,8 @@ func _build_dock() -> void:
 	var y1 := LANE_Y + DOCK_HALF_WIDTH
 	var bay := Polygon2D.new()
 	bay.name = "DockBay"
-	bay.polygon = PackedVector2Array([Vector2(DOCK_X, y0), Vector2(main.WORLD_WIDTH, y0), Vector2(main.WORLD_WIDTH, y1), Vector2(DOCK_X, y1)])
+	var east: float = main.areas.world_rect().end.x # the bay runs out to the world's east edge
+	bay.polygon = PackedVector2Array([Vector2(DOCK_X, y0), Vector2(east, y0), Vector2(east, y1), Vector2(DOCK_X, y1)])
 	bay.color = Color(0.2, 0.2, 0.22, 1) # outside: the asphalt gap the truck backs into
 	bay.z_index = Z_TRUCK - 1
 	add_child(bay)
@@ -587,9 +586,9 @@ func _build_dock() -> void:
 	body.name = "DockBayBody"
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
-	rect.size = Vector2(main.WORLD_WIDTH - DOCK_X, y1 - y0)
+	rect.size = Vector2(east - DOCK_X, y1 - y0)
 	shape.shape = rect
-	body.position = Vector2((DOCK_X + main.WORLD_WIDTH) * 0.5, LANE_Y)
+	body.position = Vector2((DOCK_X + east) * 0.5, LANE_Y)
 	body.add_child(shape)
 	add_child(body)
 	# Hazard-striped bumper: the A2 sheet's striped industrial tile.

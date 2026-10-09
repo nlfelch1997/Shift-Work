@@ -48,7 +48,9 @@ var for_janitor := false
 ## Storage's forklift floor (world rect): the lane (Delivery.LANE_Y 1250 +-
 ## the forklift's half-length and a body), the receiving row (y 1450) and
 ## everything east to the dock. The dumpster (x 1975-2085) is west of it.
-const JANITOR_KEEP_OUT := Rect2(2150.0, 1150.0, 730.0, 360.0)
+## PHASE 5B PART 2A: it's the layout's "storage_forklift_floor" feature
+## (janitor: false); this alias keeps the name the tests use.
+const JANITOR_KEEP_OUT: Rect2 = preload("res://StoreLayout.gd").STORAGE_FORKLIFT_FLOOR
 
 var main: Node
 var _astar := AStarGrid2D.new()
@@ -62,7 +64,7 @@ var path_us_max := 0
 
 func _init(main_node: Node) -> void:
 	main = main_node
-	var size := Vector2(main.ROOM_WIDTH * 3.0, main.ROOM_HEIGHT * 3.0)
+	var size: Vector2 = main.areas.world_rect().size # (the world starts at the origin)
 	_astar.region = Rect2i(0, 0, int(size.x / GRID), int(size.y / GRID))
 	_astar.cell_size = Vector2(GRID, GRID)
 	_astar.offset = Vector2(GRID, GRID) * 0.5
@@ -106,10 +108,11 @@ func invalidate() -> void:
 
 func _build() -> void:
 	_astar.fill_solid_region(_astar.region, false)
-	for zone in ([main.BREAK_ROOM_GRID_POS] if for_janitor else [main.BREAK_ROOM_GRID_POS, main.STORAGE_GRID_POS]):
-		_solid_world_rect(Rect2(Vector2(zone.x * main.ROOM_WIDTH, zone.y * main.ROOM_HEIGHT), Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT)))
-	if for_janitor:
-		_solid_world_rect(JANITOR_KEEP_OUT)
+	# PHASE 5B PART 2A: the rooms (and features) the layout keeps this
+	# walker out of — shoppers: false (the break room, Storage); for the
+	# janitor, janitor: false (the break room, Storage's forklift floor).
+	for id in main.areas.ids_without("janitor" if for_janitor else "shoppers"):
+		_solid_world_rect(main.areas.rect_of(id))
 	for body in main.get_node("Walls").get_children():
 		_solid_body(body)
 	for gate in main.get_node("Gates").get_children():

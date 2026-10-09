@@ -148,6 +148,15 @@ extends Node2D
 ## breathing room for whatever gets added next, instead of this layout
 ## being exactly as full as today's store and needing its own reshape the
 ## next time something new is added, the same trap the old line was in.
+##
+## PHASE 5B PART 2A (Oct 2026): the GRID MAP above is now DATA, not
+## arithmetic. StoreLayout.gd writes it down as named areas (rooms, features
+## such as the forklift lane and the front-door zone, and anchors such as the
+## pads, cans and dock), and Areas.gd (`areas` below) answers "what is at
+## this position?" for every system. The cell math the notes in this file
+## describe (`grid_pos.x * ROOM_WIDTH`, _grid_cell_of(), the *_GRID_POS
+## cells) is gone; SECTIONS name their room ("area") instead of a cell. The
+## store is unchanged — StoreLayout.gd's table is today's 3x3 grid exactly.
 ## It's still part of the single open floor (no wall seals it off — see
 ## Main.tscn's Walls), just empty.
 ##
@@ -873,6 +882,8 @@ const PacingScript := preload("res://Pacing.gd")
 const ProductScene := preload("res://Product.tscn")
 const CustomerScene := preload("res://Customer.tscn")
 const CustomerScript := preload("res://Customer.gd")
+const StoreLayoutScript := preload("res://StoreLayout.gd")
+const AreasScript := preload("res://Areas.gd")
 ## Break room center — grid (0,0) (see the GRID MAP comment above), so this
 ## is BREAK_ROOM_GRID_POS * (ROOM_WIDTH, ROOM_HEIGHT) + (half a cell) =
 ## (0,0)+(480,270) = (480,270) — unchanged from the old line layout's value
@@ -880,37 +891,20 @@ const CustomerScript := preload("res://Customer.gd")
 ## the old row and this grid's cell (0,0)). Players spawn here, not in Dry
 ## Goods: you clock in at the break room and walk out through Dry Goods
 ## (its only connection) to reach the hub and start your shift.
-const SPAWN_CENTER := Vector2(480.0, 270.0) # players spread out around this point, not a specific object
+const SPAWN_CENTER: Vector2 = StoreLayoutScript.ANCHORS["player_spawn"] # players spread out around this point, not a specific object
 
-const ROOM_WIDTH := 960.0
-const ROOM_HEIGHT := 540.0
-## 3x3 hub-and-spoke grid — see the GRID MAP comment above this file's
-## header for which cell holds what and why this shape (versus the old
-## single-row NUM_ROOMS line) is the actual fix for the recurring customer-
-## timeout pattern.
-const GRID_COLS := 3
-const GRID_ROWS := 3
-const WORLD_WIDTH := ROOM_WIDTH * GRID_COLS
-const WORLD_HEIGHT := ROOM_HEIGHT * GRID_ROWS
-## The four non-retail grid cells — see the GRID MAP comment above this
-## file's header. None appear in SECTIONS (no gate, no shelves), but all
-## four are things other code needs to reason about explicitly:
-## SIDEWALK_GRID_POS is where customers spawn (_store_entrance_pos());
-## ENTRANCE_GRID_POS is where the central checkout hub lives (CentralCheckout
-## in Main.tscn); BREAK_ROOM_GRID_POS is used by is_break_room_at_pos()
-## below to keep customer AI (and stray physics objects — see
-## _rescue_stranded_products()) out of it; STORAGE_GRID_POS is the new
-## delivery/storage room (see its own comment on Main.tscn's Storage node)
-## — deliberately NOT in SECTIONS and NOT passed to _configure_gates(), so
-## it's reachable from Day 1 with no gate at all, same as Sidewalk/
-## Checkout/Break Room, rather than joining Dry Goods on a "Day 1" GATE that
-## would still visually/mechanically treat it as a gated section.
-const BREAK_ROOM_GRID_POS := Vector2i(0, 0)
-const SIDEWALK_GRID_POS := Vector2i(1, 2)
-const ENTRANCE_GRID_POS := Vector2i(1, 1)
-const STORAGE_GRID_POS := Vector2i(2, 2)
-## grid_pos matches each section's cell in the GRID MAP comment above this
-## file's header. (Oct 2026 Phase 2: no required_day any more — sections are
+## PHASE 5B PART 2A: the store's layout — which room is where, what each
+## room is for, and every named spot in it — is the table in StoreLayout.gd,
+## read through this registry (Areas.gd). It replaced ROOM_WIDTH/ROOM_HEIGHT,
+## GRID_COLS/ROWS, WORLD_WIDTH/HEIGHT and the BREAK_ROOM/SIDEWALK/ENTRANCE/
+## STORAGE _GRID_POS cells: the non-retail rooms are now roles in the table
+## ("break_room", "sidewalk", "hub", "storage") — none appear in SECTIONS
+## (no gate, no shelves); Storage is reachable from Day 1 with no gate, the
+## break room and Storage are kept free of customers (their "shoppers"
+## flag), and the world's size is areas.world_rect().
+var areas: RefCounted = AreasScript.new(func(sec_name: String) -> bool: return is_section_open(SECTIONS[section_index(sec_name)]))
+## "area" is the id of each section's room in StoreLayout.gd (the cell it
+## had in the GRID MAP comment above this file's header). (Oct 2026 Phase 2: no required_day any more — sections are
 ## bought, in this order, at SECTION_PRICES; see is_section_open().) The old
 ## required_day mirrored the brief's Day 1-2 / 3-4 / 5-6 / 7
 ## schedule exactly, and is also what _configure_gates() below sets on each
@@ -918,15 +912,15 @@ const STORAGE_GRID_POS := Vector2i(2, 2)
 ## that function's own comment on why), so this table and the actual
 ## physical doors can't quietly drift apart from each other.
 const SECTIONS := [
-	{"name": "Dry Goods", "node_name": "DryGoods", "grid_pos": Vector2i(1, 0)},
+	{"name": "Dry Goods", "node_name": "DryGoods", "area": "dry_goods"},
 	# WEEK 13 #4: sold as PRODUCE now (was Meat/Deli — the art packs have no
 	# separable meat/deli items, and a full produce range). Only the displayed
 	# name changed; node_name and every "MeatDeli" node path stay as they were
 	# (internal, never shown), as do its cell, gate, Day 3 unlock and the
 	# forklift lane — "Meat/Deli" in older comments means this section.
-	{"name": "Produce", "node_name": "MeatDeli", "grid_pos": Vector2i(2, 1)},
-	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "grid_pos": Vector2i(0, 1)},
-	{"name": "Bakery", "node_name": "Bakery", "grid_pos": Vector2i(2, 0)},
+	{"name": "Produce", "node_name": "MeatDeli", "area": "produce"},
+	{"name": "Dairy/Frozen", "node_name": "DairyFrozen", "area": "dairy_frozen"},
+	{"name": "Bakery", "node_name": "Bakery", "area": "bakery"},
 ]
 ## Per-section accent color, shared by that section's spawned products
 ## (_spawn_product_node below) and its shelf slot indicators
@@ -1196,7 +1190,7 @@ const PRODUCT_PER_EXTRA_PLAYER := 3
 ## Re-tune both freely once played — these are a starting point, not a
 ## final balance pass.
 const CUSTOMER_CAP_BY_TIER := [5, 9, 13, 17]
-const CASHIER_COUNT_BY_TIER := [2, 3, 4, 5]
+const CASHIER_COUNT_BY_TIER: Array = StoreLayoutScript.CHECKOUT["registers_by_tier"]
 ## FLAGGED SCALING NUMBERS, same tier shape as the two arrays above —
 ## playtest request: keep single-item trips for the early days (Day 1-2,
 ## tier 0, unchanged at 1 item — this is the existing, already-confirmed
@@ -1362,11 +1356,7 @@ func _current_shift_duration() -> float:
 
 ## The display name of the section a point is in ("" outside the sections).
 func _section_name_at(world_pos: Vector2) -> String:
-	var cell := _grid_cell_of(world_pos)
-	for section in SECTIONS:
-		if section["grid_pos"] == cell:
-			return section["name"]
-	return ""
+	return areas.section_of(world_pos)
 
 ## WEEK 12 — true on the finale day. OCT 2026 PHASE 2: the top complication
 ## tier (stage 5), every shift once reached — no longer one day.
@@ -1485,7 +1475,9 @@ func for_sale_gate_at(pos: Vector2) -> String:
 		if g == null:
 			continue
 		var local: Vector2 = g.to_local(pos)
-		if absf(local.x) <= GATE_BUY_RANGE and absf(local.y) <= ROOM_HEIGHT / 2.0:
+		# Along its whole length (a gate seals the room's full edge).
+		var half_len: float = (g.get_node("CollisionShape2D").shape as RectangleShape2D).size.y / 2.0
+		if absf(local.x) <= GATE_BUY_RANGE and absf(local.y) <= half_len:
 			return SECTIONS[i]["name"]
 	return ""
 
@@ -2093,26 +2085,18 @@ func _configure_hazards() -> void:
 
 ## Recolors every shelf's slot indicators to match its section's accent
 ## color (SECTION_COLORS above), called once from _ready(). Matches each
-## shelf to a section by WORLD grid cell (same grid math is_unlocked_at_pos
-## uses below), not by node path or name, so it doesn't care what a given
-## section's shelves happen to be called.
+## shelf to a section by the room it stands in (the same lookup
+## is_unlocked_at_pos uses below), not by node path or name, so it doesn't
+## care what a given section's shelves happen to be called.
 func _apply_section_accent_colors() -> void:
 	for shelf_body in shelves:
-		var cell := _grid_cell_of(shelf_body.global_position)
+		var room: String = areas.area_at(shelf_body.global_position)
 		for section in SECTIONS:
-			if section["grid_pos"] == cell:
+			if section["area"] == room:
 				var shelf: Node = shelf_body.get_node("Shelf")
 				shelf.accent_color = SECTION_COLORS[section["name"]]
 				shelf.apply_accent_color()
 				break
-
-## Which (col, row) grid cell a world position falls in — the single place
-## every other grid-position lookup in this file (is_unlocked_at_pos(),
-## is_break_room_at_pos(), _apply_section_accent_colors(),
-## _apply_section_lock_visuals()) bottoms out at, so the col/row math itself
-## only ever needs to be right in one place.
-func _grid_cell_of(world_pos: Vector2) -> Vector2i:
-	return Vector2i(int(floor(world_pos.x / ROOM_WIDTH)), int(floor(world_pos.y / ROOM_HEIGHT)))
 
 ## Playtest feedback: a locked section previously looked completely
 ## normal except for the Gate's own thin barrier line at its entrance —
@@ -2132,9 +2116,8 @@ func _grid_cell_of(world_pos: Vector2) -> Vector2i:
 func _apply_section_lock_visuals() -> void:
 	for section in SECTIONS:
 		var unlocked: bool = is_section_open(section)
-		var cell: Vector2i = section["grid_pos"]
 		for shelf_body in shelves:
-			if _grid_cell_of(shelf_body.global_position) == cell:
+			if areas.area_at(shelf_body.global_position) == section["area"]:
 				var base: Color = _original_shelf_modulate[shelf_body]
 				shelf_body.modulate = base if unlocked else base * LOCKED_DIM
 		# Cashiers are no longer per-section (see CentralCheckout in
@@ -2505,7 +2488,7 @@ func is_day_report_active() -> bool:
 ## only if it's still closed, so two players flipping it in the same instant
 ## open it exactly once (the second request finds it already open and does
 ## nothing). store_open/store_opened_by reach every peer through DaySync.
-const STORE_SIGN_POS := Vector2(1610.0, 1115.0)
+const STORE_SIGN_POS: Vector2 = StoreLayoutScript.ANCHORS["store_sign"]
 const STORE_SIGN_RANGE := 70.0
 ## Host diagnostic: times open_store() actually opened the store today (must
 ## only ever be 0 or 1 — the sign race test checks it).
@@ -2731,7 +2714,7 @@ func clock_out(by_peer: int) -> void:
 var clock_out_events_today := 0
 
 ## At the break room's time clock — the supermarket pack's card kiosk.
-const TIME_CLOCK_POS := Vector2(880.0, 300.0)
+const TIME_CLOCK_POS: Vector2 = StoreLayoutScript.ANCHORS["time_clock"]
 const TIME_CLOCK_RANGE := 70.0
 const TIME_CLOCK_REGION := Rect2i(240, 685, 44, 80)
 var _clock_hint: Label
@@ -3046,6 +3029,10 @@ func _reconfigure_world() -> void:
 	_configure_hazards()
 	_configure_shelf_stacks()
 	_apply_section_lock_visuals()
+	# PHASE 5B PART 2A: areas.area_opened / area_closed fire here, on every
+	# peer, for a room tied to a section that just changed (nothing listens
+	# yet; Part 2B's growing store will).
+	areas.refresh_open_state()
 	_last_config_key = _config_key()
 
 ## WEEK 21 — what _process()'s reconfigure poll watches: the day, and in
@@ -3273,7 +3260,7 @@ func _issue_priority_order(forced_section := "", forced_qty := 0) -> void:
 func _open_slots_in_section(section: Dictionary) -> int:
 	var n := 0
 	for shelf_body in shelves:
-		if _grid_cell_of(shelf_body.global_position) != section["grid_pos"]:
+		if areas.area_at(shelf_body.global_position) != section["area"]:
 			continue
 		var shelf: Node = shelf_body.get_node("Shelf")
 		if not shelf.wrecked:
@@ -3307,8 +3294,8 @@ func note_item_stocked(obj: Node, shelf_body: Node) -> void:
 	events.note_item_stocked(obj, _section_name_at(shelf_body.global_position))
 	if _order_id == 0 or obj.has_meta("priority_order"):
 		return
-	var cell := _grid_cell_of(shelf_body.global_position)
-	var in_section := SECTIONS.any(func(s): return s["name"] == order_section and s["grid_pos"] == cell)
+	var room: String = areas.area_at(shelf_body.global_position)
+	var in_section := SECTIONS.any(func(s): return s["name"] == order_section and s["area"] == room)
 	if not in_section:
 		return
 	obj.set_meta("priority_order", _order_id)
@@ -3681,8 +3668,9 @@ func _rescue_stranded_products() -> void:
 ## knock, or the old MAX_SPEED spike Carryable.gd clamps against), it's
 ## unreachable, so it's rescued rather than counted.
 func _is_out_of_bounds(world_pos: Vector2) -> bool:
-	return world_pos.x < WORLD_EDGE_MARGIN or world_pos.y < WORLD_EDGE_MARGIN \
-		or world_pos.x > WORLD_WIDTH - WORLD_EDGE_MARGIN or world_pos.y > WORLD_HEIGHT - WORLD_EDGE_MARGIN
+	var w: Rect2 = areas.world_rect()
+	return world_pos.x < w.position.x + WORLD_EDGE_MARGIN or world_pos.y < w.position.y + WORLD_EDGE_MARGIN \
+		or world_pos.x > w.end.x - WORLD_EDGE_MARGIN or world_pos.y > w.end.y - WORLD_EDGE_MARGIN
 
 ## Same shape as _restock_products(), for the combined shopper+disruptive
 ## population — tops back up to _customer_baseline() + PER_EXTRA_PLAYER
@@ -3819,9 +3807,10 @@ func release_customer(c: Node, toss: bool, why: String) -> void:
 	print("[Main] %s's hold on %s ended: %s" % [player_display_name(peer), c.name, why])
 	check_bounce(c, peer)
 
-## Out the front door: in the Sidewalk, past the store's south wall.
+## Out the front door: in the Sidewalk, past the store's south wall (the
+## layout's "exit" area).
 func is_outside_door(pos: Vector2) -> bool:
-	return _grid_cell_of(pos) == SIDEWALK_GRID_POS and pos.y > SIDEWALK_GRID_POS.y * ROOM_HEIGHT + 24.0
+	return areas.feature_at(pos, "exit") != ""
 
 ## Host, every tick a customer is hauled or flying from a toss: out the door
 ## -> BOUNCED. They leave, the crew is paid, and the next one in is calmer.
@@ -3890,11 +3879,7 @@ func _unlocked_sections() -> Array:
 ## has no awareness a locked section's cashier/shelves exist at all, not
 ## just a physical inability to reach them.
 func is_unlocked_at_pos(world_pos: Vector2) -> bool:
-	var cell := _grid_cell_of(world_pos)
-	for section in SECTIONS:
-		if section["grid_pos"] == cell:
-			return is_section_open(section)
-	return false # entrance/break room/sidewalk/storage have no shelves, so never matters here
+	return areas.is_section_open_at(world_pos) # entrance/break room/sidewalk/storage have no shelves, so never matters here
 
 ## PLAYTEST ROOT-CAUSE FIX: the central checkout used to live IN the break
 ## room, and nothing stopped customer AI from wandering into it either —
@@ -3921,7 +3906,7 @@ func is_unlocked_at_pos(world_pos: Vector2) -> bool:
 ## Dry Goods' (1,0), so x-only or y-only would each misfire against one of
 ## those.
 func is_break_room_at_pos(world_pos: Vector2) -> bool:
-	return _grid_cell_of(world_pos) == BREAK_ROOM_GRID_POS
+	return areas.role_at(world_pos) == "break_room"
 
 ## WEEK 15: still true now that Storage has the loading dock and receiving in
 ## it — it's the crew's back room, customers stay out. (WEEK 18: the unpack
@@ -3939,7 +3924,7 @@ func is_break_room_at_pos(world_pos: Vector2) -> bool:
 ## is_break_room_at_pos() — see that function's own comment for the "public,
 ## live scene-tree lookup, no cyclic preload" shape both share.
 func is_storage_at_pos(world_pos: Vector2) -> bool:
-	return _grid_cell_of(world_pos) == STORAGE_GRID_POS
+	return areas.role_at(world_pos) == "storage"
 
 ## 12 = one section's slot count (4 shelves x 3 slots) — see the big
 ## comment block above PRODUCT_PER_EXTRA_PLAYER for why this scales with
@@ -4077,9 +4062,7 @@ func _pick_unlocked_section() -> Dictionary:
 ## tunneling through thin walls — keeping spawns in open floor avoids ever
 ## creating that overlap in the first place.
 func _spawn_pos_in_section(section: Dictionary) -> Vector2:
-	var cell: Vector2i = section["grid_pos"]
-	var room_x: float = cell.x * ROOM_WIDTH
-	var room_y: float = cell.y * ROOM_HEIGHT
+	var band: Rect2 = areas.spawn_band_of(section["area"])
 	# WEEK 8: the same overlap-fling reasoning now applies to MOVING bodies
 	# inside the band too — Meat/Deli's band spans the forklift's lane and
 	# a display's home spot, and products spawning on top of each other was
@@ -4088,7 +4071,7 @@ func _spawn_pos_in_section(section: Dictionary) -> Vector2:
 	# rather than fail to spawn (the MAX_SPEED clamp still bounds the result).
 	var pos := Vector2.ZERO
 	for attempt in SPAWN_ATTEMPTS:
-		pos = Vector2(randf_range(room_x + 180.0, room_x + 780.0), randf_range(room_y + 120.0, room_y + 360.0))
+		pos = Vector2(randf_range(band.position.x, band.end.x), randf_range(band.position.y, band.end.y))
 		if _spawn_pos_is_clear(pos):
 			break
 	return pos
@@ -4150,14 +4133,15 @@ func _spawn_pos_is_clear(pos: Vector2) -> bool:
 ## instead of a vertical one. Must stay in sync BY HAND with Main.tscn's
 ## SidewalkBg position/polygon (no inline .tscn comment to cross-reference
 ## them with — see this file's header note on why).
-const SIDEWALK_STRIP_CENTER := Vector2(1440.0, 1230.0)
-const SIDEWALK_STRIP_HALF_SIZE := Vector2(120.0, 150.0)
-
+## PHASE 5B PART 2A: the strip is the layout's "customer_spawn" area
+## (StoreLayout.gd: centre (1440,1230), half-size (120,150), as it was).
 func _store_entrance_pos() -> Vector2:
 	var margin := 20.0
-	return SIDEWALK_STRIP_CENTER + Vector2(
-		randf_range(-SIDEWALK_STRIP_HALF_SIZE.x + margin, SIDEWALK_STRIP_HALF_SIZE.x - margin),
-		randf_range(-SIDEWALK_STRIP_HALF_SIZE.y + margin, SIDEWALK_STRIP_HALF_SIZE.y - margin)
+	var strip: Rect2 = areas.rect_of(areas.ids_with_role("customer_spawn", true)[0])
+	var half := strip.size * 0.5
+	return strip.get_center() + Vector2(
+		randf_range(-half.x + margin, half.x - margin),
+		randf_range(-half.y + margin, half.y - margin)
 	)
 
 ## Products are colored to match the section they spawn in (SECTION_COLORS

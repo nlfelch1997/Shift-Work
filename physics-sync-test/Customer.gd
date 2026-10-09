@@ -1253,22 +1253,23 @@ func _pick_browse_target() -> Vector2:
 ## there for a customer), same "exclusion zone, not a physical door" treatment the break
 ## room already established, so it plugs into the exact same nudge rather
 ## than needing its own parallel copy of this logic.
+##
+## PHASE 5B PART 2A: "excluded zone" is now a room whose layout entry says
+## shoppers: false (StoreLayout.gd — today the break room and Storage).
 func _keep_outside_excluded_zones(pos: Vector2) -> Vector2:
-	var main = get_tree().current_scene
-	if main.is_break_room_at_pos(pos):
-		return _push_out_of_cell(pos, main.BREAK_ROOM_GRID_POS, main)
-	if main.is_storage_at_pos(pos):
-		return _push_out_of_cell(pos, main.STORAGE_GRID_POS, main)
+	var areas: RefCounted = get_tree().current_scene.areas
+	if not areas.shoppers_allowed_at(pos):
+		return _push_out_of_room(pos, areas.rect_of(areas.area_at(pos)))
 	return pos
 
 ## Shared by every branch of _keep_outside_excluded_zones() above — nudges
-## `pos` out through whichever of `cell`'s four edges is nearest, 20px past
+## `pos` out through whichever of the room's four edges is nearest, 20px past
 ## the boundary so the result doesn't land right back on the line.
-func _push_out_of_cell(pos: Vector2, cell: Vector2i, main) -> Vector2:
-	var room_x_start: float = cell.x * main.ROOM_WIDTH
-	var room_x_end: float = room_x_start + main.ROOM_WIDTH
-	var room_y_start: float = cell.y * main.ROOM_HEIGHT
-	var room_y_end: float = room_y_start + main.ROOM_HEIGHT
+func _push_out_of_room(pos: Vector2, room: Rect2) -> Vector2:
+	var room_x_start: float = room.position.x
+	var room_x_end: float = room.end.x
+	var room_y_start: float = room.position.y
+	var room_y_end: float = room.end.y
 	# Distance to each of the four edges; push out through whichever is nearest.
 	var d_left := pos.x - room_x_start
 	var d_right := room_x_end - pos.x
@@ -1304,8 +1305,7 @@ func _push_out_of_cell(pos: Vector2, cell: Vector2i, main) -> Vector2:
 ## to check both, matching that function's own "one shared check covering
 ## every excluded zone" shape.
 func _is_excluded_zone(world_pos: Vector2) -> bool:
-	var main = get_tree().current_scene
-	return main.is_break_room_at_pos(world_pos) or main.is_storage_at_pos(world_pos)
+	return not get_tree().current_scene.areas.shoppers_allowed_at(world_pos)
 
 ## Week 6 Part 1 follow-up (playtest feedback): every target search below
 ## (this one, _find_wanted_item, _find_nearest_cashier,

@@ -576,8 +576,8 @@ func _run_fk_escape() -> void:
 	player().teleport_to(Vector2(480, 270))
 	fk.set_physics_process(false) # held exactly where it's put
 	var room: Rect2 = h._room
-	var band_top: float = room.position.y + h.BAND_Y.x
-	var band_bot: float = room.position.y + h.BAND_Y.y
+	var band_top: float = room.position.y + h.band_y.x
+	var band_bot: float = room.position.y + h.band_y.y
 	var poses := []
 	for x in [2150.0, 2400.0, 2650.0]:
 		for y in [band_top + 4.0, room.position.y + 270.0, band_bot - 4.0]:

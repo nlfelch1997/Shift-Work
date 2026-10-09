@@ -337,8 +337,13 @@ func _turn_toward(angle: float, delta: float) -> void:
 ## lookout points, and back to the hub. Sections come from Main.gd's live
 ## _unlocked_sections() — the same SECTIONS table every other gate reads —
 ## so a section opening on Day 5/7 joins his rounds with no change here.
+##
+## PHASE 5B PART 2A: rooms, not grid cells — the layout table's (Areas.gd)
+## hub, its links between rooms, and each room's own size.
 func _plan_visit(main) -> void:
-	var hub: Vector2 = _cell_center(main, main.ENTRANCE_GRID_POS)
+	var areas: RefCounted = main.areas
+	var hub_id: String = areas.ids_with_role("hub")[0]
+	var hub: Vector2 = areas.center_of(hub_id)
 	var unlocked: Array = main._unlocked_sections()
 	var choices := unlocked.filter(func(s): return s["name"] != _last_section)
 	if choices.is_empty():
@@ -348,55 +353,46 @@ func _plan_visit(main) -> void:
 	var section: Dictionary = choices[randi() % choices.size()]
 	_last_section = section["name"]
 	_legs.append({"pos": hub, "pause": HUB_PAUSE})
-	var path := _cell_path(main, section["grid_pos"])
-	for cell in path:
-		_legs.append({"pos": _cell_center(main, cell)})
-	var prev: Vector2i = path[-2] if path.size() > 1 else main.ENTRANCE_GRID_POS
+	var path := _room_path(main, hub_id, section["area"])
+	for room in path:
+		_legs.append({"pos": areas.center_of(room)})
+	var prev: String = path[-2] if path.size() > 1 else hub_id
 	# Lookouts: the section's center, then deeper along the direction he
 	# walked in from. Every section's center is on its own aisle (see
 	# Main.gd's layout notes), so both points are open floor.
-	var last: Vector2i = path[-1]
-	var dir := Vector2(last - prev)
-	var center := _cell_center(main, last)
+	var last: String = path[-1]
+	var dir: Vector2 = (areas.center_of(last) - areas.center_of(prev)).sign()
+	var center: Vector2 = areas.center_of(last)
 	var depth := LOOKOUT_DEPTH
 	# WEEK 10: a section with a forklift has its lane down the middle — the
 	# center line these lookouts sit on. Stand beside the lane instead, and
 	# not as deep (the deeper point would otherwise sit right in front of a
 	# shelf the forklift pulls up to).
 	var forklift = _live_forklift()
-	if forklift and _cell_of(main, forklift.home_position) == last:
+	if forklift and areas.area_at(forklift.home_position) == last:
 		center.y = forklift.home_position.y + LANE_OFFSET
 		depth *= 0.5
 		_legs[-1]["pos"] = center
-	var deeper := center + dir * Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT) * depth
+	var deeper: Vector2 = center + dir * areas.rect_of(last).size * depth
 	_legs[-1]["pause"] = LOOKOUT_PAUSE
 	_legs.append({"pos": deeper, "pause": LOOKOUT_PAUSE})
 	_legs.append({"pos": center})
 	var back := path.duplicate()
 	back.reverse()
 	for i in range(1, back.size()):
-		_legs.append({"pos": _cell_center(main, back[i])})
+		_legs.append({"pos": areas.center_of(back[i])})
 
-## Cells to walk through from the hub to a section, hub excluded. Every
+## Rooms to walk through from the hub to a section, hub excluded. Every
 ## section that touches the hub is one hop; Bakery hangs off Dry Goods (see
 ## Main.gd's GRID MAP) so it's reached THROUGH Dry Goods — the only route
-## that doesn't cross a WallSeal. Derived by checking which unlocked section
-## is adjacent to both, not a hardcoded Bakery special case. The same-row
-## requirement is what rules out the sealed boundaries: every WallSeal in
-## Main.tscn sits between two vertically stacked cells (Break Room/Dairy,
-## Bakery/Meat-Deli, Meat-Deli/Storage), so a same-row hop is always open.
-func _cell_path(main, target: Vector2i) -> Array:
-	var hub: Vector2i = main.ENTRANCE_GRID_POS
-	if _adjacent(hub, target):
-		return [target]
-	for s in main._unlocked_sections():
-		var mid: Vector2i = s["grid_pos"]
-		if _adjacent(hub, mid) and _adjacent(mid, target) and mid.y == target.y:
-			return [mid, target]
-	return [target] # unreachable in the current map; a straight walk is the least-bad fallback
-
-func _cell_of(main, pos: Vector2) -> Vector2i:
-	return Vector2i(int(floor(pos.x / main.ROOM_WIDTH)), int(floor(pos.y / main.ROOM_HEIGHT)))
+## that doesn't cross a WallSeal. PHASE 5B PART 2A: was "an unlocked section
+## adjacent to both, in the same row" over grid cells; now the layout
+## table's links between rooms say which edges are open (a sealed wall is
+## simply not a link), and he only cuts through an open section on the way.
+## The same routes as before for today's table.
+func _room_path(main, hub_id: String, target: String) -> Array:
+	var areas: RefCounted = main.areas
+	return areas.route(hub_id, target, func(id: String) -> bool: return areas.role_of(id) == "section" and areas.is_open(id)) # (no route: [target], a straight walk — the least-bad fallback)
 
 ## --- Forklift avoidance (WEEK 10) -------------------------------------------
 
@@ -460,11 +456,6 @@ func _blocked(pos: Vector2) -> bool:
 			return true
 	return false
 
-func _adjacent(a: Vector2i, b: Vector2i) -> bool:
-	return absi(a.x - b.x) + absi(a.y - b.y) == 1
-
-func _cell_center(main, cell: Vector2i) -> Vector2:
-	return Vector2((cell.x + 0.5) * main.ROOM_WIDTH, (cell.y + 0.5) * main.ROOM_HEIGHT)
 
 ## --- Detection ------------------------------------------------------------
 

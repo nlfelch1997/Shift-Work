@@ -185,7 +185,8 @@ func _ready() -> void:
 
 	_overlay = Polygon2D.new()
 	_overlay.name = "Darkness"
-	_overlay.polygon = PackedVector2Array([Vector2(0, 0), Vector2(main.WORLD_WIDTH, 0), Vector2(main.WORLD_WIDTH, main.WORLD_HEIGHT), Vector2(0, main.WORLD_HEIGHT)])
+	var w: Rect2 = main.areas.world_rect()
+	_overlay.polygon = PackedVector2Array([w.position, Vector2(w.end.x, w.position.y), w.end, Vector2(w.position.x, w.end.y)])
 	_overlay.color = Color(DARKNESS_COLOR, 0.0)
 	_overlay.z_index = Z_DARKNESS
 	add_child(_overlay)
@@ -383,8 +384,8 @@ func pick_spill_spot() -> Variant:
 	var r := SPILL_RADIUS_MAX
 	for attempt in SPILL_SPAWN_ATTEMPTS:
 		var section: Dictionary = main._pick_unlocked_section()
-		var cell: Vector2i = section["grid_pos"]
-		var pos := Vector2(randf_range(cell.x * main.ROOM_WIDTH + 180.0, cell.x * main.ROOM_WIDTH + 780.0), randf_range(cell.y * main.ROOM_HEIGHT + 120.0, cell.y * main.ROOM_HEIGHT + 360.0))
+		var band: Rect2 = main.areas.spawn_band_of(section["area"]) # (the stock spawn band: StoreLayout.gd)
+		var pos := Vector2(randf_range(band.position.x, band.end.x), randf_range(band.position.y, band.end.y))
 		if _spill_spot_ok(pos, r):
 			return pos
 	return null
@@ -395,7 +396,7 @@ func _spill_spot_ok(pos: Vector2, r: float) -> bool:
 		if is_instance_valid(p) and pos.distance_to(p.global_position) < SPILL_CLEAR_PLAYER:
 			return false
 	var fk: Node2D = main.forklift
-	if fk.active and main._grid_cell_of(pos) == main._grid_cell_of(fk.home_position):
+	if fk.active and main.areas.area_at(pos) == main.areas.area_at(fk.home_position):
 		if absf(pos.y - fk.home_position.y) < r + SPILL_CLEAR_FORKLIFT_LANE:
 			return false
 	for shelf_body in main.shelves:
@@ -429,11 +430,8 @@ func remove_spill(id: int) -> void:
 	spills = spills.filter(func(s): return s["id"] != id)
 
 func _section_name_at(pos: Vector2) -> String:
-	var cell: Vector2i = main._grid_cell_of(pos)
-	for s in main.SECTIONS:
-		if s["grid_pos"] == cell:
-			return s["name"]
-	return "?"
+	var sec: String = main.areas.section_of(pos)
+	return sec if sec != "" else "?"
 
 ## Every peer (Player.gd for its own player, Manager.gd on the host): is this
 ## point on a spill that's wet (or drying)? margin widens the test.

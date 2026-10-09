@@ -102,8 +102,10 @@ const REPLAN_EVERY := 1.0
 ## that keeps getting taken from under it, an item a customer keeps nudging).
 const JOB_TIMEOUT := 12.0
 ## The open band of a hireable room (room-local y) — between the two shelf
-## walls' slot rows, where fleeing the forklift keeps to.
-const BAND_Y := Vector2(150.0, 395.0)
+## walls' slot rows, where fleeing the forklift keeps to. PHASE 5B PART 2A:
+## read from the room's "helper" entry in the layout table (StoreLayout.gd;
+## (150, 395) in every room today).
+var band_y := Vector2.ZERO
 ## PHASE 5: how far past the band (or past where it stands, if that's already
 ## outside it, in a slot row) a helper may step to get out of the forklift.
 const ESCAPE_SLACK := 35.0
@@ -111,7 +113,9 @@ const ESCAPE_SLACK := 35.0
 var section := ""
 var helper_name := ""
 var carry_id := 0
-var cell := Vector2i.ZERO
+## PHASE 5B PART 2A: the room this helper works (StoreLayout.gd id) — was
+## its grid cell.
+var area_id := ""
 var color := Color.WHITE
 
 ## --- Replicated (Sync, host authority) ---
@@ -179,9 +183,12 @@ func _ready() -> void:
 	main = get_parent().main # Staff.gd's (current_scene isn't set yet while Main is still in _ready())
 	add_to_group("helper")
 	var s: Dictionary = main.SECTIONS[main.section_index(section)]
-	cell = s["grid_pos"]
-	_room = Rect2(Vector2(cell.x * main.ROOM_WIDTH, cell.y * main.ROOM_HEIGHT), Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT))
-	_astar.region = Rect2i(0, 0, int(main.ROOM_WIDTH / GRID), int(main.ROOM_HEIGHT / GRID))
+	# The work area is the section's room (a rectangle in today's table and
+	# in Plan B's wings); the band comes with it.
+	area_id = s["area"]
+	_room = main.areas.rect_of(area_id)
+	band_y = main.areas.area(area_id)["helper"]["band_y"]
+	_astar.region = Rect2i(0, 0, int(_room.size.x / GRID), int(_room.size.y / GRID))
 	_astar.cell_size = Vector2(GRID, GRID)
 	_astar.offset = _room.position + Vector2(GRID, GRID) * 0.5
 	_astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
@@ -488,7 +495,7 @@ func _loose_items() -> Array:
 	return out
 
 func _shelves() -> Array:
-	return main.shelves.filter(func(s): return main._grid_cell_of(s.global_position) == cell)
+	return main.shelves.filter(func(s): return main.areas.area_at(s.global_position) == area_id)
 
 func _on_empty_slot(p: Vector2) -> bool:
 	for shelf_body in _shelves():
@@ -651,7 +658,7 @@ func _clear_line(a: Vector2, b: Vector2) -> bool:
 
 func _forklift_live() -> Node2D:
 	var fk: Node2D = main.forklift
-	if fk == null or not fk.active or not fk.visible or main._grid_cell_of(fk.global_position) != cell:
+	if fk == null or not fk.active or not fk.visible or main.areas.area_at(fk.global_position) != area_id:
 		return null
 	return fk
 
@@ -700,7 +707,7 @@ func _forklift_step(delta: float) -> Vector2:
 		# Toward the room's middle if the near wall's in the way.
 		var out := heading.orthogonal() * s
 		var probe := position + out * 40.0
-		if probe.y < _room.position.y + BAND_Y.x or probe.y > _room.position.y + BAND_Y.y or probe.x < _room.position.x + 60.0 or probe.x > _room.end.x - 60.0:
+		if probe.y < _room.position.y + band_y.x or probe.y > _room.position.y + band_y.y or probe.x < _room.position.x + 60.0 or probe.x > _room.end.x - 60.0:
 			out = -out
 		dir = out
 	if dir == Vector2.ZERO:
@@ -711,9 +718,9 @@ func _forklift_step(delta: float) -> Vector2:
 	if inside:
 		# PHASE 5: escaping the body (_escape_dir() picked a way that ends
 		# near where it stands) — the band clamp would drag it back across.
-		p.y = clampf(p.y, minf(_room.position.y + BAND_Y.x, position.y - ESCAPE_SLACK), maxf(_room.position.y + BAND_Y.y, position.y + ESCAPE_SLACK))
+		p.y = clampf(p.y, minf(_room.position.y + band_y.x, position.y - ESCAPE_SLACK), maxf(_room.position.y + band_y.y, position.y + ESCAPE_SLACK))
 	else:
-		p.y = clampf(p.y, _room.position.y + BAND_Y.x, _room.position.y + BAND_Y.y)
+		p.y = clampf(p.y, _room.position.y + band_y.x, _room.position.y + band_y.y)
 	return p
 
 ## PHASE 5 FIX — out of the forklift's body by the SHORTEST way that ends in
@@ -741,8 +748,8 @@ func _escape_dir(fk: Node2D) -> Vector2:
 		var exit_pt := position + world_dir * (d + 4.0)
 		# The band, widened to wherever the helper already stands (a slot row
 		# sits outside it) plus a step: out the near side, never across.
-		var top: float = minf(_room.position.y + BAND_Y.x, position.y - ESCAPE_SLACK)
-		var bot: float = maxf(_room.position.y + BAND_Y.y, position.y + ESCAPE_SLACK)
+		var top: float = minf(_room.position.y + band_y.x, position.y - ESCAPE_SLACK)
+		var bot: float = maxf(_room.position.y + band_y.y, position.y + ESCAPE_SLACK)
 		var in_band := exit_pt.y >= top and exit_pt.y <= bot \
 			and exit_pt.x >= _room.position.x + 60.0 and exit_pt.x <= _room.end.x - 60.0
 		if in_band and d < best_d:
