@@ -42,7 +42,13 @@ extends "res://tools/hazards_test.gd"
 ##                     phase 3 loads a v6 save written by the OLD (Part 2A)
 ##                     layout's code (tools/fixtures/v6_old_layout_save.json):
 ##                     its sections are all there in the new store.
+##   --test=demo-path  the demo's growth moment: in the demo (--demo, Shift 3,
+##                     the progression sim's typical buy), Produce is bought at
+##                     prep — knock-out, wing open — and the demo still ends as
+##                     before: Shift 4's report says Finish Demo and the thanks
+##                     screen shows, over the grown store.
 ##   godot --headless --path . --script res://tools/growth_test.gd -- --server --no-save --test=growth
+##   godot --headless --path . --script res://tools/growth_test.gd -- --server --demo --day=4 --no-save --shift-seconds=4 --prep-seconds=20 --cleanup-seconds=0 --test=demo-path
 ##   godot --headless --path . --script res://tools/growth_test.gd -- --server --port=P --players=2 --no-save --test=net-growth
 ##   (x2) godot --headless --path . --script res://tools/growth_test.gd -- --client --connect-port=P --no-save --test=net-growth
 ##   godot --headless --path . --script res://tools/growth_test.gd -- --server --save-file=user://growth_test/save.json --test=growth-save --phase=N
@@ -71,6 +77,7 @@ func _initialize() -> void:
 		"growth-save": _run_save.call_deferred()
 		"checkout": _run_checkout.call_deferred()
 		"events": _run_events.call_deferred()
+		"demo-path": _run_demo_path.call_deferred()
 		_:
 			print("FAIL  unknown --test=%s" % _mode)
 			quit(1)
@@ -318,6 +325,44 @@ func _run_growth() -> void:
 	main._reconfigure_world()
 	await wait(0.2)
 	check(_stage_wrong(4) == "" and main.growth.animations_played == played, "G-snap: opened with no purchase, every wing is simply open — no knock-out %s" % _stage_wrong(4))
+	finish()
+
+## --- THE DEMO ----------------------------------------------------------------
+
+func _run_demo_path() -> void:
+	await wait_until(func(): return main.shift_active and main.players.has(1), 30.0)
+	# --day=4 (the demo's last shift's setup, as phase5_test's demo-cap),
+	# wound back to Shift 3 and the corner shop alone.
+	main.current_day = 3
+	main.sections_owned = 1
+	main._reconfigure_world()
+	await wait(0.5)
+	check(main.demo_mode and main.current_day == 3 and main.sections_owned == 1, "DP1: the demo's Shift 3, one section (day %d, owned %d)" % [main.current_day, main.sections_owned])
+	check(main.section_price("Produce") <= 600, "DP1: the first wing costs %s — reachable in the demo (the progression sim's solo crew banks it by Shift 3)" % main._format_money(main.section_price("Produce")))
+	main.money = main.section_price("Produce")
+	var wall: Node2D = main.gate_of("Produce")
+	check(main.for_sale_gate_at(wall.global_position + Vector2(-40, 0)) == "Produce" and main.purchase_blocker("Produce") == "", "DP2: Produce's wall offers it, nothing in the way ('%s')" % main.purchase_blocker("Produce"))
+	check(main.buy_section("Produce", 1) and main.sections_owned == 2 and main.money == 0, "DP2: bought at prep")
+	await wait(0.1)
+	check(main.growth.lot_state("Produce") == "opening", "DP2: the knock-out plays")
+	await wait(main.growth.KNOCK_SECONDS + 0.3)
+	check(_stage_wrong(2) == "", "DP2: the Produce wing is open %s" % _stage_wrong(2))
+	main.open_store(1)
+	await wait_until(func(): return main.is_day_report_active(), 60.0)
+	await wait(0.3)
+	check(main.is_day_report_active() and not main.demo_cap_reached() and main.continue_button.text == "Continue", "DP3: Shift 3's report: Continue ('%s', report up %s)" % [main.continue_button.text, str(main.is_day_report_active())])
+	main._on_continue_pressed()
+	await wait_until(func(): return main.shift_active and not main.is_day_report_active(), 10.0)
+	await wait(0.5)
+	check(main.current_day == 4 and _stage_wrong(2) == "" and int(main.growth.animations_played.get("Produce", 0)) == 1, "DP4: Shift 4 opens on the grown store, no second knock-out (day %d, played %s) %s" % [main.current_day, str(main.growth.animations_played), _stage_wrong(2)])
+	main.open_store(1)
+	await wait_until(func(): return main.is_day_report_active(), 60.0)
+	await wait(0.3)
+	check(main.demo_cap_reached() and main.continue_button.text == "Finish Demo", "DP5: Shift 4's report: Finish Demo ('%s')" % main.continue_button.text)
+	main.continue_button.pressed.emit()
+	await wait(0.3)
+	check(main.demo_over and main._demo_end.visible and main.current_day == 4 and not main.shift_active, "DP5: the thanks screen, nothing advanced")
+	check(main.growth.lot_state("Produce") == "open" and main.sections_owned == 2, "DP5: the store behind it is still the grown one")
 	finish()
 
 ## --- CO-OP -------------------------------------------------------------------

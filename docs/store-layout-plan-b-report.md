@@ -97,7 +97,7 @@ exact shapes, and why:
 | 3 | The Bakery↔Dairy opening left open (the model had no barrier there) | **A Bakery barrier piece across it** | Dairy/Frozen is bought before Bakery, so with Dairy open the opening would have let shoppers into the unbought Bakery lot. Several barrier pieces per section is the "barrier segments" step the proposal planned. |
 | 4 | Bakery: 3 shelves on the back wall + 1 on the outer wall + 1 on the wall facing the shop | **4 on the back wall + 1 on the outer wall** | The shop-facing one would have stood with its back to the knock-out wall, i.e. to open floor once Bakery is bought. |
 | 5 | Registers at x 840–1440, 150 apart | **x 850–1350, 125 apart; lane 1 (first to open) nearest the door** | At 150 apart the fifth counter stood in the 200 px door. 125 leaves a 64 px walk-through between a counter and the next lane's cashier. |
-| 6 | Dry Goods pad between the gondolas (1200, 1060) | **(1200, 1230), south of the gondolas** | Between them its spill ring (80–150 px) lands on the gondolas' slot rows. |
+| 6 | Dry Goods pad between the gondolas (1200, 1060) | **(1200, 1100), at the gondolas' south ends** | Between them, its spill ring (80–150 px) landed on the gondolas' slot rows. First built further south at (1200, 1230); the income harness showed shelving walks 21 % longer than main's, so it moved up to the aisle mouths (section 5). |
 | 7 | Gondola centre y 900 | **y 950** | Leaves a 90 px cross-aisle under the back-wall shelves' standing spots (the model's was ~50 px). |
 | 8 | Gondola end caps | **Not built** | The proposal flagged their mouths as stuck-point risks; nothing in the game needs them. Listed for the art pass (B16). |
 | 9 | Produce: 2 shelves on its west row at y 760 / 1000; pad at (2160, 1420) | **West row at y 880 / 1060 (level with the east row's), pad at (1790, 700) by the back door** | The forklift's lap visits "stations" along its lane; aligned rows give it the old pattern (stations with a shelf on each side). The pad by the back door makes the crew's carry from Storage short (that's the plan's carry win). |
@@ -113,7 +113,32 @@ reachable, no closed lot reachable and no cut-off pocket of floor
 
 ## 3. Systems changed
 
-(pending)
+Most systems needed **no code change**: they already read the layout
+table through the registry (2A's work), so Plan B's rooms, anchors, pads,
+cans, spawn bands and checkout reached them by data. That covers customers
+and their nav grid, the janitor, events (rush, leaky roof, delivery,
+catering, brownout), rating, lockers, the tutorial and practice shift,
+pause and the HUD. The nav grids are rebuilt per stage from the live walls
+and barriers, as before. What did change:
+
+| System | Change | Why |
+|---|---|---|
+| **Walls and barriers** (`Main.gd`, `Gate.gd`, `Main.tscn`) | Built from the table at start-up (`_build_structure()`): 12 wall segments, 5 barrier pieces (`Gate.tscn` with `setup(section, length, back_door)`). Gates are matched by the section they name (`gates_of()`), not by node name. A section can have several pieces. A back door doesn't sell its section. | Plan B's knock-out walls are segments, not whole room edges (2A's "barrier segments" step). With the structure in the table, the walls and the table can't drift apart. |
+| **Growth look** (`StoreGrowth.gd`, new) | The lots, FOR SALE boards and banners, the roller shutter, and the 1.8 s knock-out. Cosmetic, on every peer, driven by `area_opened`. The knock-out plays only inside a 1.5 s window after the host's purchase announcement (`note_purchase()`); otherwise the wing just opens. | Only the purchase moment animates: a late joiner, a reload or the end of practice shows the grown store. |
+| **Checkout** (`Cashier.gd`, `Main.tscn`) | The counters are turned −90° so queues run north (the queue markers turn with the body). The cashier is counter-rotated to stay upright and faces the belt. | 2A risk 5: north-facing queues. The queue code already followed the markers. |
+| **Forklift** (`Forklift.gd`) | `_build_lap()` works on either axis: along/across the lane's long side, home at either end. | 2A risk 5. The old east–west lap is the same code with along = x (the `fk-*` tests check it). |
+| **Helpers** (`Helper.gd`) | The forklift-escape band is a world `Rect2` from the table (`helper_band_of`), not a y range. `_mark_walls()` marks only the real walls and still-closed barriers, not the room's whole edge. | 2A risk 2: in an open wing the old rule walled off the open side, so slots by it were unreachable. |
+| **Manager** (`Manager.gd`) | Walks room waypoints and per-room lookouts from the table, not room centres and a computed depth. | He walks straight, through nothing. Plan B's centre-to-centre legs crossed shelves, and `growth_test` G-mgr ray-checks every leg. |
+| **Registry** (`Areas.gd`) | `waypoint_of`, `lookouts_of`, `helper_band_of`, `wall_rects`, `barriers`, `segment_rect`. The snapshot covers them. | The table's new fields. |
+| **Floor art** (`StoreArt.gd`) | `StaffHallBg` floor; `market_wall_face()` for the knock-out walls. | New room; the walls reuse the sales-floor face. |
+| **Income bot** (`tools/bot_nav.gd`, `hazards_test.gd`) | The harness player walks an A* path on a grid of the live store (walls, barriers, shelves, registers, displays) instead of the hand-written room graph (`route_next()` removed). | 2A risk 4: a second, hand-kept copy of the store's connectivity. To compare fairly, main was measured with the **same** bot (worktree `sw-main-nb`: clean main + this bot). |
+| **Tests** | About 209 room-relative spots now go through `tools/spots.gd` (`area_spot(room, offset)` from each room's reference point, clamped into open floor). Raw coordinates in hazards, upkeep, sound, janitor, character, phase5, playtest and juice tests were converted. `growth_test.gd` is new: growth, net-growth, checkout, events, demo-path, growth-save 1–3. | Room-relative tests on a new map; the new stage coverage the brief asked for. |
+
+**Save format: unchanged (v6).** A save stores `sections_owned`, cans by
+index (the same 5, in the same order) and positions only for things that
+are re-placed on load. `growth-save` phase 3 loads a v6 save written by
+the Part 2A code: every bought section is open in the new store and its
+cans are kept.
 
 ## 4. Camera and readability
 
@@ -164,12 +189,56 @@ the HUD on, at every growth stage):
 
 ## 9. Deferred
 
-(pending)
+- **All final art** (`docs/store-layout-art-needs.md`). Every growth visual
+  is a labelled code-drawn placeholder. The checkout counters use the
+  side-view lane sprite turned 90°, which reads as a lane but not a good
+  one (B7).
+- **A sound for the knock-out.** No new audio this phase; it plays the
+  existing "store open" sting.
+- **Gondola end caps** (proposal: optional; B16).
+- **Produce's walk.** Its unit trip (Storage → pad → shelves) is longer
+  than the old Produce room's (route-len, section 5). The pad by the back
+  door was the best of the spots tried, and the income and progression
+  numbers stayed in range, so nothing else moved. If playtests say Produce
+  feels like a hike, the next lever is its west row's position (data only).
+- **`tools/overview_shot.gd`'s scaling bug** (2A's report) is still not
+  fixed; `layout_proof.gd` and `planb_shots.gd` take the whole-store shots.
 
 ## 10. Found along the way
 
-(pending)
+- **The income bot was the biggest measurement risk, as 2A predicted.**
+  Moving it onto a real nav grid changed main's own numbers a little, so
+  every branch figure here is compared with main walked by the same bot,
+  and with the Phase 5 baseline only as a sanity check.
+- **The first pad placement cost ~12 % income without any test failing.**
+  Only the income harness showed it (the shelving walk from the old pad
+  spot was +21 % on main's). Layout changes need the income harness, not
+  just the functional suite.
+- **`pkill -f` in test scripts can match the runner's own shell.** It
+  happened here several times with long command lines. The regression
+  runner doesn't do this; ad-hoc scripts should kill by PID.
+- **The port-base collision.** Two harnesses whose `PORT_BASE`s overlapped
+  (a regression run and a progression sim) hung a save test. Long
+  measurement runs and the regression suite need disjoint port ranges.
+- **The Godot 4.7 worker-thread crash (signal 11)** hit one growth-net
+  client once; a re-run passed. It reproduces on main (Phase 5, section 7).
 
 ## 11. What to look at when playtesting
 
-(pending)
+1. **The first purchase.** Is the knock-out readable and satisfying with
+   three players around? Is 1.8 s right? Does anyone get confused by the
+   wall chunks tumbling into the wing (they have no collision)?
+2. **The corner shop, shifts 1–3.** Does 840 px feel cosy or cramped with
+   a full crowd at the north-facing queues? Do queue lines block the aisle
+   mouths at rush?
+3. **Produce.** The walk from Storage through the back door to the pad and
+   on to the shelves. Is it a fun route or a slog? Does the north–south
+   forklift read, and is getting out of its way still fair?
+4. **Bakery ↔ Dairy.** Does the 240 px opening make the left side feel
+   like one place once both are bought, or like a maze?
+5. **"Not yours yet".** Do players understand the lots (fence, FOR SALE
+   board) and that the banner wall is where you buy?
+6. **The manager.** Do his routes look natural (he walks through nothing,
+   but straight legs between table points)?
+7. **Late join and reload.** Join mid-game after a purchase and check the
+   store is grown with no stray knock-out.
