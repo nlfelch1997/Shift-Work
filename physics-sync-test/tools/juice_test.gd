@@ -23,6 +23,12 @@ extends SceneTree
 ##   xvfb-run -a godot --path . --script res://tools/juice_test.gd -- --server --day=7 --no-save --test=juice-perf
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var juice: Node
 var fails := 0
 var me := 1
@@ -143,7 +149,7 @@ func pin_manager(pos: Vector2, heading: float) -> void:
 func park_everything() -> void:
 	main.test_hold_customers = true
 	main.forklift._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -194,7 +200,7 @@ func _run_solo() -> void:
 	check(main.manager.get_node("Alert").z_index == amb().Z_EMISSIVE if main.manager.has_node("Alert") else true, "J0 the manager's alert marker sits at Z_EMISSIVE")
 
 	# J1 pickup / drop / throw: one pop each, back to scale 1.
-	player().teleport_to(Vector2(1440, 300))
+	player().teleport_to(main.areas.pad_of("Dry Goods"))
 	await wait(0.3)
 	var obj := free_product()
 	for o in get_nodes_in_group("carryable"): # J1b wants one with product art (Meat/Deli stay plain squares)
@@ -313,7 +319,7 @@ func _run_solo() -> void:
 
 	# J5 a spill appearing: a splash, once.
 	var sp0 := count("spill")
-	var sid: int = amb().spawn_spill(Vector2(1300, 450), 40.0)
+	var sid: int = amb().spawn_spill(area_spot("dry_goods", Vector2(-140, 180)), 40.0)
 	check(await fired_after("spill", sp0, 0.5), "J5 splash as a spill appears")
 	await wait(1.0)
 	check(count("spill") == sp0 + 1, "J5 one splash per spill (%d)" % (count("spill") - sp0))
@@ -392,16 +398,16 @@ func _run_solo() -> void:
 	# J10 a thrown item thudding into a wall: a dust puff (host broadcast).
 	var th0 := count("thud") + count("collapse")
 	var o := free_product()
-	move_body(o, Vector2(1440, 160))
+	move_body(o, area_spot("dry_goods", Vector2(0, -110)))
 	o.linear_velocity = Vector2(0, -620)
 	var thud := await wait_until(func(): return count("thud") + count("collapse") > th0, 2.0)
 	print("INFO  J10 dust puff on a thrown-item impact: %s (only heavy hits / box thuds puff)" % str(thud))
 
 	# J11 cleanup: sparkles per mess, SPOTLESS when the floor's clean.
-	var mess := Vector2(1440, 700)
+	var mess := area_spot("hub", Vector2(0, -110))
 	var msid: int = amb().spawn_spill(mess, 40.0)
 	await wait(amb().SPILL_FORM_TIME + 0.2)
-	main.cleanup.drop_litter(Vector2(1500, 760))
+	main.cleanup.drop_litter(area_spot("hub", Vector2(60, -50)))
 	main.shift_time_left = 0.01
 	await wait_until(func(): return main.cleanup_active, 3.0)
 	await wait(1.6)
@@ -545,7 +551,7 @@ func _run_perf() -> void:
 	main.status_hud = false
 	main.prep_time_left = 0.5 # opens by itself: every Day 7 hazard live
 	await wait_until(func(): return main.store_open, 5.0)
-	player().teleport_to(Vector2(1440, 810))
+	player().teleport_to(area_spot("hub"))
 	await wait(14.0) # customers fill in, forklift + manager on rounds
 	var crowd := get_nodes_in_group("customer").size()
 	print("INFO  P0 Day 7 live: %d customers, forklift %s, manager %s, spills %d" % [crowd, main.forklift.active, main.manager.active, amb().spills.size()])
@@ -640,7 +646,7 @@ func _run_net_host() -> void:
 	main.forklift._pause_timer = 1.0e9
 	await wait(1.0)
 	await host_event.call("sale", "sale", func(): active_cashier().get_node("Cashier")._complete_purchase(free_product(), 0))
-	await host_event.call("spill", "spill", func(): amb().spawn_spill(Vector2(1440, 640), 40.0))
+	await host_event.call("spill", "spill", func(): amb().spawn_spill(area_spot("hub", Vector2(0, -170)), 40.0))
 	await host_event.call("order called", "order_called", func(): main._issue_priority_order())
 	await host_event.call("order filled", "order_filled", func(): main._close_priority_order(true))
 	await host_event.call("shelf wreck", "shelf_wreck", func():

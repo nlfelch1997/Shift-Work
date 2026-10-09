@@ -56,7 +56,7 @@ const UPGRADES := [
 const BUCKS_TO_DOLLARS := 10
 
 ## --- the lockers (break room bottom-left; floor x 20..940, y 20..520) ---
-const LOCKER_SPOT := Vector2(95.0, 405.0) # where you stand to use them
+const LOCKER_SPOT: Vector2 = preload("res://StoreLayout.gd").ANCHORS["lockers"] # where you stand to use them (PHASE 5B PART 2A: from the layout table)
 const LOCKER_RANGE := 70.0
 
 ## --- Replicated (ShopSync, ON_CHANGE, host authority). Reassigned, never

@@ -45,15 +45,16 @@ const FLOORS := {
 	"StorageBg": Vector2i(0, 1), # grey concrete panels
 	"BreakRoomBg": Vector2i(5, 2), # WEEK 23: beige vinyl with grey insets — staff-room floor
 }
-## Grid cells whose walls get pack art, and which A4 sheet + face block.
-const MARKET_CELLS := [Vector2i(1, 0), Vector2i(2, 1), Vector2i(0, 1), Vector2i(2, 0), Vector2i(1, 1)]
-const STORAGE_CELL := Vector2i(2, 2)
+## Which A4 sheet + face block the walls take. PHASE 5B PART 2A: WHICH walls
+## take which is each room's "wall_art" in the layout table (StoreLayout.gd:
+## "market" for the four sections and the hub, "warehouse" for Storage,
+## "break_room"; the sidewalk and the empty lot have none) — was a list of
+## grid cells here.
 const MARKET_WALL_FACE := Vector2i(3, 1) # blue tile
 const WAREHOUSE_WALL_FACE := Vector2i(6, 1) # corrugated metal
 ## WEEK 23: the break room's own walls (top and left — its seal with
 ## Dairy/Frozen keeps the market tile, that's Dairy's side): cream paint over a
 ## wood baseboard, the same market sheet.
-const BREAK_ROOM_CELL := Vector2i(0, 0)
 const BREAK_ROOM_WALL_FACE := Vector2i(7, 1)
 var _break_room_face: Texture2D
 
@@ -82,9 +83,10 @@ func _a4_face(path: String, block: Vector2i) -> Texture2D:
 ## sections are floored too — the walls are drawn separately, below), white
 ## (so the locked-section dim multiplies the texture), and tiled.
 func _texture_floors() -> void:
-	var half := Vector2(main.ROOM_WIDTH, main.ROOM_HEIGHT) * 0.5
 	for node_name in FLOORS:
 		var bg: Polygon2D = main.get_node("RoomBackgrounds/" + node_name)
+		# The room this floor sits in (its polygon is centred on the room).
+		var half: Vector2 = main.areas.rect_of(main.areas.area_at(bg.position)).size * 0.5
 		bg.polygon = PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])
 		bg.uv = PackedVector2Array() # UVs follow the vertices
 		bg.texture = _a2_floor(FLOORS[node_name])
@@ -107,19 +109,36 @@ func _build_walls() -> void:
 		var size: Vector2 = (shape.shape as RectangleShape2D).size
 		var rect := Rect2(body.global_position + shape.position - size * 0.5, size)
 		var along_x := size.x >= size.y
-		var cell_len: float = main.ROOM_WIDTH if along_x else main.ROOM_HEIGHT
+		var cuts := _room_edges(along_x)
 		var start: float = rect.position.x if along_x else rect.position.y
 		var stop: float = rect.end.x if along_x else rect.end.y
 		var a := start
 		while a < stop - 0.5:
-			var b := minf(stop, (floor(a / cell_len) + 1.0) * cell_len)
+			var b := stop
+			for e in cuts:
+				if e > a:
+					b = minf(stop, e)
+					break
 			var piece := Rect2(Vector2(a, rect.position.y), Vector2(b - a, rect.size.y)) if along_x else Rect2(Vector2(rect.position.x, a), Vector2(rect.size.x, b - a))
 			var tex := _wall_texture_for(piece, market, warehouse)
 			if tex:
 				_add_strip(piece, tex, along_x)
 			a = b
 
-## The zone a wall piece belongs to: an interior seal sits on a cell boundary,
+## Every room's edges along one axis, sorted: a wall strip is cut at each so
+## each piece takes the material of the room it borders (was: at every
+## multiple of the 960 x 540 cell).
+func _room_edges(along_x: bool) -> Array:
+	var out := []
+	for id in main.areas.room_ids():
+		var r: Rect2 = main.areas.rect_of(id)
+		for e in ([r.position.x, r.end.x] if along_x else [r.position.y, r.end.y]):
+			if not e in out:
+				out.append(e)
+	out.sort()
+	return out
+
+## The zone a wall piece belongs to: an interior seal sits on a room boundary,
 ## so look just inside both sides and take whichever is in scope (Storage
 ## wins — the seal between Meat/Deli and Storage is the warehouse's wall).
 func _wall_texture_for(piece: Rect2, market: Texture2D, warehouse: Texture2D) -> Texture2D:
@@ -129,13 +148,12 @@ func _wall_texture_for(piece: Rect2, market: Texture2D, warehouse: Texture2D) ->
 		probes = [c + Vector2(0, -piece.size.y), c + Vector2(0, piece.size.y)]
 	else:
 		probes = [c + Vector2(-piece.size.x, 0), c + Vector2(piece.size.x, 0)]
-	var cells := probes.map(func(p): return main._grid_cell_of(p))
-	if STORAGE_CELL in cells:
+	var arts := probes.map(func(p): return main.areas.area(main.areas.area_at(p)).get("wall_art", ""))
+	if "warehouse" in arts:
 		return warehouse
-	for cell in cells:
-		if cell in MARKET_CELLS:
-			return market
-	if BREAK_ROOM_CELL in cells:
+	if "market" in arts:
+		return market
+	if "break_room" in arts:
 		return _break_room_face
 	return null
 
@@ -234,12 +252,6 @@ const PRODUCE_EXTRA := [
 	["res://assets/supermarket/2.png", Rect2i(529, 722, 47, 46)], ["res://assets/supermarket/2.png", Rect2i(433, 728, 47, 40)],
 ]
 
-func _section_of_cell(cell: Vector2i) -> String:
-	for sec in main.SECTIONS:
-		if sec["grid_pos"] == cell:
-			return sec["name"]
-	return ""
-
 func _region_sprite(path: String, region: Rect2i) -> Sprite2D:
 	var spr := Sprite2D.new()
 	spr.texture = load(path)
@@ -249,7 +261,7 @@ func _region_sprite(path: String, region: Rect2i) -> Sprite2D:
 
 func _dress_shelves() -> void:
 	for shelf_body in main.shelves:
-		var section := _section_of_cell(main._grid_cell_of(shelf_body.global_position))
+		var section: String = main.areas.section_of(shelf_body.global_position)
 		var shelf: Node = shelf_body.get_node("Shelf")
 		var upright: float = -shelf_body.global_rotation
 		if section in ART_SECTIONS:

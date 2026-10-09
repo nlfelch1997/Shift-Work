@@ -52,8 +52,9 @@ const FORKLIFT_STUN_DURATION := 0.6
 ## see Main.gd's GRID MAP comment). UPGRADED this session: the store is now
 ## bigger than one screen in BOTH dimensions (a 3x3 grid, not a 1x7 row), so
 ## limit_bottom actually matters now too, not just limit_right.
-const WORLD_WIDTH := 2880.0
-const WORLD_HEIGHT := 1620.0
+## PHASE 5B PART 2A: no longer a hand-kept copy — the world's rect comes from
+## the layout table (StoreLayout.gd, a plain data script: no cycle).
+const WORLD: Rect2 = preload("res://StoreLayout.gd").WORLD
 const BOT_PICKUP_RANGE := 55.0 # bot-side heuristic; Carryable.gd's PICKUP_RANGE is the real check
 const BOT_CARRY_DURATION := 2.5
 ## Referenced via preload rather than the global "Carryable" class_name —
@@ -174,10 +175,10 @@ func _ready() -> void:
 	var camera := Camera2D.new()
 	camera.name = "Camera"
 	camera.enabled = is_multiplayer_authority()
-	camera.limit_left = 0
-	camera.limit_top = 0
-	camera.limit_right = int(WORLD_WIDTH)
-	camera.limit_bottom = int(WORLD_HEIGHT)
+	camera.limit_left = int(WORLD.position.x)
+	camera.limit_top = int(WORLD.position.y)
+	camera.limit_right = int(WORLD.end.x)
+	camera.limit_bottom = int(WORLD.end.y)
 	add_child(camera)
 
 	# WEEK 21 — the Break Room's cosmetic: a gold star over every crew member.

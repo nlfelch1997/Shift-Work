@@ -33,6 +33,12 @@ const DIRS := {"right": Vector2.RIGHT, "left": Vector2.LEFT, "up": Vector2.UP, "
 const DIR_ROW := {"right": CS.ROW_RIGHT, "left": CS.ROW_LEFT, "up": CS.ROW_UP, "down": CS.ROW_DOWN}
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var fails := 0
 var shots := false
 var me := 1
@@ -380,7 +386,7 @@ func _run_solo() -> void:
 	check(sheet_ok(sprite_of(main.manager)) and not main.manager.get_node("Facing/Body").visible and main.manager.get_node("Facing/Cone").visible, "C2 manager sprite loaded, old polygon body hidden, vision cone kept")
 	print("IDENTITY day%d %s players=%s" % [main.current_day, identity_line(idn), str(idn["players"])])
 	# --- C3: facing + walk cycle follow the player's real keyboard movement
-	p.teleport_to(Vector2(1300, 1000))
+	p.teleport_to(area_spot("hub", Vector2(-140, 190)))
 	await wait(0.4)
 	for dir in ["right", "down", "left", "up"]:
 		var seen: Dictionary = await walk_and_sample(dir, 0.7, [p])
@@ -469,7 +475,7 @@ func _run_solo() -> void:
 			await shot("driver_%s" % fk.name, fk.global_position + Vector2(0, -20), 3.0)
 	# --- C6: staff vs manager vs customers lineup (shots only)
 	if shots:
-		var spot := Vector2(1440, 1000)
+		var spot := area_spot("hub", Vector2(0, 190))
 		p.teleport_to(spot)
 		var m: Node2D = main.manager
 		m.position = spot + Vector2(50, 0)
@@ -582,7 +588,7 @@ func _run_net_host() -> void:
 	ids.sort()
 	# Spread the players out in open floor so nobody walks into a wall.
 	for k in ids.size():
-		var start: Vector2 = {"right": Vector2(1050, 600), "left": Vector2(1650, 680), "up": Vector2(1900, 1250), "down": Vector2(1000, 800)}[dir_for(ids, ids[k])]
+		var start: Vector2 = {"right": area_spot("hub", Vector2(-390, -210)), "left": area_spot("hub", Vector2(210, -130)), "up": area_spot("sidewalk", Vector2(460, -100)), "down": area_spot("hub", Vector2(-440, -10))}[dir_for(ids, ids[k])]
 		main.players[ids[k]].rpc("teleport_to", start)
 	await wait(1.0)
 	_net_write("go.json", {"start_unix": Time.get_unix_time_from_system() + 2.5, "ids": ids})

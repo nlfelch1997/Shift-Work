@@ -95,7 +95,7 @@ const MOP_REACH := 26.0 # + the mess's radius
 const CAN_REACH := 46.0
 const DUMPSTER_STAND := Vector2(0.0, -72.0) # north of the dumpster, clear of the receiving row
 ## Where they wait: the hub, by the tool rack (Cleanup.RACK_POS).
-const HOME := Vector2(1760.0, 650.0)
+const HOME: Vector2 = preload("res://StoreLayout.gd").ANCHORS["janitor_home"] # (PHASE 5B PART 2A: from the layout table)
 ## A job not done in this long is dropped (Helper.gd's JOB_TIMEOUT is one
 ## room's worth; the hub to the dumpster is ~1500 px at base speed).
 const JANITOR_JOB_TIMEOUT := 45.0
@@ -548,8 +548,7 @@ func _finish_action() -> void:
 ## Open floor the crew's customers can be in (the hub and open sections), or
 ## Storage (the dumpster). Litter only ever lands in the first.
 func _reachable_zone(p: Vector2) -> bool:
-	var cell: Vector2i = main._grid_cell_of(p)
-	return cell == main.ENTRANCE_GRID_POS or cell == main.STORAGE_GRID_POS or main.is_unlocked_at_pos(p)
+	return main.areas.is_open_shop_floor_at(p) or main.areas.role_at(p) == "storage"
 
 func _nearest_can(from: Vector2, needs_room: bool) -> int:
 	var cl: Node = main.cleanup

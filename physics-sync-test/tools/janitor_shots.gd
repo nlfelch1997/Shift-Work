@@ -7,6 +7,12 @@ extends SceneTree
 ## PNGs land in user://janitor_shots/. Not part of the game.
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var n := 0
 
 func _initialize() -> void:
@@ -71,7 +77,7 @@ func _run() -> void:
 	await wait(0.3)
 	await shot("at_the_dumpster")
 	# A puddle and some litter in the hub.
-	main.cleanup.drop_puddle(Vector2(1500, 800))
+	main.cleanup.drop_puddle(area_spot("hub", Vector2(60, -10)))
 	for i in 3:
 		main.cleanup.drop_litter(Vector2(1350 + i * 40, 720))
 	main.open_store(1)

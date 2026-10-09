@@ -61,8 +61,8 @@ func _initialize() -> void:
 ## --- helpers ------------------------------------------------------------------
 
 func shelves_of(sec: String) -> Array:
-	var cell: Vector2i = section_by_name(sec)["grid_pos"]
-	return main.shelves.filter(func(sb): return main._grid_cell_of(sb.global_position) == cell)
+	var cell: String = section_by_name(sec)["area"]
+	return main.shelves.filter(func(sb): return main.areas.area_at(sb.global_position) == cell)
 
 func stocked_in(sec: String) -> int:
 	var n := 0
@@ -781,13 +781,13 @@ func _run_shots() -> void:
 	await wait(35.0)
 	for sec in ["Dry Goods", "Produce", "Dairy/Frozen", "Bakery"]:
 		await fill_section(sec)
-	player().teleport_to(Vector2(2000, 400))
+	player().teleport_to(area_spot("bakery", Vector2(-400, 130)))
 	await wait(6.0)
 	await shot("crowd_bakery")
-	player().teleport_to(Vector2(1440, 1200))
+	player().teleport_to(area_spot("sidewalk", Vector2(0, -150)))
 	await wait(1.0)
 	await shot("crowd_checkout")
-	player().teleport_to(Vector2(480, 940))
+	player().teleport_to(area_spot("dairy_frozen", Vector2(0, 130)))
 	await wait(1.0)
 	await shot("crowd_dairy")
 	finish()

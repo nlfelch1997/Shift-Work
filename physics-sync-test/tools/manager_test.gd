@@ -16,6 +16,12 @@ extends SceneTree
 ##   godot --headless --path . --script res://tools/manager_test.gd -- --client --test=net-client
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var fails := 0
 var shots := false
 var shot_index := 0
@@ -134,7 +140,7 @@ func _run_host() -> void:
 	await wait_until(func(): return main.shift_active, 10.0)
 	check(main.current_day == 3, "started on Day 3")
 	check(not mgr().active and not mgr().visible, "Day 3: manager inactive and hidden")
-	place_player(Vector2(1440, 1000)) # idle, in open hub floor
+	place_player(area_spot("hub", Vector2(0, 190))) # idle, in open hub floor
 	await wait_until(func(): return main.is_day_report_active(), 30.0)
 	check(main.writeups_today == 0, "Day 3: nobody written up while idle all shift")
 	await wait(0.2) # the report labels refresh on Main's next _process
@@ -156,10 +162,10 @@ func _run_host() -> void:
 	check(mgr().active and mgr().visible, "Day 4: manager active and visible")
 	var visited := {}
 	var track := func():
-		visited[main._grid_cell_of(mgr().global_position)] = true
+		visited[main.areas.area_at(mgr().global_position)] = true
 	# T1: idle in plain view -> "?" -> "!" -> caught.
 	await physics_frame
-	place_player(Vector2(1440, 1000))
+	place_player(area_spot("hub", Vector2(0, 190)))
 	var t0 := Time.get_ticks_msec()
 	var got_watch := await wait_until(func(): return mgr().watch_peer == 1 and mgr().watch_level > 0.05, 6.0)
 	check(got_watch, "T1: manager starts watching the idle player")
@@ -214,22 +220,22 @@ func _run_host() -> void:
 	# T5: line of sight — a shelf between them hides you.
 	var shelf: Node2D = null
 	for s in main.shelves:
-		if main._grid_cell_of(s.global_position) == Vector2i(1, 0): # Dry Goods, unlocked
+		if main.areas.area_at(s.global_position) == "dry_goods": # Dry Goods, unlocked
 			shelf = s
 			break
 	var sc: Vector2 = shelf.get_node("CollisionShape2D").global_position
-	var hide_side := (sc - Vector2(1440, 270)).normalized() # behind the shelf, away from the aisle
+	var hide_side := (sc - area_spot("dry_goods")).normalized() # behind the shelf, away from the aisle
 	place_player(sc + Vector2(signf(hide_side.x), 0) * 60.0)
 	pin_manager(sc - Vector2(signf(hide_side.x), 0) * 160.0, (Vector2(signf(hide_side.x), 0)).angle())
 	await wait(5.0)
 	check(main.writeups_today == 1 and mgr().watch_level == 0.0, "T5: idle BEHIND %s for 5s: shelf blocks his view (level %.2f)" % [shelf.name, mgr().watch_level])
 
 	# T6: chaos. One throw while moving -> warning but no write-up; repeated throws -> write-up.
-	place_player(Vector2(1440, 1000))
+	place_player(area_spot("hub", Vector2(0, 190)))
 	await physics_frame
-	pin_manager(Vector2(1440, 800), PI * 0.5)
+	pin_manager(area_spot("hub", Vector2(0, -10)), PI * 0.5)
 	var t_chaos_peak := 0.0
-	base = Vector2(1440, 1000)
+	base = area_spot("hub", Vector2(0, 190))
 	var obj: Node2D = await pickup_near_player()
 	obj.get_node("Carryable").try_throw(1, Vector2.RIGHT)
 	for i in 240:
@@ -268,13 +274,13 @@ func _run_host() -> void:
 
 	# Patrol coverage: let him walk freely for a while with the player moving.
 	var cov_start := Time.get_ticks_msec()
-	place_player(Vector2(480, 270)) # break room, out of his way
-	while (Time.get_ticks_msec() - cov_start) < 90000 and not (visited.has(Vector2i(1, 0)) and visited.has(Vector2i(2, 1))):
+	place_player(area_spot("break_room")) # break room, out of his way
+	while (Time.get_ticks_msec() - cov_start) < 90000 and not (visited.has("dry_goods") and visited.has("produce")):
 		await physics_frame
 		track.call()
-	check(visited.has(Vector2i(1, 1)), "patrol: visited the hub")
-	check(visited.has(Vector2i(1, 0)) and visited.has(Vector2i(2, 1)), "patrol: visited both Day-4 sections (Dry Goods, Produce): %s" % str(visited.keys()))
-	check(not visited.has(Vector2i(0, 1)) and not visited.has(Vector2i(2, 0)), "patrol: never entered locked Dairy/Frozen or Bakery")
+	check(visited.has("hub"), "patrol: visited the hub")
+	check(visited.has("dry_goods") and visited.has("produce"), "patrol: visited both Day-4 sections (Dry Goods, Produce): %s" % str(visited.keys()))
+	check(not visited.has("dairy_frozen") and not visited.has("bakery"), "patrol: never entered locked Dairy/Frozen or Bakery")
 
 	# Report.
 	main.shift_time_left = 0.1
@@ -301,11 +307,11 @@ func _run_host() -> void:
 	# sections are bought, not opened by Day 7).
 	var real_owned: int = main.sections_owned
 	main.sections_owned = 4
-	var bakery_path: Array = mgr()._cell_path(main, Vector2i(2, 0))
-	var dairy_path: Array = mgr()._cell_path(main, Vector2i(0, 1))
+	var bakery_path: Array = mgr()._room_path(main, "hub", "bakery")
+	var dairy_path: Array = mgr()._room_path(main, "hub", "dairy_frozen")
 	main.sections_owned = real_owned
-	check(bakery_path == [Vector2i(1, 0), Vector2i(2, 0)], "route: Bakery reached through Dry Goods %s" % str(bakery_path))
-	check(dairy_path == [Vector2i(0, 1)], "route: Dairy/Frozen straight off the hub %s" % str(dairy_path))
+	check(bakery_path == ["dry_goods", "bakery"], "route: Bakery reached through Dry Goods %s" % str(bakery_path))
+	check(dairy_path == ["dairy_frozen"], "route: Dairy/Frozen straight off the hub %s" % str(dairy_path))
 	finish()
 
 ## ---------------------------------------------------------------------------
@@ -331,7 +337,7 @@ func _run_net_client() -> void:
 	await wait_until(func(): return main.shift_active and main.current_day == 4, 15.0)
 	check(mgr().active and mgr().visible, "net client: manager active on Day 4 (replicated stage)")
 	await wait(1.0)
-	main.players[me].teleport_to(Vector2(1440, 1000))
+	main.players[me].teleport_to(area_spot("hub", Vector2(0, 190)))
 	var saw_warning := await wait_until(func(): return main._watch_label.visible, 20.0)
 	check(saw_warning, "net client: saw the LOOK BUSY warning on my own screen ('%s')" % main._watch_label.text)
 	var saw_bang := await wait_until(func(): return mgr().get_node("AlertLabel").visible and mgr().get_node("AlertLabel").text == "!", 5.0)

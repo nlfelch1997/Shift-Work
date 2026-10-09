@@ -16,7 +16,7 @@ func _run() -> void:
 	root.size = Vector2i(1440, 810)
 	var cam := Camera2D.new()
 	cam.zoom = Vector2(0.5, 0.5)
-	cam.global_position = Vector2(main.WORLD_WIDTH, main.WORLD_HEIGHT) * 0.5
+	cam.global_position = main.areas.world_rect().get_center()
 	main.add_child(cam)
 	cam.make_current()
 	main.debug_label.visible = false

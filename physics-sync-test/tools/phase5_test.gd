@@ -482,7 +482,7 @@ func _run_shots() -> void:
 	await _stock_open_shelves(1.0)
 	await wait(0.5)
 	var p := player()
-	p.teleport_to(Vector2(1440, 760))
+	p.teleport_to(area_spot("hub", Vector2(0, -50)))
 	await wait(0.6)
 	check(main.open_early_nudge, "SH: the hint is up for its shot")
 	await _shot("open_early_hint")
@@ -516,7 +516,7 @@ func _run_fk_helpers() -> void:
 	await wait_until(func(): return main.players.has(1), 20.0)
 	main.staff.staff = {"Produce": {"speed": 0, "carry": 0}, "Dairy/Frozen": {"speed": 0, "carry": 0}, "Bakery": {"speed": 0, "carry": 0}}
 	await wait_until(func(): return main.shift_active, 20.0)
-	player().teleport_to(Vector2(480, 270)) # out of everyone's way, in the break room
+	player().teleport_to(area_spot("break_room")) # out of everyone's way, in the break room
 	main.open_store(1)
 	var h: Node2D = main.staff.helpers["Produce"]
 	var fk: Node2D = main.forklift
@@ -573,11 +573,11 @@ func _run_fk_escape() -> void:
 	var h: Node2D = main.staff.helpers["Produce"]
 	var fk: CharacterBody2D = main.forklift
 	check(h.active, "FE0: the Produce helper is on the floor")
-	player().teleport_to(Vector2(480, 270))
+	player().teleport_to(area_spot("break_room"))
 	fk.set_physics_process(false) # held exactly where it's put
 	var room: Rect2 = h._room
-	var band_top: float = room.position.y + h.BAND_Y.x
-	var band_bot: float = room.position.y + h.BAND_Y.y
+	var band_top: float = room.position.y + h.band_y.x
+	var band_bot: float = room.position.y + h.band_y.y
 	var poses := []
 	for x in [2150.0, 2400.0, 2650.0]:
 		for y in [band_top + 4.0, room.position.y + 270.0, band_bot - 4.0]:

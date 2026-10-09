@@ -39,6 +39,12 @@ const CLIENT_SAVE := DIR + "client.json"
 var NET_DIR: String = OS.get_environment("SW_NET_DIR") if OS.get_environment("SW_NET_DIR") != "" else "user://net_save/"
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var fails := 0
 var me := 1
 var act := "host_"
@@ -162,7 +168,7 @@ func press(b: Button, what: String) -> void:
 ## Walk right across open floor for `frames` physics frames; px/s. Owner only.
 func measure_speed(frames := 30) -> float:
 	var p := player()
-	p.teleport_to(Vector2(420.0, 250.0))
+	p.teleport_to(area_spot("break_room", Vector2(-60, -20)))
 	await physics_frame
 	await physics_frame
 	Input.action_press(act + "move_right")

@@ -36,11 +36,18 @@ extends "res://tools/hazards_test.gd"
 var _mode := ""
 
 ## Standing spots on the open side of each gate (inside GATE_BUY_RANGE).
-const BUY_SPOT := {
-	"Produce": Vector2(1880, 760),
-	"Dairy/Frozen": Vector2(1000, 760),
-	"Bakery": Vector2(1880, 270),
+## PHASE 5B PART 2A: next to the gate itself (was raw world coordinates).
+const BUY_SPOT_OFFSET := {
+	"Produce": Vector2(-40, -50),
+	"Dairy/Frozen": Vector2(40, -50),
+	"Bakery": Vector2(-40, 0),
 }
+var BUY_SPOT: Dictionary:
+	get:
+		var out := {}
+		for sec in BUY_SPOT_OFFSET:
+			out[sec] = main.gate_of(sec).global_position + BUY_SPOT_OFFSET[sec]
+		return out
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -507,7 +514,7 @@ func _run_net_client() -> void:
 				check(ok, "%s: %s matches the host" % [who, step.get("tag", "")])
 			"forge":
 				if int(step["who"]) == me:
-					player().teleport_to(Vector2(480, 330))
+					player().teleport_to(area_spot("break_room", Vector2(0, 60)))
 					await wait(0.3)
 					main._request_buy_section.rpc_id(1, "Produce")
 			"buy":

@@ -7,6 +7,12 @@ extends SceneTree
 
 var main: Node
 
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
+
 func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
@@ -43,8 +49,8 @@ func _run() -> void:
 	await create_timer(0.3).timeout
 	await shot("entrance_sign_open")
 	var spots := {
-		"dry_goods": Vector2(1440, 300), "meat_deli": Vector2(2400, 700), "dairy_frozen": Vector2(480, 810),
-		"bakery": Vector2(2400, 270), "checkout_hub": Vector2(1440, 810), "storage": Vector2(2400, 1300),
+		"dry_goods": main.areas.pad_of("Dry Goods"), "meat_deli": area_spot("produce", Vector2(0, -110)), "dairy_frozen": area_spot("dairy_frozen"),
+		"bakery": area_spot("bakery"), "checkout_hub": area_spot("hub"), "storage": area_spot("storage", Vector2(0, -50)),
 	}
 	for zone in spots:
 		p.teleport_to(spots[zone])
@@ -55,7 +61,7 @@ func _run() -> void:
 	cam.zoom = Vector2(1.6, 1.6)
 	for sec in main.SECTIONS:
 		var color: Color = main.SECTION_COLORS[sec["name"]]
-		var sec_shelves: Array = main.shelves.filter(func(sb): return main._grid_cell_of(sb.global_position) == sec["grid_pos"])
+		var sec_shelves: Array = main.shelves.filter(func(sb): return main.areas.area_at(sb.global_position) == sec["area"])
 		sec_shelves.sort_custom(func(a, b): return String(a.name) < String(b.name))
 		var shelf_body: Node2D = sec_shelves[0]
 		var shelf: Node = shelf_body.get_node("Shelf")
@@ -84,7 +90,7 @@ func _run() -> void:
 	# Oct 2026 pivot removed (orders come with complication stage 3 now).
 	if main.hazard_levels()["orders"] > 0:
 		main._issue_priority_order("Produce", 3)
-		p.teleport_to(Vector2(2400, 700))
+		p.teleport_to(area_spot("produce", Vector2(0, -110)))
 		await shot("order_banner_produce")
 		print("BANNER  " + main._order_label.text)
 		main._clear_priority_order()
@@ -98,7 +104,7 @@ func _run() -> void:
 	cam.limit_right = 10000
 	cam.limit_bottom = 10000
 	cam.zoom = Vector2(0.33, 0.33)
-	p.teleport_to(Vector2(1440, 810))
+	p.teleport_to(area_spot("hub"))
 	await shot("overview")
 	quit(0)
 
@@ -112,7 +118,7 @@ func _delivery_shots(p: Node2D, cam: Camera2D) -> void:
 	var d: Node = main.delivery
 	var f: Node = main.delivery_forklift
 	main.prep_time_left = 1.0e9
-	p.teleport_to(Vector2(2520, 1120))
+	p.teleport_to(area_spot("storage", Vector2(120, -230)))
 	if not d.truck_parked():
 		d._truck_state = d.TRUCK_AWAY
 		d.start_delivery()
@@ -132,7 +138,7 @@ func _delivery_shots(p: Node2D, cam: Camera2D) -> void:
 	await shot("storage_forklift_front_view_closeup")
 	cam.zoom = Vector2.ONE
 	await _until(func(): return d.truck_load.is_empty() and f.carrying == "", 60.0)
-	p.teleport_to(Vector2(2400, 1330))
+	p.teleport_to(area_spot("storage", Vector2(0, -20)))
 	await shot("storage_receiving")
 	# WEEK 18: a pad in every section. Each open section: its box set down on
 	# its pad, the unpack, and a close-up; then a box on the wrong pad.
@@ -177,7 +183,7 @@ func _box_for(sec: String):
 	for b in get_nodes_in_group("delivery_box"):
 		if b.get_meta("section") == sec and not b.is_queued_for_deletion():
 			return b
-	main.delivery.drop_box(Vector2(2230, 1450), sec)
+	main.delivery.drop_box(main.delivery.RECEIVING_SPOTS[6], sec)
 	await create_timer(0.2).timeout
 	for b in get_nodes_in_group("delivery_box"):
 		if b.get_meta("section") == sec and not b.is_queued_for_deletion():

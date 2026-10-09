@@ -181,8 +181,9 @@ const ROLES := ["Produce", "Dairy/Frozen", "Bakery", "Janitor"]
 const BACKSTOCK_MAX := 3
 
 ## --- the board (break room west wall; floor x 20..940, y 20..520) ---
-const BOARD_POS := Vector2(30.0, 235.0) # the board's centre, on the wall
-const BOARD_SPOT := Vector2(75.0, 235.0) # where you stand to use it
+## (PHASE 5B PART 2A: both from the layout table, StoreLayout.gd.)
+const BOARD_POS: Vector2 = preload("res://StoreLayout.gd").ANCHORS["staff_board"] # the board's centre, on the wall
+const BOARD_SPOT: Vector2 = preload("res://StoreLayout.gd").ANCHORS["staff_board_spot"] # where you stand to use it
 const BOARD_RANGE := 70.0
 
 ## --- Replicated (StaffSync, host authority). Reassigned, never mutated, so

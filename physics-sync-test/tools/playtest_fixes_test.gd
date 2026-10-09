@@ -667,7 +667,7 @@ func _run_trash() -> void:
 	var pops := []
 	juice.fired.connect(func(kind, pos): if kind == "litter_pay": pops.append(pos))
 	# 1. Mid-shift: 5 pieces, picked up by hand with E.
-	var hub: Vector2 = cell_center(main.ENTRANCE_GRID_POS)
+	var hub: Vector2 = room_center("hub")
 	var ids := []
 	for i in 5:
 		ids.append(cl.drop_litter(hub + Vector2(i * 120.0 - 240.0, 40.0)))
@@ -866,7 +866,7 @@ func _run_practice(net := false) -> void:
 	await _shot_tutorial("01_move")
 	var t0 := _wall()
 	# 1. Move.
-	await _walk_to(cell_center(Vector2i(1, 0)), 15.0, 60.0)
+	await _walk_to(room_center("dry_goods"), 15.0, 60.0)
 	check(await _await_step("move", 5.0), "PR1: walking out of the break room finished 'move'")
 	# 2. Crate.
 	await wait_until(func(): return not get_nodes_in_group("delivery_box").is_empty(), 60.0)
@@ -943,7 +943,7 @@ func _run_practice(net := false) -> void:
 	var watched := false
 	# Off the registers first (standing at one counts as working).
 	# (A fixed open spot in the hub, well clear of the registers.)
-	player().teleport_to(cell_center(Vector2i(1, 1)) + Vector2(0, -150))
+	player().teleport_to(room_center("hub") + Vector2(0, -150))
 	await wait(0.4)
 	var spot: Vector2 = player().global_position
 	pin_manager(spot + Vector2(-150, 0), 0.0) # 150px west of me, looking right at me
@@ -975,11 +975,11 @@ func _run_practice(net := false) -> void:
 			await tap("host_interact")
 	var tw := 0.0
 	# Hub -> Sidewalk -> Storage (Produce, east of the hub, is locked on Day 1).
-	await _walk_to(cell_center(Vector2i(1, 2)), 20.0, 60.0)
-	await _walk_to(cell_center(Vector2i(2, 2)) + Vector2(-200, -100), 20.0, 60.0)
+	await _walk_to(room_center("sidewalk"), 20.0, 60.0)
+	await _walk_to(room_center("storage") + Vector2(-200, -100), 20.0, 60.0)
 	# Then stand and watch from Storage's open middle (walking at a point by
 	# the forklift kept routing the bot back out through the hub).
-	var watch: Vector2 = cell_center(Vector2i(2, 2)) + Vector2(-200, -100)
+	var watch: Vector2 = room_center("storage") + Vector2(-200, -100)
 	if player().global_position.distance_to(watch) > 80.0:
 		print("PRACTICE  bot at %s, not in Storage — teleporting to the watching spot" % player().global_position.round())
 		player().teleport_to(watch)
@@ -1048,7 +1048,7 @@ func _run_practice(net := false) -> void:
 	await wait(0.3)
 	check(cl.bag_of(1) >= 0 and tut._marker_pos == cl.DUMPSTER_POS, "PR7d: lifted the can's bag out; the marker points at the dumpster")
 	await _shot_tutorial("07d_bag")
-	await _walk_to(cell_center(Vector2i(1, 2)), 20.0, 60.0)
+	await _walk_to(room_center("sidewalk"), 20.0, 60.0)
 	await _walk_to(cl.DUMPSTER_POS + Vector2(0, -75), 25.0, 20.0)
 	if not cl.near_dumpster(player().global_position):
 		player().teleport_to(cl.DUMPSTER_POS + Vector2(0, -75))
@@ -1085,7 +1085,7 @@ func _run_practice(net := false) -> void:
 	# (Grabbed in the doorway they're held past the door line at once: bounced
 	# on the spot, which counts.)
 	check((red != null and is_instance_valid(red) and red.escorted_by == 1) or cl.stat(1, "bounced") > 0, "PR7e: grabbed them (E)")
-	await _walk_to(Vector2(1440, 1050), 25.0, 20.0)
+	await _walk_to(area_spot("hub", Vector2(0, 240)), 25.0, 20.0)
 	steer(Vector2.DOWN)
 	await wait_until(func(): return tut.current_id() != "bounce", 6.0)
 	steer(Vector2.ZERO)
@@ -1137,7 +1137,7 @@ func _run_net_practice_client() -> void:
 	check(tut._card.visible and tut._body.text.contains("WASD") and not tut._body.text.contains("arrow keys"), "NC0: client sees its own card, with the same default keys as the host (WASD)")
 	check(main.manager.active, "NC0: the manager is on for the client too")
 	# Walk out, grab stock and place one — the client's own steps.
-	await _walk_to(Vector2(1440, 700), 20.0, 80.0)
+	await _walk_to(area_spot("hub", Vector2(0, -110)), 20.0, 80.0)
 	check(tut.current_id() != "move", "NC1: client's 'move' step done (%s)" % tut.current_id())
 	await _net_read("host_at_sign.json", 300.0)
 	check(tut.active, "NC2: practice still on while the host is at the sign")

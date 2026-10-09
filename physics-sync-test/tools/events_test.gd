@@ -79,7 +79,7 @@ func shop() -> Node2D:
 func quiet() -> void:
 	main.test_hold_customers = true
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	main._order_timer = 1.0e9
 	main.ambience._spill_timer = 1.0e9
 	main.ambience._lights_timer = 1.0e9
@@ -727,9 +727,9 @@ func _run_ev_net_host() -> void:
 			await physics_frame
 	var pair: Array = loose_products(last).slice(0, 2)
 	var slots := []
-	var cell: Vector2i = section_by_name(last)["grid_pos"]
+	var cell: String = section_by_name(last)["area"]
 	for sb in main.shelves:
-		if main._grid_cell_of(sb.global_position) != cell or sb.get_node("Shelf").wrecked:
+		if main.areas.area_at(sb.global_position) != cell or sb.get_node("Shelf").wrecked:
 			continue
 		var shelf: Node = sb.get_node("Shelf")
 		for i in shelf.slots.size():
@@ -793,7 +793,7 @@ func _run_ev_net_client() -> void:
 			did["forge"] = true
 			var g := await _net_read("go_forge", 5.0)
 			if int(g.get("who", 0)) == me:
-				player().teleport_to(Vector2(700, 270)) # nowhere near the lockers
+				player().teleport_to(area_spot("break_room", Vector2(220, 0))) # nowhere near the lockers
 				await wait(0.4)
 				shop()._request_buy.rpc_id(1, "boots", 0)
 			_net_write("did_forge_%d" % me, {})
@@ -909,7 +909,7 @@ func _run_ev_shots() -> void:
 		await wait_until(func(): return ev().warning(), 6.0)
 		await wait(0.3)
 		# Stand where the event is.
-		var focus: Vector2 = Vector2(1440, 600)
+		var focus: Vector2 = area_spot("hub", Vector2(0, -210))
 		if ev().data.has("section"):
 			focus = main.delivery.pad_center(ev().data["section"]) + Vector2(0, 120)
 		elif ev().data.has("needs"):

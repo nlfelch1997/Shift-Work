@@ -121,7 +121,10 @@ const HAND_MAX := 3 # pieces of trash in one hand-held load
 const CAN_CAPACITY := 15 # pieces a trash can holds; full = overflowing. Was 10: the solo upkeep bot made ~3 dumpster runs a busy Day 3 shift (Phase 3D income notes)
 const BAG_RANGE := 60.0 # E reach for a bag set down on the floor
 const BAG_SPEED_MULT := 0.85 # walking with a full bin bag (Player.gd's speed())
-const DUMPSTER_POS := Vector2(2030.0, 1530.0)
+## PHASE 5B PART 2A: every world position in this file is an alias of the
+## layout table (StoreLayout.gd) — the same values, written down once.
+const Layout := preload("res://StoreLayout.gd")
+const DUMPSTER_POS: Vector2 = Layout.ANCHORS["dumpster"]
 const DUMPSTER_SIZE := Vector2(110.0, 56.0) # collision box
 const DUMPSTER_RANGE := 95.0 # from its center: the box's half-width + an arm
 ## --- Scoring ---
@@ -152,16 +155,12 @@ const LITTER_HAND_NET_SLACK := 12.0
 ## PHASE 3D: TOOL_SPOTS in tool order (mops, then brooms): the station's two
 ## of each, then the hub rack's one of each (its north-east corner, clear of
 ## the register rows and the Produce doorway's can).
-const STATION_POS := Vector2(700.0, 280.0)
-const RACK_POS := Vector2(1822.0, 588.0)
-const TOOL_SPOTS := [Vector2(660.0, 320.0), Vector2(678.0, 320.0), Vector2(1800.0, 612.0), Vector2(722.0, 320.0), Vector2(740.0, 320.0), Vector2(1844.0, 612.0)]
-const BINS := [
-	{"pos": Vector2(1110.0, 590.0), "section": ""}, # hub, north-west corner
-	{"pos": Vector2(1300.0, 500.0), "section": "Dry Goods"},
-	{"pos": Vector2(1975.0, 620.0), "section": "Produce"},
-	{"pos": Vector2(905.0, 620.0), "section": "Dairy/Frozen"},
-	{"pos": Vector2(1975.0, 300.0), "section": "Bakery"},
-]
+const STATION_POS: Vector2 = Layout.ANCHORS["tool_station"]
+const RACK_POS: Vector2 = Layout.ANCHORS["tool_rack"]
+const TOOL_SPOTS: Array = Layout.TOOL_SPOTS
+## The cans IN SAVE ORDER (hub, Dry Goods, Produce, Dairy/Frozen, Bakery):
+## SaveGame stores each can's fill by index.
+const BINS: Array = Layout.CANS
 
 const MARKET_SHEET_4 := "res://assets/supermarket/4.png"
 const LITTER_REGIONS := [
@@ -382,8 +381,7 @@ func tick_selling(delta: float) -> void:
 ## The hub and the unlocked sections — where shoppers actually shop. Not
 ## the Sidewalk, Storage or the break room.
 func _litter_zone_ok(pos: Vector2) -> bool:
-	var cell: Vector2i = main._grid_cell_of(pos)
-	return cell == main.ENTRANCE_GRID_POS or main.is_unlocked_at_pos(pos)
+	return main.areas.is_open_shop_floor_at(pos)
 
 func _litter_spot_ok(pos: Vector2) -> bool:
 	if not _litter_zone_ok(pos) or main._is_out_of_bounds(pos):
@@ -1501,7 +1499,7 @@ func _process(_delta: float) -> void:
 		queue_redraw()
 	_drew_door_arrow = hauling
 
-const FRONT_DOOR := Vector2(1440.0, 1100.0)
+const FRONT_DOOR: Vector2 = Layout.ANCHORS["front_door"]
 var _drew_door_arrow := false
 func _draw() -> void:
 	var me := multiplayer.get_unique_id() if Net.is_active() else 0

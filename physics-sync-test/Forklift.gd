@@ -439,15 +439,20 @@ func _finish_leg() -> void:
 ## near-misses, so which shelf gets hit is never predictable lap to lap.
 func _build_lap() -> void:
 	var main = get_tree().current_scene
-	var cell := Vector2i(int(floor(home_position.x / main.ROOM_WIDTH)), int(floor(home_position.y / main.ROOM_HEIGHT)))
-	var cell_left: float = cell.x * main.ROOM_WIDTH
-	var cell_right: float = cell_left + main.ROOM_WIDTH
+	# PHASE 5B PART 2A: the lane is the layout's "forklift_lane" area at its
+	# home (StoreLayout.gd: the length of its room); the stations are the
+	# shelves in that room.
+	var areas: RefCounted = main.areas
+	var lane: Rect2 = areas.rect_of(areas.feature_at(home_position, "forklift_lane"))
+	var room: String = areas.area_at(home_position)
+	var cell_left: float = lane.position.x
+	var cell_right: float = lane.end.x
 	var lane_y: float = home_position.y
 	# station x -> {"above": shelf_body, "below": shelf_body}
 	var stations := {}
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
 		var p: Vector2 = shelf_body.global_position
-		if Vector2i(int(floor(p.x / main.ROOM_WIDTH)), int(floor(p.y / main.ROOM_HEIGHT))) != cell:
+		if areas.area_at(p) != room:
 			continue
 		var key := roundi(p.x)
 		if not stations.has(key):

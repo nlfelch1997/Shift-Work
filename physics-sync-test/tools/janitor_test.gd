@@ -105,7 +105,7 @@ func _run_jan_smoke() -> void:
 	check(jan().active and jan().visible, "the janitor is on the floor")
 	# Something to do from the start: a full can and a puddle.
 	main.cleanup.set_can(1, main.cleanup.can_capacity())
-	main.cleanup.drop_puddle(Vector2(1440, 700))
+	main.cleanup.drop_puddle(area_spot("hub", Vector2(0, -110)))
 	for i in 40:
 		if i == 1:
 			main.open_store(1)
@@ -323,11 +323,11 @@ func _watch_janitor() -> void:
 		if not j.active:
 			continue
 		var p: Vector2 = j.position
-		var cell: Vector2i = main._grid_cell_of(p)
+		var cell: String = main.areas.area_at(p)
 		var why := ""
-		if cell == main.BREAK_ROOM_GRID_POS:
+		if cell == "break_room":
 			why = "in the Break Room"
-		elif cell != main.ENTRANCE_GRID_POS and cell != main.STORAGE_GRID_POS and cell != main.SIDEWALK_GRID_POS and not main.is_unlocked_at_pos(p):
+		elif cell != "hub" and cell != "storage" and cell != "sidewalk" and not main.is_unlocked_at_pos(p):
 			why = "in a locked section"
 		elif load("res://CustomerNav.gd").JANITOR_KEEP_OUT.has_point(p):
 			why = "on the delivery forklift's floor"
@@ -360,7 +360,7 @@ func _run_jan_chores() -> void:
 	check(jan()._job.get("kind", "") == "home", "C0: nothing to do -> waits at home (%s)" % str(jan().position.round()))
 	var tools0: String = str(cl.tools)
 	# --- C1 litter: picked by hand, HAND_MAX at a time, into the nearest can with room
-	var spots := [Vector2(1300, 760), Vector2(1350, 800), Vector2(1400, 760), Vector2(1450, 820), Vector2(1500, 760), Vector2(1550, 820)]
+	var spots := [area_spot("hub", Vector2(-140, -50)), area_spot("hub", Vector2(-90, -10)), area_spot("hub", Vector2(-40, -50)), area_spot("hub", Vector2(10, 10)), area_spot("hub", Vector2(60, -50)), area_spot("hub", Vector2(110, 10))]
 	var binned0: int = cl.trash_binned_today
 	var pay0: int = cl.litter_pay_today()
 	var cans0: Array = cl.cans.duplicate()
@@ -393,7 +393,7 @@ func _run_jan_chores() -> void:
 		added += int(cl.cans[i]) - int(cans0[i])
 	check(added == spots.size() and can_ok and bin_jobs >= 2, "C1: %d can trips, each to the nearest can with room (cans %s -> %s)" % [bin_jobs, str(cans0), str(cl.cans)])
 	# --- C2 a puddle: mopped with their own mop, in MOP_TIME_PUDDLE
-	var pid: int = cl.drop_puddle(Vector2(1300, 900))
+	var pid: int = cl.drop_puddle(area_spot("hub", Vector2(-140, 90)))
 	# (Game time, in physics frames: under load real time runs ahead of it.)
 	var mop_frames := 0
 	t0 = _wall()
@@ -432,11 +432,11 @@ func _run_jan_chores() -> void:
 	var d: Node = main.displays[0].get_node("Display") if not main.displays.is_empty() else null
 	if d != null:
 		d.toppled = true
-	main.spawn_product_at("Dry Goods", Vector2(1440, 380))
+	main.spawn_product_at("Dry Goods", area_spot("dry_goods", Vector2(0, 110)))
 	await wait(4.0)
 	var obj: Node2D = null
 	for o in get_nodes_in_group("carryable"):
-		if o.global_position.distance_to(Vector2(1440, 380)) < 40.0:
+		if o.global_position.distance_to(area_spot("dry_goods", Vector2(0, 110))) < 40.0:
 			obj = o
 	check(jan()._job.get("kind", "") == "home", "C5: a toppled display and loose stock aren't theirs — still waiting at home")
 	if d != null:
@@ -444,10 +444,10 @@ func _run_jan_chores() -> void:
 	if is_instance_valid(obj):
 		obj.queue_free()
 	# --- C6 a spill (stage 4's hazard) counts only while spills are on; mopped then
-	var sid: int = main.ambience.spawn_spill(Vector2(1500, 900), 40.0)
+	var sid: int = main.ambience.spawn_spill(area_spot("hub", Vector2(60, 90)), 40.0)
 	if main.ambience.spills_enabled():
 		# Litter before a spill, even a farther piece (spills dry on their own).
-		var far: int = cl.drop_litter(Vector2(1000, 950))
+		var far: int = cl.drop_litter(area_spot("hub", Vector2(-440, 140)))
 		await wait(0.8)
 		check(jan()._job.get("key", "") == "l%d" % far, "C6: litter first, though the spill's nearer (job %s)" % str(jan()._job.get("key", "-")))
 		var gone := await wait_until(func(): return not main.ambience.spills.any(func(x): return x["id"] == sid), 40.0)
@@ -459,8 +459,8 @@ func _run_jan_chores() -> void:
 	# --- C7 off the clock at close: trash in hand into a can, waits at home
 	cl.set_can(0, 0)
 	cl.set_can(1, 0)
-	cl.drop_litter(Vector2(1300, 760))
-	cl.drop_litter(Vector2(1310, 770))
+	cl.drop_litter(area_spot("hub", Vector2(-140, -50)))
+	cl.drop_litter(area_spot("hub", Vector2(-130, -40)))
 	await wait_until(func(): return jan().hand == 2, 30.0)
 	var binned1: int = cl.trash_binned_today
 	main.cleanup_ceiling_override = 60.0 # (a real cleanup phase, not straight to the report)
@@ -470,7 +470,7 @@ func _run_jan_chores() -> void:
 	await wait_until(func(): return main.cleanup_active, 10.0)
 	await wait(0.3)
 	check(jan().hand == 0 and cl.trash_binned_today == binned1 + 2, "C7: the store closed -> the 2 in hand went into a can")
-	cl.drop_litter(Vector2(1400, 760))
+	cl.drop_litter(area_spot("hub", Vector2(-40, -50)))
 	await wait(3.0)
 	check(jan()._job.get("kind", "") == "home" and cl.litter.size() >= 1, "C7: cleanup is the crew's: litter left for them, Pat heads home")
 	_watch_jan = false
@@ -495,7 +495,7 @@ func _run_jan_stuck() -> void:
 	# --- S1 pinned (speed 0): gives up after STUCK_SECONDS, target on cooldown
 	var keep_speed: float = jan().speed
 	jan().speed = 0.0
-	var lid: int = cl.drop_litter(Vector2(1300, 900))
+	var lid: int = cl.drop_litter(area_spot("hub", Vector2(-140, 90)))
 	var t0 := _wall()
 	var gave := await wait_until(func(): return jan().stuck_skips == 1, jan().STUCK_SECONDS + 4.0)
 	check(gave, "S1: pinned in place -> gave up after %.1fs (STUCK_SECONDS %.0f)" % [_wall() - t0, jan().STUCK_SECONDS])
@@ -511,9 +511,9 @@ func _run_jan_stuck() -> void:
 	var locked: Array = main.SECTIONS.filter(func(sc): return main.section_index(sc["name"]) >= main.sections_owned)
 	var ids := []
 	if not locked.is_empty():
-		var cell: Vector2i = locked[0]["grid_pos"]
-		ids.append(cl.drop_litter(Vector2((cell.x + 0.5) * main.ROOM_WIDTH, (cell.y + 0.5) * main.ROOM_HEIGHT)))
-	ids.append(cl.drop_litter(Vector2(480, 270))) # Break Room
+		var cell: String = locked[0]["area"]
+		ids.append(cl.drop_litter(main.areas.center_of(cell)))
+	ids.append(cl.drop_litter(area_spot("break_room"))) # Break Room
 	var touched := false
 	for k in 300:
 		await physics_frame
@@ -525,7 +525,7 @@ func _run_jan_stuck() -> void:
 		cl.litter = cl.litter.filter(func(x): return x["id"] != id)
 	# --- S4 a target the grid can't reach (the middle of the forklift's floor) is skipped at once
 	var u0: int = jan().unreachable_skips
-	var pid: int = cl.drop_puddle(Vector2(2500, 1320))
+	var pid: int = cl.drop_puddle(area_spot("storage", Vector2(100, -30)))
 	var skipped := await wait_until(func(): return jan().unreachable_skips > u0, 5.0)
 	check(skipped and jan()._skipped("u%d" % pid), "S4: a puddle on the delivery forklift's floor -> skipped as unreachable (not walked into)")
 	cl.remove_puddle(pid)
@@ -541,7 +541,7 @@ func _run_jan_stuck() -> void:
 	while _wall() - t0 < 70.0:
 		if cl.litter.size() < 2 and fk().visible and fk().active:
 			var at: Vector2 = fk().global_position + Vector2.RIGHT.rotated(fk().rotation) * randf_range(120.0, 220.0)
-			if main._grid_cell_of(at) == Vector2i(2, 1) and cl._litter_spot_ok(at):
+			if main.areas.area_at(at) == "produce" and cl._litter_spot_ok(at):
 				cl.drop_litter(at)
 				dropped += 1
 		await wait(1.0)
@@ -641,10 +641,10 @@ func _run_jan_probe() -> void:
 	main.open_store(1)
 	fk()._pause_timer = 0.0
 	for r in 3:
-		jan().position = Vector2(2300, 250)
+		jan().position = area_spot("bakery", Vector2(-100, -20))
 		jan().target_position = jan().position
 		jan()._reset_brain()
-		var pid: int = main.cleanup.drop_puddle(Vector2(2439, 775))
+		var pid: int = main.cleanup.drop_puddle(area_spot("produce", Vector2(39, -35)))
 		for k in 160:
 			await wait(0.25)
 			var f := fk()
@@ -777,7 +777,7 @@ func _run_jan_net_client() -> void:
 				await wait(0.5)
 			"forge":
 				if int(step["who"]) == me:
-					player().teleport_to(Vector2(1440, 700))
+					player().teleport_to(area_spot("hub", Vector2(0, -110)))
 					await wait(0.4)
 					st()._request_staff.rpc_id(1, JK, "speed", 0)
 			"jan":

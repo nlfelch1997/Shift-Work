@@ -5,6 +5,13 @@ extends SceneTree
 ## breakroom_photo.png (close-ups), then breakroom_coffee.png: the host at the
 ## machine (its prompt up), then after a cup (the cup icon, the toast).
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
+
 func _initialize() -> void:
 	main = load("res://Main.tscn").instantiate()
 	root.add_child(main)
@@ -17,7 +24,7 @@ func _run() -> void:
 	while not (main.shift_active and main.players.has(1)):
 		await create_timer(0.25).timeout
 	var cam := Camera2D.new()
-	cam.global_position = Vector2(480, 270)
+	cam.global_position = area_spot("break_room")
 	main.add_child(cam)
 	cam.make_current()
 	main.debug_label.visible = false
@@ -25,17 +32,17 @@ func _run() -> void:
 	var alerts := main.get_node_or_null("AlertLayer")
 	if alerts and "--no-banner" in OS.get_cmdline_user_args():
 		alerts.visible = false
-	await _save(cam, "breakroom", Vector2(480, 270), 1.0)
+	await _save(cam, "breakroom", area_spot("break_room"), 1.0)
 	# Close-ups: the kitchen run (coffee machine), the photo, the vending machine.
-	await _save(cam, "breakroom_kitchen", Vector2(200, 110), 3.0)
-	await _save(cam, "breakroom_photo", Vector2(560, 120), 2.5)
+	await _save(cam, "breakroom_kitchen", area_spot("break_room", Vector2(-280, -160)), 3.0)
+	await _save(cam, "breakroom_photo", area_spot("break_room", Vector2(80, -150)), 2.5)
 	var p: Node2D = main.players[1]
-	p.teleport_to(Vector2(170, 110))
-	await _save(cam, "breakroom_prompt", Vector2(260, 140), 2.0)
+	p.teleport_to(area_spot("break_room", Vector2(-310, -160)))
+	await _save(cam, "breakroom_prompt", area_spot("break_room", Vector2(-220, -130)), 2.0)
 	main.break_room.try_buy_coffee()
 	if alerts:
 		alerts.visible = true
-	await _save(cam, "breakroom_coffee", Vector2(480, 270), 1.0)
+	await _save(cam, "breakroom_coffee", area_spot("break_room"), 1.0)
 	quit()
 
 func _save(cam: Camera2D, name: String, at: Vector2, zoom: float) -> void:

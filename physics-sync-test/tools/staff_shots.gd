@@ -9,6 +9,12 @@ extends SceneTree
 ## PNGs land in user://staff_shots/. Not part of the game.
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var n := 0
 
 func _initialize() -> void:
@@ -58,7 +64,7 @@ func _run() -> void:
 	await shot("panel_hired")
 	main.staff.toggle_panel()
 	# Produce, with the helper at work (and a box or two in its back room).
-	me().teleport_to(Vector2(2000, 940))
+	me().teleport_to(area_spot("produce", Vector2(-400, 130)))
 	var h: Node2D = main.staff.helpers["Produce"]
 	var t := 0.0
 	while h._held().size() < 2 and t < 60.0:
@@ -71,10 +77,10 @@ func _run() -> void:
 	main.open_store(1)
 	await wait(25.0)
 	await shot("produce_open_store")
-	me().teleport_to(Vector2(480, 940))
+	me().teleport_to(area_spot("dairy_frozen", Vector2(0, 130)))
 	await wait(1.0)
 	await shot("dairy_open_store")
-	me().teleport_to(Vector2(2000, 400))
+	me().teleport_to(area_spot("bakery", Vector2(-400, 130)))
 	await wait(1.0)
 	await shot("bakery_open_store")
 	main.shift_time_left = 0.05
