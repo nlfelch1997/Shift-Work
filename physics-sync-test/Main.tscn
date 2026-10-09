@@ -386,7 +386,7 @@ position = Vector2(2142, 1560)
 home_rotation = -1.57079633
 
 [node name="Manager" parent="." instance=ExtResource("7")]
-position = Vector2(1200, 1350)
+position = Vector2(1510, 1430)
 
 [node name="MenuLayer" type="CanvasLayer" parent="."]
 

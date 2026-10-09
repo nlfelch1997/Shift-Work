@@ -588,8 +588,11 @@ func _run_net_host() -> void:
 	var ids: Array = main.players.keys()
 	ids.sort()
 	# Spread the players out in open floor so nobody walks into a wall.
+	# PHASE 5B PART 2B: where nothing else moves — two parallel lanes in the
+	# staff hall, two in Storage's empty west strip (on the shop floor, loose
+	# stock and the crowd kept getting in a walker's way).
 	for k in ids.size():
-		var start: Vector2 = {"right": area_spot("hub", Vector2(-390, -210)), "left": area_spot("hub", Vector2(210, -130)), "up": area_spot("hub", Vector2(0, 190)), "down": area_spot("hub", Vector2(-440, -10))}[dir_for(ids, ids[k])]
+		var start: Vector2 = {"right": area_spot("staff_hall", Vector2(-200, -120)), "left": area_spot("staff_hall", Vector2(220, 130)), "up": area_spot("storage", Vector2(-360, 110)), "down": area_spot("storage", Vector2(-300, -230))}[dir_for(ids, ids[k])]
 		main.players[ids[k]].rpc("teleport_to", start)
 	await wait(1.0)
 	_net_write("go.json", {"start_unix": Time.get_unix_time_from_system() + 2.5, "ids": ids})

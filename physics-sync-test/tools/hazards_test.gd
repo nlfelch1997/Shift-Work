@@ -3654,7 +3654,7 @@ func _run_prep() -> void:
 	check(main.orders_called_today == 0 and is_equal_approx(main._order_timer, order_t0), "P1: no priority order call-outs while closed (timer held at %.0fs)" % main._order_timer)
 	await shot("p1_prep_banner")
 	# --- P2: E away from the sign does nothing to the store.
-	player().teleport_to(main.STORE_SIGN_POS + Vector2(160, 40)) # (PHASE 5B PART 2B: along the pavement — it's 180 px deep now)
+	player().teleport_to(main.STORE_SIGN_POS + Vector2(-160, 40)) # (PHASE 5B PART 2B: along the pavement — it's 180 px deep now)
 	await wait(0.3)
 	await tap(act + "interact")
 	await wait(0.4)
@@ -3727,8 +3727,11 @@ func _run_prep() -> void:
 	var built: Array = fk()._legs.map(func(l): return l["pos"])
 	# Any stop off the lane at x 2400 — the only shelf at that x is the new one
 	# (a near-miss stop just short of its slots, or a ram into it).
-	var lane_y: float = fk().home_position.y
-	var visits_new: bool = built.any(func(p): return absf(p.x - 2400.0) < 1.0 and absf(p.y - lane_y) > 1.0)
+	# PHASE 5B PART 2B: in lane terms (the lane runs north-south now) and with
+	# the shelf itself, not the old raw x 2400 of its station.
+	var newest: Node2D = main.get_node("Sections/MeatDeli/Shelf5")
+	var station: float = newest.global_position.dot(fk_lane_axis())
+	var visits_new: bool = built.any(func(p): return absf(p.dot(fk_lane_axis()) - station) < 1.0 and absf(lane_offset(p)) > 1.0)
 	fk()._legs = saved
 	check(visits_new, "P5: the Produce forklift's lap now stops at the new Produce shelf too %s" % ("" if visits_new else str(built)))
 	fk()._pause_timer = 1.0e9

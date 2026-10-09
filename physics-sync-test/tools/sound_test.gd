@@ -26,11 +26,11 @@ var main: Node
 ## A spot in a named room of the layout table (tools/spots.gd).
 ## PHASE 5B PART 2B: where a throw straight down hits nothing but the shop's
 ## front wall: midway between two checkout lanes (Cashier3 and Cashier4),
-## a little north of their queues' start.
+## level with their checkout spots (a throw slows fast: it must still be quick at the wall).
 func _wall_shot() -> Vector2:
 	var a: Vector2 = main.get_node("CentralCheckout/Cashier3").global_position
 	var b: Vector2 = main.get_node("CentralCheckout/Cashier4").global_position
-	return Vector2((a.x + b.x) * 0.5, a.y - 140.0)
+	return Vector2((a.x + b.x) * 0.5, a.y - 60.0)
 
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
 	return preload("res://tools/spots.gd").area_spot(main, id, offset)

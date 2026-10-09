@@ -363,7 +363,7 @@ func _run_shelf() -> void:
 	await wait(0.3)
 	for o in get_nodes_in_group("carryable"):
 		if o != pick and not o.get_node("Carryable").shelved and o.global_position.distance_to(p.global_position) < 90.0:
-			move_body(o, o.global_position + Vector2(0, 200)) # nothing loose nearer
+			move_body(o, o.global_position + aisle * 200.0) # nothing loose nearer
 	await wait(0.2)
 	await tap("host_interact")
 	await wait(0.3)
@@ -395,9 +395,9 @@ func _run_shelf() -> void:
 	var knocked_by_red := 0
 	for k in 3:
 		var tgt: Vector2 = shelf.slots[k % shelf.slots.size()].global_position
-		red.position = tgt + Vector2(0, 70)
+		red.position = tgt + aisle * 70.0 # (PHASE 5B PART 2B: the shelf's own axes — Plan B's gondola shelves face east/west)
 		red.reset_physics_interpolation()
-		red._retarget_pos = tgt + Vector2(0, -20)
+		red._retarget_pos = tgt - aisle * 20.0
 		red._retarget_timer = 5.0
 		red._lifetime = 0.0
 		await wait(1.5)
@@ -414,10 +414,11 @@ func _run_shelf() -> void:
 	for c in get_nodes_in_group("customer"):
 		if c.role == "shopper":
 			blue = c
-	blue.position = shelf.slots[0].global_position + Vector2(-60, 0)
+	var along: Vector2 = sb.global_transform.x.normalized() # along the row of slots
+	blue.position = shelf.slots[0].global_position - along * 60.0
 	blue.reset_physics_interpolation()
 	var tt := 0.0
-	var goal: Vector2 = shelf.slots[shelf.slots.size() - 1].global_position + Vector2(60, 0)
+	var goal: Vector2 = shelf.slots[shelf.slots.size() - 1].global_position + along * 60.0
 	while tt < 3.0:
 		blue.position = blue.position.move_toward(goal, 200.0 / 60.0)
 		blue.velocity = Vector2.ZERO
