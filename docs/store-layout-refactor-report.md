@@ -13,7 +13,7 @@ from that table. The table reproduces today's nine-room store exactly. The
 proof is exact, not "within noise": clean `main` and this branch, run seeded
 at fixed fps, produce **byte-identical screenshots, nav grids, lattice probes
 and scene trees** at five store states (40 of 40 files, 0 differing pixels).
-<<INCOME_SUMMARY>> No save change (still v6), no new network state, no layout,
+The income harness agrees with clean `main` within noise (+0.3 % / +4.9 % / −1.9 % at 1 / 2 / 4 sections, 12 shifts a side), host and two clients give identical registry answers through a shift, and <<REG_SUMMARY>> No save change (still v6), no new network state, no layout,
 art, price or balance change.
 
 ---
@@ -239,7 +239,33 @@ tests ±0.25 px either side and matches; nothing places a body exactly on it.
 
 ### 3.2 Income harness (bot sims, before vs after)
 
-<<INCOME_TABLE>>
+`tools/staff_test.gd --test=income`, the solo competent-player bot,
+`--fixed-fps 60`, 3 consecutive shifts per run, 4 runs per configuration on
+each side (12 shifts each). Clean `main` and this branch ran at the same
+time on the same machine, 2 processes each, so they shared the same load
+(the harness's shopper paths depend on load; section 6).
+
+| Configuration | | shifts | pay / shift (mean) | sd | range | sold / shift |
+|---|---|---|---|---|---|---|
+| 1 section (Dry Goods), no staff (`--day=1`) | main | 12 | $371 | $14 | $358–407 | 29.0 |
+| | **branch** | 12 | **$372** | $38 | $310–433 | 29.0 |
+| 2 sections, Produce helper (`--day=3 --hire=Produce:0:0`) | main | 12 | $900 | $83 | $773–1016 | 73.1 |
+| | **branch** | 12 | **$944** | $92 | $828–1086 | 77.4 |
+| Top tier, 3 helpers + janitor (`--day=7 --hire=...,Janitor:0`) | main | 12 | $733 | $62 | $635–820 | 55.2 |
+| | **branch** | 12 | **$719** | $55 | $611–826 | 54.3 |
+
+Differences: **+0.3 %, +4.9 %, −1.9 %**, each within one shift-to-shift
+standard deviation. The largest (+$44 at 2 sections) is ~1.3 standard
+errors of the difference (12 shifts a side), i.e. noise. Every run's own
+checks passed (bank moved by pay − wages exactly, lifetime grew by pay).
+No crashes and no script errors in 24 runs. Combined with 3.1 (every
+position query, nav grid and seeded roll identical), there is no mechanism
+by which the refactor could move income. The bot sims vary by ~±10 % on
+their own. The progression sim (`--test=progress`, 24+ shifts per run,
+hours each) wasn't re-run: with the per-state income unchanged and every
+purchase, gate, register tier and section rule reading the same values, it
+couldn't show anything the income runs don't. Re-run it with Part 2B, where
+the layout actually changes.
 
 ### 3.3 Co-op: host + 2 clients through a full shift
 
