@@ -141,7 +141,10 @@ func _run_customer_ride() -> void:
 	for cs in cases:
 		var dir: Vector2 = {"down": Vector2.DOWN, "up": Vector2.UP, "left": Vector2.LEFT, "right": Vector2.RIGHT}[cs[1]]
 		var b: Rect2 = main.areas.spawn_band_of("dry_goods") # PHASE 5B PART 2B: the shop's open floor (was raw old-hub coordinates)
-		var start := Vector2(b.position.x + 40 + (i % 4) * 160, b.position.y) if cs[1] == "down" else (Vector2(b.position.x + 40 + (i % 4) * 160, b.position.y + 300) if cs[1] == "up" else Vector2(b.position.x + (560 if cs[1] == "left" else 160), b.position.y + 40 + (i % 4) * 60))
+		# (Lanes clear of the Dry Goods pad: a box pushed onto a pad unpacks.)
+		var vx: float = b.position.x + [40.0, 180.0, 400.0, 520.0][i % 4]
+		var hy: float = b.position.y + [20.0, 60.0, 260.0, 300.0][i % 4]
+		var start := Vector2(vx, b.position.y) if cs[1] == "down" else (Vector2(vx, b.position.y + 300) if cs[1] == "up" else Vector2(b.position.x + (560 if cs[1] == "left" else 160), hy))
 		var obj: RigidBody2D = null
 		match cs[0]:
 			"product": obj = _loose_product()
