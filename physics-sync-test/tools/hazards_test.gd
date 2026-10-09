@@ -4880,9 +4880,10 @@ func _run_net_cleanup_client() -> void:
 ## knock-over-able), PO6 the station -> clock trip (pick up a mop at the
 ## station during cleanup, put it back, clock out at the clock next to it).
 
-## (Deliberately raw: this pins the cans to where Phase 3D put them, so it
-## can't read them from the layout table it is checking.)
-const PO_BINS := [Vector2(1110.0, 590.0), Vector2(1300.0, 500.0), Vector2(1975.0, 620.0), Vector2(905.0, 620.0), Vector2(1975.0, 300.0)]
+## (Deliberately raw: this pins the cans to where Plan B put them — PHASE 5B
+## PART 2B, in save order: checkout, Dry Goods, Produce, Dairy/Frozen, Bakery
+## — so it can't read them from the layout table it is checking.)
+const PO_BINS := [Vector2(1592.0, 1400.0), Vector2(960.0, 580.0), Vector2(1660.0, 1150.0), Vector2(735.0, 1630.0), Vector2(735.0, 1020.0)]
 
 ## Every section's shelves as data, identical on every peer.
 func _shelf_census() -> Dictionary:
@@ -4919,8 +4920,10 @@ func _po_static_checks(who: String) -> Dictionary:
 	# OCT 2026 PHASE 3D: the station's tools in the Break Room; one mop and one
 	# broom on the hub rack (tools are out all day now).
 	var room_spots: Array = c.TOOL_SPOTS.filter(func(s): return main.areas.area_at(s) == "break_room")
-	var hub_spots: Array = c.TOOL_SPOTS.filter(func(s): return main.areas.area_at(s) == "hub")
-	check(main.areas.area_at(sp) == "break_room" and room_spots.size() == 4 and hub_spots.size() == 2, "%sPO1: tool station + its 4 tool spots in the Break Room, 2 on the hub rack (station %s)" % [who, str(sp)])
+	# PHASE 5B PART 2B: the rack is on the shop's back wall by the staff door
+	# (shop floor — Dry Goods in Plan B — not the old hub).
+	var hub_spots: Array = c.TOOL_SPOTS.filter(func(s): return main.areas.is_open_shop_floor_at(s))
+	check(main.areas.area_at(sp) == "break_room" and room_spots.size() == 4 and hub_spots.size() == 2, "%sPO1: tool station + its 4 tool spots in the Break Room, 2 on the shop's rack (station %s)" % [who, str(sp)])
 	var nearest: float = c.TOOL_SPOTS.map(func(s): return s.distance_to(main.TIME_CLOCK_POS)).min()
 	check(sp.distance_to(main.TIME_CLOCK_POS) < 250.0, "%sPO1: station is next to the time clock (%.0fpx)" % [who, sp.distance_to(main.TIME_CLOCK_POS)])
 	check(nearest > c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE, "%sPO1: no spot in reach of both a tool and the clock (nearest spot %.0fpx > %.0f)" % [who, nearest, c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE])

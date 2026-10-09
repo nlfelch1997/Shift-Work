@@ -44,6 +44,7 @@ const FLOORS := {
 	"EntranceBg": Vector2i(3, 1), # cream tile (the checkout hub)
 	"StorageBg": Vector2i(0, 1), # grey concrete panels
 	"BreakRoomBg": Vector2i(5, 2), # WEEK 23: beige vinyl with grey insets — staff-room floor
+	"StaffHallBg": Vector2i(0, 1), # PHASE 5B PART 2B: the staff hall, the back room's concrete
 }
 ## Which A4 sheet + face block the walls take. PHASE 5B PART 2A: WHICH walls
 ## take which is each room's "wall_art" in the layout table (StoreLayout.gd:

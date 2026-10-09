@@ -31,6 +31,11 @@ extends "res://tools/hazards_test.gd"
 ##                     counters and cashiers, and a real crowd checks out
 ##                     through them (sales rung at every open register, no
 ##                     shopper stuck).
+##   --test=events     every random event at every growth stage it can run in
+##                     (2, 3, 4 sections): it starts, and what it puts in the
+##                     world lands in the open store — the rush's section is an
+##                     open wing, every leak is on open shop floor a player can
+##                     reach, a delivery's / catering order's sections are open.
 ##   --test=growth-save --phase=1|2|3  phase 1 buys Produce and Dairy/Frozen
 ##                     and saves (still version 6); phase 2 reloads it: those
 ##                     two wings open with no knock-out, Bakery's lot closed;
@@ -65,6 +70,7 @@ func _initialize() -> void:
 		"net-growth": _run_net_host.call_deferred()
 		"growth-save": _run_save.call_deferred()
 		"checkout": _run_checkout.call_deferred()
+		"events": _run_events.call_deferred()
 		_:
 			print("FAIL  unknown --test=%s" % _mode)
 			quit(1)
@@ -461,6 +467,62 @@ func _run_checkout() -> void:
 			rung.append(String(c.name))
 	print("INFO  checkout run: sales by register %s, longest queue %d" % [str(main.cashiers.map(func(c): return c.get_node("Cashier").total_sold - sold0[c.name])), max_q])
 	check(rung.size() >= 4, "C5: with a full crowd, sales rang at %d of 5 registers %s" % [rung.size(), str(rung)])
+	finish()
+
+## --- EVENTS AT EVERY STAGE ------------------------------------------------------
+
+func _run_events() -> void:
+	main.events_on = true
+	await wait_until(func(): return main.shift_active and main.players.has(1), 30.0)
+	await wait(0.5)
+	player().teleport_to(main.areas.anchor("player_spawn"))
+	pin_manager(out_of_the_way(), 0.0)
+	main.lifetime_earned = 1000000
+	var ev: Node = main.events
+	for stage in range(2, 5):
+		main.sections_owned = stage
+		main._reconfigure_world()
+		await wait(0.3)
+		if not main.store_open:
+			main.open_store(1)
+		var open_names: Array = main._unlocked_sections().map(func(x): return x["name"])
+		for k in ev.EVENT_ORDER:
+			if not ev.unlocked(k):
+				continue
+			main.shift_time_left = 2000.0
+			# Stock on every open shelf's floor so a rush / catering order can plan.
+			for sec in open_names:
+				for i in 6:
+					main.spawn_product_at(sec, main._spawn_pos_in_section(main.SECTIONS[main.section_index(sec)]))
+			ev.force_next(k, 0.1)
+			var started := await wait_until(func(): return ev.active() and ev.key == k, 30.0)
+			check(started, "GE%d %s: starts with %d sections open" % [stage, ev.name_of(k), stage])
+			if not started:
+				continue
+			var d: Dictionary = ev.data
+			match k:
+				"rush":
+					check(d["section"] in open_names, "GE%d rush: its section %s is an open wing" % [stage, d["section"]])
+				"leak":
+					await wait(ev.LEAK_DROP_GAP * 2.5)
+					var bad := []
+					var door: Vector2 = main.areas.anchor("front_door") + Vector2(0, -40)
+					var bn: RefCounted = Spots.nav(main)
+					bn.invalidate()
+					for pd in main.cleanup.puddles:
+						var pos: Vector2 = pd["pos"]
+						if not main.areas.is_open_shop_floor_at(pos) or not bn.reachable(door, pos):
+							bad.append(str(pos.round()))
+					check(not main.cleanup.puddles.is_empty() and bad.is_empty(), "GE%d leak: %d leaks, all on open shop floor a player can reach %s" % [stage, main.cleanup.puddles.size(), str(bad)])
+				"delivery", "catering":
+					var secs: Array = d.get("needs", {}).keys()
+					check(not secs.is_empty() and secs.all(func(x): return x in open_names), "GE%d %s: wants only open wings %s" % [stage, k, str(secs)])
+				"inspection":
+					check(true, "GE%d inspection: running" % stage)
+			ev._on_time_up()
+			await wait_until(func(): return not ev.busy(), 10.0)
+			for pd in main.cleanup.puddles.duplicate():
+				main.cleanup.remove_puddle(int(pd["id"]))
 	finish()
 
 ## --- SAVE / RELOAD -------------------------------------------------------------
