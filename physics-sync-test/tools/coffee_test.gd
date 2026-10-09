@@ -21,6 +21,12 @@ extends SceneTree
 ## the report — runs through the game's own code paths.
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var fails := 0
 var me := 1
 var act := "host_"
@@ -126,7 +132,7 @@ func machine_spot(i: int) -> Vector2:
 ## return the real speed (px/s) the body moved at. Owner only.
 func measure_speed(frames := 30) -> float:
 	var p := player()
-	p.teleport_to(Vector2(420.0, 250.0) if me == 1 else Vector2(420.0, 290.0 + 40.0 * (main.players.keys().find(me) % 4)))
+	p.teleport_to(area_spot("break_room", Vector2(-60, -20)) if me == 1 else Vector2(420.0, 290.0 + 40.0 * (main.players.keys().find(me) % 4)))
 	await physics_frame
 	await physics_frame
 	Input.action_press(act + "move_right")
@@ -180,12 +186,12 @@ func _run_solo() -> void:
 	var v0 := await measure_speed()
 	check(absf(v0 - S) < S * 0.03, "C1: walks at %.0f px/s = SPEED %.0f (no coffee, no sneakers)" % [v0, S])
 	# --- C2: E away from the machine buys nothing; a request from far away is refused.
-	p.teleport_to(Vector2(480, 300))
+	p.teleport_to(area_spot("break_room", Vector2(0, 30)))
 	await wait(0.2)
 	await tap("host_interact")
 	await wait(0.2)
 	check(br().coffee_cups_today == 0, "C2: E in the middle of the room buys nothing")
-	check(not br().near_coffee(Vector2(480, 300)) and br().near_coffee(machine_spot(0)) and br().near_coffee(machine_spot(3)), "C2: the machine's reach covers every machine spot, not the room's middle")
+	check(not br().near_coffee(area_spot("break_room", Vector2(0, 30))) and br().near_coffee(machine_spot(0)) and br().near_coffee(machine_spot(3)), "C2: the machine's reach covers every machine spot, not the room's middle")
 	# --- C3: the vending machine is flavor only.
 	p.teleport_to(br().VENDING_POS + Vector2(0, 60))
 	await wait(0.2)
@@ -197,7 +203,7 @@ func _run_solo() -> void:
 	# --- C4: E holding a product at the machine doesn't buy (E drops it).
 	# (Picked up out in the hub: a loose product in the break room is
 	# rescued back to a section at once — Main._rescue_stranded_products().)
-	p.teleport_to(Vector2(1440, 700))
+	p.teleport_to(area_spot("hub", Vector2(0, -110)))
 	await wait(0.3)
 	main.spawn_product_at("Dry Goods", p.global_position + Vector2(0, 30))
 	await wait(0.4)
@@ -457,7 +463,7 @@ func _run_client() -> void:
 				check(ok, "%s: %s matches the host" % [who, step.get("tag", "")])
 			"forge":
 				if int(step["who"]) == me:
-					player().teleport_to(Vector2(480, 330))
+					player().teleport_to(area_spot("break_room", Vector2(0, 60)))
 					await wait(0.3)
 					br()._request_coffee.rpc_id(1) # the RPC the E press sends, from far away
 			"buy":
@@ -477,7 +483,7 @@ func _run_client() -> void:
 				ans = {"v": await measure_speed()}
 			"walk":
 				if int(step["who"]) == me:
-					player().teleport_to(Vector2(300, 250))
+					player().teleport_to(area_spot("break_room", Vector2(-180, -20)))
 					await wait(0.2)
 					Input.action_press(act + "move_right")
 					await wait(1.4)

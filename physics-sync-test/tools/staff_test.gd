@@ -130,7 +130,7 @@ func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 			continue
 		if obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or recent_drops.has(obj):
 			continue
-		if not main.is_unlocked_at_pos(obj.global_position) and not main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
+		if not main.is_unlocked_at_pos(obj.global_position) and not main.areas.area_at(obj.global_position) in ["hub", "storage"]:
 			continue
 		if pick_slot(obj.global_position, obj).is_empty():
 			continue
@@ -145,7 +145,7 @@ func _loose_stockable() -> int:
 	for obj in get_nodes_in_group("carryable"):
 		if obj.is_in_group("delivery_box") or _staffed_color(obj) or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or _at_a_slot(obj):
 			continue
-		if main.is_unlocked_at_pos(obj.global_position) or main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
+		if main.is_unlocked_at_pos(obj.global_position) or main.areas.area_at(obj.global_position) in ["hub", "storage"]:
 			n += 1
 	return n
 
@@ -402,7 +402,7 @@ func _run_hire() -> void:
 	check(st().is_hired("Produce") and main.money == 3000 - st().HIRE_FEE["Produce"], "H4: Sam hired for Produce — bank $3000 -> %s" % main._format_money(main.money))
 	check(st().speed_level("Produce") == 0 and st().carry_level("Produce") == 0 and h.speed == st().SPEED_BY_LEVEL[0] and h.capacity == st().CARRY_BY_LEVEL[0], "H4: starts at speed %d px/s, carrying %d" % [int(h.speed), h.capacity])
 	await wait(0.2)
-	check(h.active and h.visible and main._grid_cell_of(h.position) == Vector2i(2, 1), "H4: on the floor in Produce (%s)" % str(h.position.round()))
+	check(h.active and h.visible and main.areas.area_at(h.position) == "produce", "H4: on the floor in Produce (%s)" % str(h.position.round()))
 	check(st().on_books.has("Produce") and st().wages_due() == st().WAGE["Produce"], "H4: on the books this shift — $%d due at clock-out" % st().wages_due())
 	check(main._toast_label.text.begins_with("You hired Sam"), "H4: toast '%s'" % main._toast_label.text)
 	# --- H5 the other refusals
@@ -727,7 +727,7 @@ func _run_net_staff_client() -> void:
 					ans["panel"] = st().panel.visible
 			"forge":
 				if int(step["who"]) == me:
-					player().teleport_to(Vector2(800, 400))
+					player().teleport_to(area_spot("break_room", Vector2(320, 130)))
 					await wait(0.4)
 					st()._request_staff.rpc_id(1, "Dairy/Frozen", "hire", -1)
 			"race":
@@ -743,7 +743,7 @@ func _run_net_staff_client() -> void:
 				var h := helper(step["sec"])
 				var host_pos := Vector2(step["pos"][0], step["pos"][1])
 				var item: Node2D = main.get_node_or_null("Products/" + str(step["item"])) if step["item"] != "" else null
-				var ok: bool = h.visible and h.position.distance_to(host_pos) < 120.0 and main._grid_cell_of(h.position) == main._grid_cell_of(host_pos)
+				var ok: bool = h.visible and h.position.distance_to(host_pos) < 120.0 and main.areas.area_at(h.position) == main.areas.area_at(host_pos)
 				var why := ""
 				if not ok:
 					why = " — visible %s at %s vs host %s" % [str(h.visible), str(h.position.round()), str(host_pos.round())]

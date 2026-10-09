@@ -22,6 +22,12 @@ extends SceneTree
 ## files, like hazards_test.gd.)
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var sfx: Node
 var fails := 0
 var me := 1
@@ -159,7 +165,7 @@ func pin_manager(pos: Vector2, heading: float) -> void:
 func park_everything() -> void:
 	main.test_hold_customers = true
 	main.forklift._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -242,7 +248,7 @@ func _run_solo() -> void:
 	await wait(1.6) # past the director's warm-up
 
 	# S2 footsteps: ~6.9 steps for 440px walked, none standing still.
-	player().teleport_to(Vector2(1200, 810))
+	player().teleport_to(area_spot("hub", Vector2(-240, 0)))
 	await wait(0.4)
 	var f0 := count("footstep")
 	await wait(1.0)
@@ -259,7 +265,7 @@ func _run_solo() -> void:
 	# straight up into the bare wall. (It was Dry Goods, where the impact came
 	# from the stocked shelf — and stocked items no longer collide with thrown
 	# stock: Carryable.gd's LAYER_SHELF_STOCK.)
-	player().teleport_to(Vector2(1060, 660))
+	player().teleport_to(area_spot("hub", Vector2(-380, -150)))
 	await wait(0.3)
 	var obj := free_product()
 	move_body(obj, player().global_position + Vector2(42, 0)) # clear of the player's body, inside PICKUP_RANGE
@@ -333,7 +339,7 @@ func _run_solo() -> void:
 
 	# S8 a spill appearing.
 	var sp0 := count("spill_splat")
-	var sid: int = amb().spawn_spill(Vector2(1300, 450), 40.0)
+	var sid: int = amb().spawn_spill(area_spot("dry_goods", Vector2(-140, 180)), 40.0)
 	check(await heard_after("spill_splat", sp0, 0.5), "S8 splat as a spill appears")
 	amb().remove_spill(sid)
 
@@ -353,16 +359,16 @@ func _run_solo() -> void:
 
 	# S10 the manager: whistle as he starts watching me, a tweet at "!", the
 	# trombone at the write-up.
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	var w0 := count("manager_whistle")
 	var tw0 := count("manager_tweet")
 	var wu0 := count("writeup")
-	player().teleport_to(Vector2(640, 1350))
+	player().teleport_to(area_spot("reserved", Vector2(160, 0)))
 	check(await heard_after("manager_whistle", w0, 4.0), "S10 whistle as the manager's meter starts on me")
 	check(await heard_after("manager_tweet", tw0, 4.0), "S10 tweet as it goes red")
 	check(await heard_after("writeup", wu0, 5.0), "S10 sad trombone at the write-up")
 	check(count("manager_whistle") == w0 + 1, "S10 one whistle for one stare-down (%d)" % (count("manager_whistle") - w0))
-	player().teleport_to(Vector2(1440, 810))
+	player().teleport_to(area_spot("hub"))
 	main.manager._pause_timer = 1.0e9
 
 	# S11 both forklifts: each engine starts once and keeps running, the
@@ -409,7 +415,7 @@ func _run_solo() -> void:
 		check(await heard_after("glass_break", g0), "S12 crash as a floor display topples")
 
 	# S13 cleanup: calm music, the mop at work, a chime per mess, clock-out.
-	var mess := Vector2(1440, 700)
+	var mess := area_spot("hub", Vector2(0, -110))
 	var msid: int = amb().spawn_spill(mess, 40.0)
 	await wait(amb().SPILL_FORM_TIME + 0.2)
 	main.shift_time_left = 0.01
@@ -494,7 +500,7 @@ func _run_net_host() -> void:
 		await wait(1.2)
 
 	await host_event.call("store open", "store_open", func(): main.open_store(1); main.forklift._pause_timer = 1.0e9)
-	await host_event.call("spill", "spill_splat", func(): amb().spawn_spill(Vector2(1440, 640), 40.0))
+	await host_event.call("spill", "spill_splat", func(): amb().spawn_spill(area_spot("hub", Vector2(0, -170)), 40.0))
 	await host_event.call("lights", "flicker_sting", func(): amb().start_lights_event())
 	await host_event.call("order called", "order_chime", func(): main._issue_priority_order())
 	await host_event.call("order filled", "order_filled", func(): main._close_priority_order(true))
@@ -506,7 +512,7 @@ func _run_net_host() -> void:
 		s.get_node("Shelf").wreck(s.global_position + Vector2(0, 80)))
 	await host_event.call("impact", "impact_heavy|impact_light", func():
 		var o := free_product()
-		move_body(o, Vector2(1440, 160))
+		move_body(o, area_spot("dry_goods", Vector2(0, -110)))
 		o.linear_velocity = Vector2(0, -620)) # a throw's speed, straight into Dry Goods' back wall
 	var target: int = clients[0]
 	await host_event.call("forklift bump", "forklift_bonk", func(): main.players[target].rpc("forklift_hit", main.players[target].global_position + Vector2(40, 0)))
@@ -529,14 +535,14 @@ func _run_net_host() -> void:
 	# The manager stares down one client: that client hears the whistle up
 	# close, everyone else (host too) a distant one; all hear the write-up.
 	var watched: int = clients[-1]
-	pin_manager(Vector2(480, 1350), 0.0)
-	main.players[watched].rpc("teleport_to", Vector2(640, 1350))
+	pin_manager(area_spot("reserved"), 0.0)
+	main.players[watched].rpc("teleport_to", area_spot("reserved", Vector2(160, 0)))
 	var wf0 := count("manager_whistle_far")
 	await wait_until(func(): return count("manager_whistle_far") > wf0, 5.0)
 	var whistle_at := Time.get_unix_time_from_system()
 	await host_event.call("write-up", "writeup", func(): pass, 6.0)
 	main.manager._pause_timer = 1.0e9
-	main.players[watched].rpc("teleport_to", Vector2(1440, 900))
+	main.players[watched].rpc("teleport_to", area_spot("hub", Vector2(0, 90)))
 	await wait(0.5)
 
 	# Local-only sounds: one client walks and picks up/throws; nobody else

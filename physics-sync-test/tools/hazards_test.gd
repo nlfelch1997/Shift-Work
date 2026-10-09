@@ -55,6 +55,7 @@ extends SceneTree
 ##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=route-len
 
 var main: Node
+
 var fails := 0
 var shots := false
 var shot_index := 0
@@ -307,7 +308,7 @@ func _run_interact() -> void:
 	check("Dairy/Frozen" in names and not ("Bakery" in names), "Day 5 unlocked sections: %s" % str(names))
 	var dairy_gate: Node = main.get_node("Gates/GateDairyFrozen/Gate")
 	check(dairy_gate.collision.disabled, "Dairy/Frozen gate open (collision off)")
-	var dairy_shelves: Array = main.shelves.filter(func(s): return main._grid_cell_of(s.global_position) == Vector2i(0, 1))
+	var dairy_shelves: Array = main.shelves.filter(func(s): return main.areas.area_at(s.global_position) == "dairy_frozen")
 	check(dairy_shelves.size() == 5, "Dairy/Frozen has %d shelves (WEEK 16: +1 wall shelf)" % dairy_shelves.size())
 	var dairy_slots := 0
 	for s in dairy_shelves:
@@ -341,11 +342,13 @@ func _run_interact() -> void:
 	var chaos_before: float = st["last_chaos"]
 	fk().reset_for_new_day()
 	fk()._pause_timer = 0.5
-	player().teleport_to(Vector2(2690, 810)) # in the lane, right in front of the parked forklift's forks
+	var forks: Vector2 = fk().home_position + Vector2(-80, 0) # in the lane, right in front of the parked forklift's forks
+	player().teleport_to(forks)
 	await physics_frame
 	var carried: Node2D = await pickup_near_player()
 	check(carried != null, "I1: player carrying %s in the forklift's lane" % (carried.name if carried else "nothing"))
-	pin_manager(Vector2(2560, 700), (Vector2(2690, 810) - Vector2(2560, 700)).angle())
+	var mgr_at := area_spot("produce", Vector2(160, -110))
+	pin_manager(mgr_at, (forks - mgr_at).angle())
 	var got_hit := await wait_until(func(): return player()._stun_timer > 0.0, 8.0)
 	check(got_hit, "I1: forklift hit the player")
 	await shot("i1_forklift_hits_carrying_player")
@@ -378,9 +381,9 @@ func _run_interact() -> void:
 	for attempt in 4:
 		fk().reset_for_new_day()
 		fk()._pause_timer = 0.3
-		player().teleport_to(Vector2(2690, 810))
+		player().teleport_to(fk().home_position + Vector2(-80, 0)) # in front of its forks
 		await physics_frame
-		move_body(display, Vector2(2632, 810))
+		move_body(display, fk().home_position + Vector2(-138, 0))
 		await wait(0.2)
 		var d_before: Vector2 = display.global_position
 		chaos_before = st["last_chaos"]
@@ -413,7 +416,7 @@ func _run_interact() -> void:
 	# --- I3: free patrol, both hazards live. Does the manager ever end up
 	# inside the forklift (the forklift has no idea he's there — he has no
 	# collision)? Player parked out of everyone's way in the break room.
-	player().teleport_to(Vector2(480, 270))
+	player().teleport_to(area_spot("break_room"))
 	st["meter"] = 0.0
 	st["cooldown"] = 0.0
 	var writeups_before: int = main.writeups_today
@@ -433,7 +436,7 @@ func _run_interact() -> void:
 	while (Time.get_ticks_msec() - t_start) < 150000 and meat_visits < 3:
 		await physics_frame
 		frames += 1
-		var in_meat: bool = main._grid_cell_of(mgr().global_position) == Vector2i(2, 1)
+		var in_meat: bool = main.areas.area_at(mgr().global_position) == "produce"
 		if in_meat and not was_in_meat:
 			meat_visits += 1
 		was_in_meat = in_meat
@@ -446,9 +449,9 @@ func _run_interact() -> void:
 			overlap_frames += 1
 			if not shot_taken:
 				shot_taken = true
-				player().teleport_to(Vector2(2400, 810))
+				player().teleport_to(area_spot("produce"))
 				await shot("i3_manager_inside_forklift")
-				player().teleport_to(Vector2(480, 270))
+				player().teleport_to(area_spot("break_room"))
 		if absf(mgr().global_position.y - fk().home_position.y) < 40.0:
 			lane_frames += 1
 	print("PATROL  %d Produce (forklift section) visits, %d frames there, min manager-forklift distance %.0fpx, %d frames overlapping the forklift, %d frames standing in its lane" % [meat_visits, meat_frames, min_dist, overlap_frames, lane_frames])
@@ -463,8 +466,8 @@ func _run_interact() -> void:
 	# never end up inside it.
 	fk().reset_for_new_day()
 	fk()._pause_timer = 0.0
-	player().teleport_to(Vector2(480, 270))
-	mgr().position = Vector2(2330, 810)
+	player().teleport_to(area_spot("break_room"))
+	mgr().position = area_spot("produce", Vector2(-70, 0))
 	mgr().target_position = mgr().position
 	mgr()._legs.clear()
 	mgr()._pause_timer = 20.0
@@ -480,9 +483,9 @@ func _run_interact() -> void:
 			dodged = true
 		if dodged and not shot_taken and mgr().global_position.distance_to(fk().global_position) < 140.0:
 			shot_taken = true
-			player().teleport_to(Vector2(2400, 810))
+			player().teleport_to(area_spot("produce"))
 			await shot("i3b_manager_steps_aside")
-			player().teleport_to(Vector2(480, 270))
+			player().teleport_to(area_spot("break_room"))
 	check(dodged, "I3b: standing in the lane, he stepped out of the forklift's way")
 	check(forced_overlap == 0, "I3b: ...without it ever driving through him (%d overlapping frames)" % forced_overlap)
 	forced_overlap = 0
@@ -506,8 +509,8 @@ func _run_interact() -> void:
 	# player where the camera frames all of Meat/Deli and grab a frame when
 	# both are close.
 	if shots:
-		player().teleport_to(Vector2(2400, 810))
-		var got_close := await wait_until(func(): return main._grid_cell_of(mgr().global_position) == Vector2i(2, 1) and mgr().global_position.distance_to(fk().global_position) < 220.0, 120.0)
+		player().teleport_to(area_spot("produce"))
+		var got_close := await wait_until(func(): return main.areas.area_at(mgr().global_position) == "produce" and mgr().global_position.distance_to(fk().global_position) < 220.0, 120.0)
 		if got_close:
 			await shot("i4_both_hazards_meat_deli")
 			await wait(1.5)
@@ -542,48 +545,57 @@ func steer(dir: Vector2) -> void:
 	press(act + "move_down", maxf(dir.y, 0.0))
 	press(act + "move_up", maxf(-dir.y, 0.0))
 
-## Cell-to-cell route (every connection the map actually has open): through
-## the hub, with Bakery and the break room hanging off Dry Goods.
-func route_next(from_cell: Vector2i, to_cell: Vector2i) -> Vector2i:
-	if from_cell == to_cell:
-		return to_cell
-	var hub := Vector2i(1, 1)
-	# WEEK 15: Storage (2,2) hangs off the Sidewalk cell (1,2), which opens
-	# onto the hub.
-	var storage := Vector2i(2, 2)
-	var south := Vector2i(1, 2)
-	if from_cell == storage:
+## Room-to-room route (every connection the map actually has open): through
+## the hub, with Bakery and the break room hanging off Dry Goods. PHASE 5B
+## PART 2A: rooms are the layout table's ids (main.areas), not grid cells —
+## the same route, decision for decision (this bot is the income harness's
+## player, so it must walk exactly as before).
+func route_next(from_room: String, to_room: String) -> String:
+	if from_room == to_room:
+		return to_room
+	var hub := "hub"
+	# WEEK 15: Storage hangs off the Sidewalk, which opens onto the hub.
+	var storage := "storage"
+	var south := "sidewalk"
+	if from_room == storage:
 		return south
-	if from_cell == south:
-		return storage if to_cell == storage else hub
-	if to_cell == storage and from_cell == hub:
+	if from_room == south:
+		return storage if to_room == storage else hub
+	if to_room == storage and from_room == hub:
 		return south
-	var dry := Vector2i(1, 0)
-	var off_dry := [Vector2i(0, 0), Vector2i(2, 0)]
-	if from_cell in off_dry:
-		return dry if to_cell != dry else dry
-	if from_cell == dry:
-		return to_cell if to_cell in off_dry else hub
-	if from_cell == hub:
-		return dry if to_cell in off_dry else to_cell
+	var dry := "dry_goods"
+	var off_dry := ["break_room", "bakery"]
+	if from_room in off_dry:
+		return dry
+	if from_room == dry:
+		return to_room if to_room in off_dry else hub
+	if from_room == hub:
+		return dry if to_room in off_dry else to_room
 	return hub # any spoke back to the hub first
 
-func cell_center(c: Vector2i) -> Vector2:
-	return Vector2((c.x + 0.5) * main.ROOM_WIDTH, (c.y + 0.5) * main.ROOM_HEIGHT)
+## A room's centre (the layout table's rect).
+func room_center(id: String) -> Vector2:
+	return main.areas.center_of(id)
 
-## Where to walk to reach `goal`: straight there inside the same cell,
-## otherwise toward the next cell's center.
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
+
+## Where to walk to reach `goal`: straight there inside the same room,
+## otherwise toward the next room's center.
 func waypoint(pos: Vector2, goal: Vector2) -> Vector2:
-	var a: Vector2i = main._grid_cell_of(pos)
-	var b: Vector2i = main._grid_cell_of(goal)
+	var a: String = main.areas.area_at(pos)
+	var b: String = main.areas.area_at(goal)
 	if a == b:
 		return goal
 	var nxt := route_next(a, b)
 	if nxt == b:
-		# Crossing straight into the goal cell: aim at the goal once close to
-		# the shared edge, otherwise at the next cell's center line.
-		return goal if pos.distance_to(goal) < 500.0 and nxt != Vector2i(1, 0) else cell_center(nxt)
-	return cell_center(nxt)
+		# Crossing straight into the goal room: aim at the goal once close to
+		# the shared edge, otherwise at the next room's center line.
+		return goal if pos.distance_to(goal) < 500.0 and nxt != "dry_goods" else room_center(nxt)
+	return room_center(nxt)
 
 func slot_color_ok(shelf_body: Node, obj: Node) -> bool:
 	return shelf_body.get_node("Shelf")._color_matches(obj)
@@ -656,7 +668,7 @@ func _pick_product(p: Node2D, only_color: Color) -> Node2D:
 			continue
 		# (Storage too: stock knocked back there. WEEK 18: the pads are in the
 		# sections now.)
-		if not main.is_unlocked_at_pos(obj.global_position) and not main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
+		if not main.is_unlocked_at_pos(obj.global_position) and not main.areas.area_at(obj.global_position) in ["hub", "storage"]:
 			continue
 		if pick_slot(obj.global_position, obj).is_empty():
 			continue
@@ -836,7 +848,7 @@ func _play_shift(stop: Callable = func(): return not main.shift_active or main.c
 				stats["banner_shot"] = true
 				await shot("solo_day%d_order_banner_and_look_busy" % main.current_day)
 		shot_cool -= dt
-		if shots and shot_cool <= 0.0 and fk().active and mgr().active and main._grid_cell_of(pos) == Vector2i(2, 1) and main._grid_cell_of(mgr().global_position) == Vector2i(2, 1):
+		if shots and shot_cool <= 0.0 and fk().active and mgr().active and main.areas.area_at(pos) == "produce" and main.areas.area_at(mgr().global_position) == "produce":
 			shot_cool = 12.0
 			await shot("solo_day%d_both_hazards" % main.current_day)
 
@@ -1118,7 +1130,7 @@ func _loose_stockable() -> int:
 	for obj in get_nodes_in_group("carryable"):
 		if obj.is_in_group("delivery_box") or obj.get_node("Carryable").carrier_id != 0 or _is_placed(obj) or _at_a_slot(obj):
 			continue
-		if main.is_unlocked_at_pos(obj.global_position) or main._grid_cell_of(obj.global_position) in [Vector2i(1, 1), main.STORAGE_GRID_POS]:
+		if main.is_unlocked_at_pos(obj.global_position) or main.areas.area_at(obj.global_position) in ["hub", "storage"]:
 			n += 1
 	return n
 
@@ -1228,9 +1240,9 @@ func loose_products(section_name: String) -> Array:
 
 ## An empty slot on a (non-wrecked) shelf in the given section.
 func empty_slot_in(section_name: String) -> Marker2D:
-	var cell: Vector2i = section_by_name(section_name)["grid_pos"]
+	var cell: String = section_by_name(section_name)["area"]
 	for sb in main.shelves:
-		if main._grid_cell_of(sb.global_position) != cell:
+		if main.areas.area_at(sb.global_position) != cell:
 			continue
 		var shelf: Node = sb.get_node("Shelf")
 		if shelf.wrecked:
@@ -1303,8 +1315,8 @@ func _run_orders() -> void:
 	main.open_store(0)
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
-	player().teleport_to(Vector2(480, 270))
+	pin_manager(area_spot("reserved"), 0.0)
+	player().teleport_to(area_spot("break_room"))
 	await wait(0.5)
 	var cashier: Node = main.cashiers[0].get_node("Cashier")
 
@@ -1372,7 +1384,7 @@ func _run_orders() -> void:
 	# --- O3: the order banner and the LOOK BUSY warning (and the write-up
 	# toast) up at the same time — separate rows, no overlap, all on screen.
 	await wait(main.PRIORITY_ORDER_RESULT_SECONDS + 0.2)
-	var spot := Vector2(1440, 270) # Dry Goods aisle
+	var spot := area_spot("dry_goods") # Dry Goods aisle
 	player().teleport_to(spot)
 	pin_manager(spot + Vector2(-180, 0), 0.0)
 	var st: Dictionary = mgr()._player_state(1)
@@ -1410,7 +1422,7 @@ func _run_orders() -> void:
 	await shot("o3_order_banner_with_look_busy")
 	release_manager()
 	main._clear_priority_order()
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	st["meter"] = 0.0
 	st["cooldown"] = 1000.0
 
@@ -1509,9 +1521,9 @@ func _net_read(file: String, timeout: float) -> Dictionary:
 ## so exactly; a client only has the replicated `filled` flags, so there it
 ## has to be a filled slot whose nearest item is this one (within the
 ## shelf's LEAVE_RADIUS — the placing player can nudge it).
-func _settled_in_cell(item: Node2D, cell: Vector2i) -> bool:
+func _settled_in_cell(item: Node2D, cell: String) -> bool:
 	for s in main.shelves:
-		if main._grid_cell_of(s.global_position) != cell:
+		if main.areas.area_at(s.global_position) != cell:
 			continue
 		var shelf: Node = s.get_node("Shelf")
 		if main.multiplayer.is_server():
@@ -1551,15 +1563,15 @@ func _contribute_to_order() -> Array:
 	var settled := []
 	var placed := []
 	var section: String = main.order_section
-	var cell: Vector2i = section_by_name(section)["grid_pos"]
-	var mine_shelves: Array = main.shelves.filter(func(s): return main._grid_cell_of(s.global_position) == cell)
+	var cell: String = section_by_name(section)["area"]
+	var mine_shelves: Array = main.shelves.filter(func(s): return main.areas.area_at(s.global_position) == cell)
 	mine_shelves.sort_custom(func(a, b): return String(a.name) < String(b.name))
 	var ids: Array = main.players.keys()
 	ids.sort()
 	my_shelf = mine_shelves[ids.find(me) % mine_shelves.size()]
 	order_only = true
 	on_place = func(item: Node2D, slot: Marker2D):
-		if main._grid_cell_of(slot.global_position) != cell or main.order_section == "":
+		if main.areas.area_at(slot.global_position) != cell or main.order_section == "":
 			return
 		if not (String(item.name) in placed):
 			placed.append(String(item.name))
@@ -1665,7 +1677,7 @@ func _run_net_orders_host() -> void:
 	main._order_timer = 1.0e9
 	main.prep_time_left = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	_watch_tags()
 	_watch_orders_view()
 	await wait(2.0)
@@ -1821,8 +1833,12 @@ func _n0_touching_players(names: Dictionary) -> void:
 ## Both sides of N0: hold the movement keys toward N0_TOWARD for 3s — every
 ## frame, this peer's own player must not be carried AWAY from where it's
 ## steering or off the map — then release and measure how far it keeps going.
-const N0_SPOT := Vector2(1800, 565)
-const N0_TOWARD := Vector2(1636, 360)
+## (PHASE 5B PART 2A: spots in the layout's named rooms — the hub's
+## north-east corner, heading into Dry Goods.)
+var N0_SPOT: Vector2:
+	get: return area_spot("hub", Vector2(360, -245))
+var N0_TOWARD: Vector2:
+	get: return area_spot("dry_goods", Vector2(196, 90))
 var n0_backwards := 0.0 # px moved against the held direction, summed
 
 func _n0_walk_then_stop() -> Array:
@@ -1835,7 +1851,7 @@ func _n0_walk_then_stop() -> Array:
 		var q: Vector2 = player().global_position
 		n0_backwards += maxf(0.0, -(q - prev).dot(heading))
 		prev = q
-		if q.x < 0.0 or q.y < 0.0 or q.x > main.WORLD_WIDTH or q.y > main.WORLD_HEIGHT:
+		if q.x < 0.0 or q.y < 0.0 or q.x > main.areas.world_rect().end.x or q.y > main.areas.world_rect().end.y:
 			inside = false
 	steer(Vector2.ZERO)
 	await wait(0.5)
@@ -1843,7 +1859,7 @@ func _n0_walk_then_stop() -> Array:
 	for i in 180:
 		await physics_frame
 		var q: Vector2 = player().global_position
-		if q.x < 0.0 or q.y < 0.0 or q.x > main.WORLD_WIDTH or q.y > main.WORLD_HEIGHT:
+		if q.x < 0.0 or q.y < 0.0 or q.x > main.areas.world_rect().end.x or q.y > main.areas.world_rect().end.y:
 			inside = false
 	return [player().global_position.distance_to(at), inside and n0_backwards < 40.0]
 
@@ -1925,7 +1941,7 @@ func park_everything() -> void:
 	main.test_hold_customers = true
 	main.open_store(0)
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -2033,20 +2049,20 @@ func _run_ambience() -> void:
 	check(a.active and a.spills.is_empty() and a.lights_event_id == 0 and a.brightness == 1.0, "A1 Day 6: active, starts clean (no spills, lights normal)")
 	check(is_equal_approx(a._lights_timer, a.LIGHTS_FIRST_DELAY) and is_equal_approx(a._spill_timer, a.SPILL_FIRST_DELAY), "A1 Day 6: first lights event in %.0fs, first spill in %.0fs" % [a._lights_timer, a._spill_timer])
 	park_everything()
-	player().teleport_to(Vector2(1440, 240)) # in Dry Goods' spawn band: spills must keep clear of me
+	player().teleport_to(area_spot("dry_goods", Vector2(0, -30))) # in Dry Goods' spawn band: spills must keep clear of me
 	await wait(0.5)
 
 	# --- A2: where spills may form. 400 picks against every rule.
 	var bad := []
 	var none := 0
 	var cells := {}
-	var fk_cell: Vector2i = main._grid_cell_of(fk().home_position)
+	var fk_cell: String = main.areas.area_at(fk().home_position)
 	for i in 400:
 		var pos = a.pick_spill_spot()
 		if pos == null:
 			none += 1
 			continue
-		var cell: Vector2i = main._grid_cell_of(pos)
+		var cell: String = main.areas.area_at(pos)
 		cells[cell] = cells.get(cell, 0) + 1
 		var why := ""
 		if not main.is_unlocked_at_pos(pos):
@@ -2155,8 +2171,8 @@ func _run_ambience() -> void:
 	var pat_a: Array = a.build_pattern(12345)
 	check(str(pat_a) == str(a.build_pattern(12345)) and str(pat_a) != str(a.build_pattern(54321)), "A7: the flicker pattern is a pure function of its seed")
 	var fk_on: bool = fk().active
-	player().teleport_to(Vector2(2400, 640)) # Meat/Deli, forklift and manager in view
-	pin_manager(Vector2(2250, 660), 0.0)
+	player().teleport_to(area_spot("produce", Vector2(0, -170))) # Meat/Deli, forklift and manager in view
+	pin_manager(area_spot("produce", Vector2(-150, -150)), 0.0)
 	await wait(0.4)
 	a.start_lights_event()
 	await physics_frame
@@ -2205,10 +2221,10 @@ func _run_ambience() -> void:
 	check(fk().active == fk_on and mgr().active, "A7: forklift and manager unaffected")
 
 	# --- A8: the day ends mid-event with spills down; next day starts clean.
-	player().teleport_to(Vector2(1440, 240))
+	player().teleport_to(area_spot("dry_goods", Vector2(0, -30)))
 	await wait(0.3)
-	a.spawn_spill(Vector2(1300, 455), 45.0)
-	a.spawn_spill(Vector2(1600, 455), 45.0)
+	a.spawn_spill(area_spot("dry_goods", Vector2(-140, 185)), 45.0)
+	a.spawn_spill(area_spot("dry_goods", Vector2(160, 185)), 45.0)
 	a.start_lights_event()
 	await wait(2.5)
 	check(a.brightness < 1.0, "A8: mid-event (brightness %.2f)" % a.brightness)
@@ -2261,7 +2277,8 @@ func _run_ambience() -> void:
 const E_LANE_YS := [600.0, 680.0, 760.0, 840.0]
 const E_LANE_CXS := [1350.0, 1600.0, 1350.0, 1600.0]
 const E_LANE_R := 48.0
-const E2_SPOT := Vector2(1440, 690)
+var E2_SPOT: Vector2: # (PHASE 5B PART 2A: open hub floor, from the layout table)
+	get: return area_spot("hub", Vector2(0, -120))
 const E2_R := 54.0
 
 ## WEEK 13 — what this peer draws for each product: its sprite region (or
@@ -2379,7 +2396,7 @@ func _e2_peer(k: int) -> Dictionary:
 		var settled: Vector2 = p.global_position
 		await wait(0.5)
 		var q2: Vector2 = p.global_position
-		if q2.x < 0.0 or q2.y < 0.0 or q2.x > main.WORLD_WIDTH or q2.y > main.WORLD_HEIGHT:
+		if q2.x < 0.0 or q2.y < 0.0 or q2.x > main.areas.world_rect().end.x or q2.y > main.areas.world_rect().end.y:
 			res["inside"] = false
 		if part == 0:
 			res["coast"] = settled.distance_to(at)
@@ -2442,7 +2459,7 @@ func _watch_env_view() -> void:
 		if player().is_slipping():
 			_env_view["slip_s"] += 1.0 / 60.0
 		var q: Vector2 = player().global_position
-		if q.x < 0.0 or q.y < 0.0 or q.x > main.WORLD_WIDTH or q.y > main.WORLD_HEIGHT:
+		if q.x < 0.0 or q.y < 0.0 or q.x > main.areas.world_rect().end.x or q.y > main.areas.world_rect().end.y:
 			_env_view["inside"] = false
 		if main.multiplayer.is_server() and main.writeups_today > prev_w:
 			prev_w = main.writeups_today
@@ -2593,7 +2610,7 @@ func _run_net_ambience_host() -> void:
 
 	# --- E7: the manager's fuse, timed on a client's own screen.
 	var target: int = ids[1]
-	var spot := Vector2(1440, 700)
+	var spot := area_spot("hub", Vector2(0, -110))
 	main.players[target].rpc("teleport_to", spot)
 	await wait(1.0)
 	mgr()._state.clear()
@@ -2605,7 +2622,7 @@ func _run_net_ambience_host() -> void:
 	var r7 := await _net_read("e7_%d.json" % target, 30.0)
 	var fuse: float = mgr().catch_time()
 	check(main.writeups_by_peer.get(target, 0) >= 1 and absf(r7.get("fuse", -1.0) - fuse) < 0.35, "E7: %s's own LOOK BUSY -> write-up toast took %.2fs on its screen (today's fuse %.1fs)" % [names[target], r7.get("fuse", -1.0), fuse])
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	mgr()._state.clear()
 	await wait(1.0)
 
@@ -2807,7 +2824,7 @@ func forklift_laps(seconds: float) -> Array:
 ## Seconds from the manager first starting to watch an idle player (the "?"
 ## appears) to the write-up, measured on the real detection loop.
 func time_to_writeup() -> float:
-	var spot := Vector2(1440, 700)
+	var spot := area_spot("hub", Vector2(0, -110))
 	player().teleport_to(spot)
 	steer(Vector2.ZERO)
 	pin_manager(spot + Vector2(150, 0), PI)
@@ -2817,7 +2834,7 @@ func time_to_writeup() -> float:
 	var t0 := Time.get_ticks_msec()
 	await wait_until(func(): return main.writeups_today > w0, 8.0)
 	var dt := (Time.get_ticks_msec() - t0) / 1000.0
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	mgr()._state.clear()
 	return dt
 
@@ -2846,7 +2863,7 @@ func _run_finale() -> void:
 	park_everything()
 	var lap6 := forklift_lap_pauses()
 	var catch6 := await time_to_writeup()
-	player().teleport_to(Vector2(1440, 240)) # out of Meat/Deli
+	player().teleport_to(area_spot("dry_goods", Vector2(0, -30))) # out of Meat/Deli
 	var laps6: Array = await forklift_laps(60.0)
 	fk()._pause_timer = 1.0e9
 	var spill_iv6 := []
@@ -2922,7 +2939,7 @@ func _run_finale() -> void:
 	var sum7: float = lap7["stops"].reduce(func(x, y): return x + y, 0.0)
 	check(sum7 < sum6 and lap7["stops"].size() == lap6["stops"].size() and lap7["telegraph"] == lap6["telegraph"] and lap7["telegraph"] == fk().RAMS_PER_LAP, "F2 forklift: %.1fs of stops per lap (Day 6 %.1fs), same %d telegraphed ram(s)" % [sum7, sum6, lap7["telegraph"]])
 	check(fk().TELEGRAPH_TIME == 0.9 and fk().DRIVE_SPEED < player().SPEED and fk().RAM_SPEED < player().SPEED, "F2 forklift: telegraph %.1fs and speeds unchanged (still outrunnable)" % fk().TELEGRAPH_TIME)
-	player().teleport_to(Vector2(1440, 240))
+	player().teleport_to(area_spot("dry_goods", Vector2(0, -30)))
 	var laps7: Array = await forklift_laps(60.0)
 	fk()._pause_timer = 1.0e9
 	var mean := func(xs: Array) -> float: return xs.reduce(func(x, y): return x + y, 0.0) / maxf(1.0, xs.size())
@@ -2934,7 +2951,7 @@ func _run_finale() -> void:
 	check(mgr().FINALE_CATCH_TIME > mgr().CHAOS_MEMORY, "F2 manager: one throw still can't write you up alone (%.1f > %.1f)" % [mgr().FINALE_CATCH_TIME, mgr().CHAOS_MEMORY])
 	var spill_iv7 := []
 	var light_iv7 := []
-	player().teleport_to(Vector2(480, 270)) # break room: out of every spill spot's way
+	player().teleport_to(area_spot("break_room")) # break room: out of every spill spot's way
 	await wait(0.3)
 	for i in 20:
 		a._spill_timer = 0.0
@@ -3080,7 +3097,7 @@ func _run_delivery() -> void:
 	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 
 	# --- D2: the truck, on its own schedule.
 	var t0 := Time.get_ticks_msec()
@@ -3099,7 +3116,7 @@ func _run_delivery() -> void:
 	# --- D3: the forklift unloads every box into receiving, then the truck leaves.
 	var t1 := Time.get_ticks_msec()
 	if shots:
-		player().teleport_to(Vector2(2500, 1140))
+		player().teleport_to(area_spot("storage", Vector2(100, -210)))
 		await wait(0.3)
 		await shot("d2_truck_at_dock")
 		await wait_until(func(): return dfk().carrying != "", 15.0)
@@ -3118,7 +3135,7 @@ func _run_delivery() -> void:
 	await wait_until(func(): return d.truck_offset >= d.TRUCK_AWAY_OFFSET, d.TRUCK_LINGER + d.TRUCK_DEPART_TIME + 2.0)
 	check(d.truck_offset >= d.TRUCK_AWAY_OFFSET and not d._truck.visible, "D3: empty truck pulled out and is gone")
 	check(dfk().drops_today == cargo.size() and dfk().rams_today == 0, "D3: %d set-downs, no rams" % dfk().drops_today)
-	player().teleport_to(Vector2(2450, 1330))
+	player().teleport_to(area_spot("storage", Vector2(50, -20)))
 	await wait(0.4)
 	await shot("d3_receiving")
 
@@ -3127,7 +3144,7 @@ func _run_delivery() -> void:
 	var slot: Marker2D = empty_slot_in(names[0])
 	if slot == null:
 		for s in main.shelves:
-			if main._grid_cell_of(s.global_position) == section_by_name(names[0])["grid_pos"]:
+			if main.areas.area_at(s.global_position) == section_by_name(names[0])["area"]:
 				var sh: Node = s.get_node("Shelf")
 				var o = sh._occupant[0]
 				if o != null:
@@ -3186,7 +3203,7 @@ func _run_delivery() -> void:
 	var spilled := get_nodes_in_group("carryable").filter(func(o): return not before_ids.has(o) and not o.is_in_group("delivery_box"))
 	var right_sec: bool = spilled.all(func(o): return main._section_of_color(o.get_node("Polygon2D").color) == sec)
 	var pc: Vector2 = d.pad_center(sec)
-	var by_pad: bool = spilled.all(func(o): return main._grid_cell_of(o.global_position) == section_by_name(sec)["grid_pos"] and not d.on_pad(o.global_position) and o.global_position.distance_to(pc) < d.SPILL_RING_MAX + 40.0)
+	var by_pad: bool = spilled.all(func(o): return main.areas.area_at(o.global_position) == section_by_name(sec)["area"] and not d.on_pad(o.global_position) and o.global_position.distance_to(pc) < d.SPILL_RING_MAX + 40.0)
 	var off_slots: bool = spilled.all(func(o): return not _at_a_slot(o) and not _is_placed(o))
 	var calm: bool = spilled.all(func(o): return o.linear_velocity.length() < 60.0)
 	print("DLV  unpacked into: %s" % str(spilled.map(func(o): return [o.name, o.global_position.round()])))
@@ -3241,10 +3258,10 @@ func _run_delivery() -> void:
 	# --- D7: stray box rescue: knocked into the break room -> back to receiving.
 	if boxes().size() > 0:
 		var b2: RigidBody2D = boxes()[0]
-		move_body(b2, Vector2(480, 300))
+		move_body(b2, area_spot("break_room", Vector2(0, 30)))
 		main._rescue_stranded_products()
 		await wait(0.2)
-		check(main._grid_cell_of(b2.global_position) == main.STORAGE_GRID_POS, "D7: a box in the break room is sent back to receiving (%s)" % str(b2.global_position.round()))
+		check(main.areas.area_at(b2.global_position) == "storage", "D7: a box in the break room is sent back to receiving (%s)" % str(b2.global_position.round()))
 
 	# --- D8: the forklift works around a full receiving row and people.
 	for b in boxes():
@@ -3260,7 +3277,7 @@ func _run_delivery() -> void:
 	player().teleport_to(d.RECEIVING_SPOTS[0])
 	await wait_until(func(): return boxes().size() >= 1, 30.0)
 	check(boxes().size() >= 1 and boxes().all(func(b): return b.global_position.distance_to(d.RECEIVING_SPOTS[0]) > 30.0), "D8: the first box went to the next spot, not the one a player is standing on (%s)" % str(boxes().map(func(b): return b.global_position.round())))
-	player().teleport_to(Vector2(2100, 1150))
+	player().teleport_to(area_spot("storage", Vector2(-300, -200)))
 
 	# --- D9: next day: boxes and truck gone, opening floor back, forklift home.
 	await wait(0.5)
@@ -3347,7 +3364,7 @@ func _run_net_delivery_host() -> void:
 	main.prep_time_left = 1.0e9
 	main._order_timer = 1.0e9
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	d._truck_timer = 1.0e9
 	for k in ids.size():
 		main.players[ids[k]].rpc("teleport_to", Vector2(2040 + 70 * k, 1150))
@@ -3411,7 +3428,7 @@ func _run_net_delivery_host() -> void:
 		if not o.is_in_group("delivery_box") and o.get_node("Carryable").carrier_id == 0:
 			var osec: String = main._section_of_color(o.get_node("Polygon2D").color)
 			loose[String(o.name)] = [o.global_position.x, o.global_position.y, osec]
-			if main._grid_cell_of(o.global_position) != section_by_name(osec)["grid_pos"]:
+			if main.areas.area_at(o.global_position) != section_by_name(osec)["area"]:
 				in_room = false
 			var dist: float = o.global_position.distance_to(d.pad_center(osec))
 			if dist > d.SPILL_RING_MAX + 40.0:
@@ -3537,13 +3554,13 @@ func _run_boxsync_host() -> void:
 	main.prep_time_left = 1.0e9
 	dl()._truck_timer = 1.0e9
 	await wait(1.0)
-	dl().drop_box(Vector2(2300, 1330), "Dry Goods")
-	main.spawn_product_at("Dry Goods", Vector2(2300, 1200))
+	dl().drop_box(area_spot("storage", Vector2(-100, -20)), "Dry Goods")
+	main.spawn_product_at("Dry Goods", area_spot("storage", Vector2(-100, -150)))
 	await wait(1.5)
 	var b: RigidBody2D = boxes()[0]
 	var pr: RigidBody2D = null
 	for o in get_nodes_in_group("carryable"):
-		if not o.is_in_group("delivery_box") and o.global_position.distance_to(Vector2(2300, 1200)) < 5.0:
+		if not o.is_in_group("delivery_box") and o.global_position.distance_to(area_spot("storage", Vector2(-100, -150))) < 5.0:
 			pr = o
 	for i in 3:
 		var way := -1.0 if i % 2 == 0 else 1.0
@@ -4112,7 +4129,7 @@ func _run_box_cycle() -> void:
 ## nearest empty slots (all empty). Deterministic, no physics; the Week 15-17
 ## Storage pad is its old fixed spot (2090,1330).
 ##   godot --headless --path . --script res://tools/hazards_test.gd -- --server --day=7 --test=route-len
-const OLD_STORAGE_PAD := Vector2(2090.0, 1330.0)
+const OLD_STORAGE_PAD := Vector2(2090.0, 1330.0) # (raw on purpose: where the pad USED to be, before Week 18)
 
 func route_len(a: Vector2, b: Vector2) -> float:
 	var total := 0.0
@@ -4139,7 +4156,7 @@ func _run_route_len() -> void:
 			var pad: Vector2 = OLD_STORAGE_PAD if which == "old" else dl().pad_center(name)
 			var slots := []
 			for sb in main.shelves:
-				if main._grid_cell_of(sb.global_position) == sec["grid_pos"]:
+				if main.areas.area_at(sb.global_position) == sec["area"]:
 					for sl in sb.get_node("Shelf").slots:
 						slots.append(sl.global_position)
 			slots.sort_custom(func(x, y): return route_len(pad, x) < route_len(pad, y))
@@ -4314,12 +4331,12 @@ func _run_cleanup() -> void:
 	# Known mess for the checks below: a spill, a knocked-over display and a
 	# knocked-off stocked item, all in reach of open floor.
 	fk()._pause_timer = 1.0e9
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	amb()._spill_timer = 1.0e9
-	var spill_id: int = amb().spawn_spill(Vector2(1440, 700), 44.0)
+	var spill_id: int = amb().spawn_spill(area_spot("hub", Vector2(0, -110)), 44.0)
 	# A second one, so CL2's ">= 3 mop messes at close" doesn't hang on the
 	# day's own random spills (one seeded spill + 1 random came up short).
-	amb().spawn_spill(Vector2(1700, 760), 40.0)
+	amb().spawn_spill(area_spot("hub", Vector2(260, -50)), 40.0)
 	# Some sales, so the day has a gross for the bonus to be a share of.
 	for i in 3:
 		var sold_one: RigidBody2D = await stock_one("Dry Goods")
@@ -4358,7 +4375,7 @@ func _run_cleanup() -> void:
 			if prod:
 				break
 	if prod == null:
-		main.spawn_product_at("Dry Goods", Vector2(1440, 400))
+		main.spawn_product_at("Dry Goods", area_spot("dry_goods", Vector2(0, 130)))
 		await wait(0.3)
 		prod = await stock_one("Dry Goods")
 	check(prod != null and _is_placed(prod), "CL setup: an item stocked on a shelf")
@@ -4368,7 +4385,7 @@ func _run_cleanup() -> void:
 	# Out onto open floor, so it can't slide back into a slot (which would
 	# rightly untag it).
 	await wait(0.4)
-	move_body(prod, Vector2(1300, 420))
+	move_body(prod, area_spot("dry_goods", Vector2(-140, 150)))
 
 	# A second knocked item that gets put back by hand -> untagged.
 	var others: Array = loose_products("Dry Goods").filter(func(o): return o != prod)
@@ -4384,7 +4401,7 @@ func _run_cleanup() -> void:
 	await walk_to(cl().STATION_POS + Vector2(0, 80), 10.0)
 	await shot("cleanup_station_closed_store")
 	check(await get_tool("mop"), "CL3: picked up a mop at the station with E")
-	var spill_pos: Vector2 = Vector2(1440, 700)
+	var spill_pos: Vector2 = area_spot("hub", Vector2(0, -110))
 	await face_target(spill_pos, cl().MOP_HEAD_OFFSET)
 	var t0 := _wall()
 	press(act + "place")
@@ -4427,7 +4444,7 @@ func _run_cleanup() -> void:
 	var dropped: int = cl().tools.filter(func(t): return t["kind"] == "mop" and t["holder"] == 0).size()
 	check(dropped == cl().MOPS, "CL4: the mop was put down (%d free mops)" % dropped)
 	# A tight cluster of litter, more than the pan holds.
-	var cluster_at := Vector2(1600, 700)
+	var cluster_at := area_spot("hub", Vector2(160, -110))
 	for i in cl().PAN_CAPACITY + 3:
 		cl().drop_litter(cluster_at + Vector2(randf_range(-14, 14), randf_range(-14, 14)))
 	await face_target(cluster_at, cl().BROOM_HEAD_OFFSET)
@@ -4516,8 +4533,8 @@ func _run_net_cleanup_host() -> void:
 	# Seed some mop mess on top of the day's own (Day 6 spills are random).
 	fk()._pause_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
-	amb().spawn_spill(Vector2(1300, 700), 44.0)
-	amb().spawn_spill(Vector2(1700, 760), 40.0)
+	amb().spawn_spill(area_spot("hub", Vector2(-140, -110)), 44.0)
+	amb().spawn_spill(area_spot("hub", Vector2(260, -50)), 40.0)
 	var disp: RigidBody2D = main.displays[0]
 	disp.get_node("Display").toppled = true
 	await wait_until(func(): return cl().litter.size() >= 4, 60.0)
@@ -4824,13 +4841,15 @@ func _run_net_cleanup_client() -> void:
 ## knock-over-able), PO6 the station -> clock trip (pick up a mop at the
 ## station during cleanup, put it back, clock out at the clock next to it).
 
+## (Deliberately raw: this pins the cans to where Phase 3D put them, so it
+## can't read them from the layout table it is checking.)
 const PO_BINS := [Vector2(1110.0, 590.0), Vector2(1300.0, 500.0), Vector2(1975.0, 620.0), Vector2(905.0, 620.0), Vector2(1975.0, 300.0)]
 
 ## Every section's shelves as data, identical on every peer.
 func _shelf_census() -> Dictionary:
 	var out := {}
 	for sec in main.SECTIONS:
-		var bodies: Array = main.shelves.filter(func(sb): return main._grid_cell_of(sb.global_position) == sec["grid_pos"])
+		var bodies: Array = main.shelves.filter(func(sb): return main.areas.area_at(sb.global_position) == sec["area"])
 		var slots := 0
 		var active := 0
 		var shapes := []
@@ -4860,9 +4879,9 @@ func _po_static_checks(who: String) -> Dictionary:
 	var sp: Vector2 = c.STATION_POS
 	# OCT 2026 PHASE 3D: the station's tools in the Break Room; one mop and one
 	# broom on the hub rack (tools are out all day now).
-	var room_spots: Array = c.TOOL_SPOTS.filter(func(s): return main._grid_cell_of(s) == main.BREAK_ROOM_GRID_POS)
-	var hub_spots: Array = c.TOOL_SPOTS.filter(func(s): return main._grid_cell_of(s) == main.ENTRANCE_GRID_POS)
-	check(main._grid_cell_of(sp) == main.BREAK_ROOM_GRID_POS and room_spots.size() == 4 and hub_spots.size() == 2, "%sPO1: tool station + its 4 tool spots in the Break Room, 2 on the hub rack (station %s)" % [who, str(sp)])
+	var room_spots: Array = c.TOOL_SPOTS.filter(func(s): return main.areas.area_at(s) == "break_room")
+	var hub_spots: Array = c.TOOL_SPOTS.filter(func(s): return main.areas.area_at(s) == "hub")
+	check(main.areas.area_at(sp) == "break_room" and room_spots.size() == 4 and hub_spots.size() == 2, "%sPO1: tool station + its 4 tool spots in the Break Room, 2 on the hub rack (station %s)" % [who, str(sp)])
 	var nearest: float = c.TOOL_SPOTS.map(func(s): return s.distance_to(main.TIME_CLOCK_POS)).min()
 	check(sp.distance_to(main.TIME_CLOCK_POS) < 250.0, "%sPO1: station is next to the time clock (%.0fpx)" % [who, sp.distance_to(main.TIME_CLOCK_POS)])
 	check(nearest > c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE, "%sPO1: no spot in reach of both a tool and the clock (nearest spot %.0fpx > %.0f)" % [who, nearest, c.TOOL_PICKUP_RANGE + main.TIME_CLOCK_RANGE])
@@ -5013,7 +5032,7 @@ func _po_press(action: String) -> void:
 	Input.action_release(action)
 
 func _po_station_trip(who: String, clock_out := true) -> void:
-	player().teleport_to(Vector2(1440, 700))
+	player().teleport_to(area_spot("hub", Vector2(0, -110)))
 	await wait(0.5)
 	var ok := await walk_to(cl().TOOL_SPOTS[0], 4.0, 30.0)
 	check(ok, "%sPO6: walked hub -> Break Room tool station%s" % [who, "" if ok else " (stuck at %s)" % str(player().global_position.round())])
@@ -5039,10 +5058,10 @@ func _run_polish() -> void:
 	await wait_until(func(): return main.shift_active and main.players.has(1) and main.store_open, 20.0)
 	await wait(1.0)
 	_po_static_checks("")
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	fk()._pause_timer = 1.0e9
 	# Stand clear of every queue lane (--shots frames a lane on its own).
-	player().teleport_to(Vector2(1440, 600))
+	player().teleport_to(area_spot("hub", Vector2(0, -210)))
 	await _po_stock_shelves()
 	var r := await _po_watch_conveyors(380.0)
 	_po_check_conveyor("", r)
@@ -5054,16 +5073,16 @@ func _run_polish() -> void:
 	if shots:
 		var cam := Camera2D.new()
 		main.add_child(cam)
-		cam.global_position = Vector2(2470, 760)
+		cam.global_position = area_spot("produce", Vector2(70, -50))
 		cam.zoom = Vector2(3, 3)
 		cam.make_current()
 		await process_frame
 		await shot("po5_produce_displays_one_knocked")
-		cam.global_position = Vector2(1440, 250)
+		cam.global_position = area_spot("dry_goods", Vector2(0, -20))
 		cam.zoom = Vector2(1.6, 1.6)
 		await process_frame
 		await shot("po2_dry_goods_shelves")
-		cam.global_position = Vector2(1360, 960)
+		cam.global_position = area_spot("hub", Vector2(-80, 150))
 		cam.zoom = Vector2(2.2, 2.2)
 		await process_frame
 		await shot("po3_checkout_lanes")
@@ -5089,7 +5108,7 @@ func _run_net_polish_host() -> void:
 	var ids: Array = main.players.keys()
 	ids.sort()
 	check(main.players.size() == want, "net: %d players connected" % main.players.size())
-	pin_manager(Vector2(480, 1350), 0.0)
+	pin_manager(area_spot("reserved"), 0.0)
 	fk()._pause_timer = 1.0e9
 	await wait(1.0)
 	var census := _po_static_checks("Host: ")
@@ -5180,7 +5199,7 @@ func _check_upgrade_effects(tag: String) -> void:
 	# Back Brace: E fills your arms up to the capacity; the host refuses one
 	# more; E on full arms sets the whole armful down, spread out.
 	var cap: int = main.shop.carry_capacity()
-	p.teleport_to(Vector2(1440, 700)) # open floor in the checkout hub
+	p.teleport_to(area_spot("hub", Vector2(0, -110))) # open floor in the checkout hub
 	await wait(0.3)
 	for i in cap + 1:
 		main.spawn_product_at("Dry Goods", p.global_position + Vector2(-20 + 20 * i, 30))
@@ -5237,7 +5256,7 @@ func _check_upgrade_effects(tag: String) -> void:
 			check(had_box and p.carried_count(me) == 0 and grabbed == 0, "%s: holding a box, E sets the box down and grabs no product with it (%d held)" % [tag, p.carried_count(me)])
 	# Clear what this check spawned so the shift starts as it would have.
 	for o in get_nodes_in_group("carryable"):
-		if o.get_node("Carryable").carrier_id == 0 and o.global_position.distance_to(Vector2(1440, 700)) < 120.0:
+		if o.get_node("Carryable").carrier_id == 0 and o.global_position.distance_to(area_spot("hub", Vector2(0, -110))) < 120.0:
 			o.queue_free()
 	p.teleport_to(main.SPAWN_CENTER)
 	await wait(0.3)

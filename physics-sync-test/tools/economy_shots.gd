@@ -7,6 +7,12 @@ extends SceneTree
 ## PNGs land in user://economy_shots/. Not part of the game.
 
 var main: Node
+
+## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
+## plus an offset — so a test says WHICH room it means instead of repeating
+## raw world coordinates (main.areas; StoreLayout.gd).
+func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
+	return main.areas.center_of(id) + offset
 var n := 0
 
 func _initialize() -> void:
@@ -49,20 +55,20 @@ func _run() -> void:
 	while not main.shift_active:
 		await process_frame
 	await create_timer(0.5).timeout
-	me().teleport_to(Vector2(1880, 760))
+	me().teleport_to(area_spot("hub", Vector2(440, -50)))
 	await create_timer(0.3).timeout
 	await shot("gate_for_sale_broke")
-	me().teleport_to(Vector2(1860, 830))
+	me().teleport_to(area_spot("hub", Vector2(420, 20)))
 	await create_timer(0.3).timeout
 	await shot("gate_sign_produce")
-	me().teleport_to(Vector2(1860, 300))
+	me().teleport_to(area_spot("dry_goods", Vector2(420, 30)))
 	await create_timer(0.3).timeout
 	await shot("gate_sign_bakery")
 	main.cashiers[0].get_node("Cashier").total_sold += 60
 	await end_day()
 	await shot("report_forecast_affordable")
 	await next_day()
-	me().teleport_to(Vector2(1880, 760))
+	me().teleport_to(area_spot("hub", Vector2(440, -50)))
 	await create_timer(0.3).timeout
 	await shot("gate_prompt_can_buy")
 	main.buy_section("Produce", 1)
