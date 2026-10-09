@@ -137,7 +137,7 @@ const ROOMS := [
 		"links": ["staff_hall", "hub", "bakery", "dairy_frozen", "produce"],
 		"waypoint": Vector2(1200.0, 790.0),
 		"lookouts": [Vector2(1200.0, 790.0), Vector2(1200.0, 1090.0)],
-		"spawn_band": Rect2(60.0, 520.0, 720.0, 260.0)},
+		"spawn_band": Rect2(120.0, 520.0, 540.0, 240.0)}, # (between the tool rack and the checkout's door corridor)
 	{"id": "hub", "role": "hub", "rect": Rect2(780.0, 1380.0, 840.0, 300.0),
 		"shop_floor": true, "bg": "EntranceBg", "wall_art": "market",
 		"links": ["dry_goods", "dairy_frozen", "produce", "sidewalk"],
@@ -207,12 +207,16 @@ const BARRIERS := [
 const ANCHORS := {
 	# --- people ---
 	"player_spawn": Vector2(480.0, 270.0), # Main.SPAWN_CENTER: you clock in in the break room
-	"janitor_home": Vector2(880.0, 650.0), # Janitor.HOME: by the shop's tool rack, inside the staff door
+	"janitor_home": Vector2(900.0, 1360.0), # Janitor.HOME: by the shop's tool rack
 	"front_door": Vector2(1510.0, 1680.0), # Cleanup.FRONT_DOOR: the hauling arrow points here
 	"bounce_target": Vector2(1510.0, 1730.0), # the practice shift's "walk them out" marker, just past the door
 	# --- the sales floor ---
 	"store_sign": Vector2(1665.0, 1720.0), # Main.STORE_SIGN_POS: on the pavement, east of the door
-	"tool_rack": Vector2(860.0, 588.0), # Cleanup.RACK_POS: the shop's back wall, west of the staff door
+	# Cleanup.RACK_POS: a free-standing rack on the shop's west side, south of
+	# the aisles — ~540 px from the checkout's mess, as the old hub rack was
+	# (by the staff door it was ~990 px away, and fetching the broom lost to
+	# sweeping by hand: tools/upkeep_test.gd B2/B3).
+	"tool_rack": Vector2(850.0, 1300.0),
 	# --- the break room (unchanged) ---
 	"time_clock": Vector2(880.0, 300.0),
 	"tool_station": Vector2(700.0, 280.0),
@@ -252,7 +256,7 @@ const CANS := [
 
 ## The tools in tool order (mops, then brooms): the break-room station's two of
 ## each, then the shop rack's one of each (Cleanup.TOOL_SPOTS).
-const TOOL_SPOTS := [Vector2(660.0, 320.0), Vector2(678.0, 320.0), Vector2(838.0, 612.0), Vector2(722.0, 320.0), Vector2(740.0, 320.0), Vector2(882.0, 612.0)]
+const TOOL_SPOTS := [Vector2(660.0, 320.0), Vector2(678.0, 320.0), Vector2(828.0, 1324.0), Vector2(722.0, 320.0), Vector2(740.0, 320.0), Vector2(872.0, 1324.0)]
 
 ## The practice shift's litter props (the shop floor, south-west).
 const PRACTICE_LITTER := [Vector2(900.0, 1150.0), Vector2(935.0, 1190.0), Vector2(970.0, 1140.0), Vector2(880.0, 1220.0)]

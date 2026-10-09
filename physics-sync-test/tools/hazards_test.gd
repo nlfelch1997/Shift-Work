@@ -3654,20 +3654,20 @@ func _run_prep() -> void:
 	check(main.orders_called_today == 0 and is_equal_approx(main._order_timer, order_t0), "P1: no priority order call-outs while closed (timer held at %.0fs)" % main._order_timer)
 	await shot("p1_prep_banner")
 	# --- P2: E away from the sign does nothing to the store.
-	player().teleport_to(main.STORE_SIGN_POS + Vector2(0, 160))
+	player().teleport_to(main.STORE_SIGN_POS + Vector2(160, 40)) # (PHASE 5B PART 2B: along the pavement — it's 180 px deep now)
 	await wait(0.3)
 	await tap(act + "interact")
 	await wait(0.4)
 	check(not main.store_open, "P2: E pressed away from the sign: still closed")
 	# ...and carrying something at the sign: E sets it down, doesn't open.
-	var spot: Vector2 = main.STORE_SIGN_POS + Vector2(40, 140) # well outside the sign's range
+	var spot: Vector2 = main.STORE_SIGN_POS + Vector2(180, 40) # well outside the sign's range, along the pavement
 	main.spawn_product_at(main._unlocked_sections()[0]["name"], spot)
 	await wait(0.4)
 	var prod: RigidBody2D = null
 	for o in get_nodes_in_group("carryable"):
 		if o.global_position.distance_to(spot) < 10.0:
 			prod = o
-	player().teleport_to(main.STORE_SIGN_POS + Vector2(0, 140))
+	player().teleport_to(main.STORE_SIGN_POS + Vector2(140, 40))
 	await wait(0.3)
 	await tap(act + "interact")
 	await wait_until(func(): return prod.get_node("Carryable").carrier_id == 1, 1.0)
