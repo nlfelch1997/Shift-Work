@@ -238,8 +238,17 @@ const ANCHORS := {
 ## of open floor round it (its spill ring is 80-150 px out).
 const PADS := {
 	"Dry Goods": Vector2(1200.0, 1100.0), # at the gondolas' south ends: the shortest shelving trips (crew-only: Dry Goods has no helper)
-	"Produce": Vector2(1790.0, 700.0),
-	"Dairy/Frozen": Vector2(620.0, 1190.0),
+	# A helper's pad sits in the floor its slots face: Produce's at the dead-end
+	# north end of the strip between its two rows (every slot faces it), far
+	# enough west that its spill ring (<= 150 px) stays off the forklift lane
+	# (x 2120: the forklift plows anything on it); Dairy/Frozen's at the head
+	# of the aisle between the wall run and the island. The first placements
+	# (by the back door; east of the island) made the helpers walk round a
+	# shelf row for most units: ~50 % more walking than the old rooms'
+	# helpers, and their wings ran a third emptier at 3 sections (progression
+	# sim; docs/store-layout-plan-b-report.md section 5).
+	"Produce": Vector2(1950.0, 670.0),
+	"Dairy/Frozen": Vector2(330.0, 1210.0),
 	"Bakery": Vector2(450.0, 900.0),
 }
 

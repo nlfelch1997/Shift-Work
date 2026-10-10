@@ -612,6 +612,12 @@ var _bot_path := PackedVector2Array()
 var _bot_goal := Vector2.INF
 var _bot_planned_ms := -100000
 
+func _bot_nav_open(p: Vector2) -> bool:
+	if _bot_nav == null:
+		_bot_nav = Spots.nav(main)
+	_bot_nav.path(p, p) # (re)builds the grid if it's stale
+	return _bot_nav.is_open(p)
+
 func waypoint(pos: Vector2, goal: Vector2) -> Vector2:
 	if _bot_nav == null:
 		_bot_nav = Spots.nav(main)
@@ -3110,8 +3116,14 @@ func haul_box(box: Node2D) -> bool:
 ## if it was set down on that pad or unpacked.
 func carry_box_to_pad(box: Node2D, pad_section: String) -> bool:
 	var c: Vector2 = dl().pad_center(pad_section)
-	await walk_to(c + Vector2(0, 140), 12.0, 40.0)
-	await walk_to(c + Vector2(0, 60), 5.0, 6.0)
+	# Line up south of the pad first — PHASE 5B PART 2B: where that's open
+	# floor (Plan B's Produce pad has a shelf end 64 px below it: the bot
+	# paths straight to the drop stand instead).
+	if _bot_nav_open(c + Vector2(0, 140)):
+		await walk_to(c + Vector2(0, 140), 12.0, 40.0)
+		await walk_to(c + Vector2(0, 60), 5.0, 6.0)
+	else:
+		await walk_to(c + Vector2(0, 60), 5.0, 40.0)
 	steer(Vector2.UP)
 	await physics_frame
 	await physics_frame
@@ -3262,6 +3274,12 @@ func _run_delivery() -> void:
 	var job := pick_slot(player().global_position, item)
 	await walk_to(job["pos"] + job["out"] * 80.0, 10.0, 25.0)
 	await walk_to(job["pos"] + job["out"] * 29.0, 3.0, 5.0)
+	# Face the slot (walk_to's last nudge can leave the player facing back
+	# the way it came, carrying the item away from the shelf).
+	steer(-job["out"])
+	await physics_frame
+	await physics_frame
+	steer(Vector2.ZERO)
 	await wait_until(func(): return player()._place_target_slot != null, 1.0)
 	await tap(act + "place")
 	var shelved := await wait_until(func(): return _is_placed(item), 2.0)
