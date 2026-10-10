@@ -684,11 +684,12 @@ func _run_trash() -> void:
 	var juice: Node = main.juice
 	var pops := []
 	juice.fired.connect(func(kind, pos): if kind == "litter_pay": pops.append(pos))
-	# 1. Mid-shift: 5 pieces, picked up by hand with E.
+	# 1. Mid-shift: 5 pieces, picked up by hand with E. (A row east of the
+	# shop's tool rack: E takes a tool before trash.)
 	var hub: Vector2 = area_spot("hub", Vector2(0, -150))
 	var ids := []
 	for i in 5:
-		ids.append(cl.drop_litter(hub + Vector2(i * 100.0 - 400.0, 40.0)))
+		ids.append(cl.drop_litter(hub + Vector2(i * 80.0 - 300.0, 40.0)))
 	await wait(0.3)
 	for o in get_nodes_in_group("carryable"):
 		if o.global_position.distance_to(hub) < 400.0:
@@ -699,7 +700,7 @@ func _run_trash() -> void:
 	var can_at: Vector2 = cl.BINS[0]["pos"] + Vector2(0, 30)
 	var binned_trips := 0
 	for i in ids.size():
-		var at: Vector2 = hub + Vector2(i * 100.0 - 400.0, 40.0)
+		var at: Vector2 = hub + Vector2(i * 80.0 - 300.0, 40.0)
 		p.teleport_to(at + Vector2(-35, 30))
 		await wait(0.3)
 		if cl._hint.visible and cl._hint.text.begins_with("E: pick up trash"):
@@ -725,24 +726,32 @@ func _run_trash() -> void:
 	await wait(1.4)
 	check(juice.popups.filter(func(x): return x["text"].begins_with("+$")).is_empty(), "T2: and they've all faded after %.1fs (none left)" % (juice.POPUP_LIFE + 0.3))
 	# 2. E near trash AND near stock: the nearer one wins; shelved stock never.
+	# PHASE 5B PART 2B: at the shop's north end, well away from Plan B's
+	# door (troublemakers arriving there head for the player, and one in
+	# reach takes the E press) and from every knock-out wall (E buys).
+	var t3: Vector2 = area_spot("dry_goods", Vector2(280, -550))
 	var prod: RigidBody2D = null
 	main._spawn_product_for("Dry Goods")
 	await physics_frame
 	await physics_frame
 	prod = loose_products("Dry Goods")[0]
-	move_body(prod, hub + Vector2(0, 150))
-	var lid: int = cl.drop_litter(hub + Vector2(45, 150))
+	var lid: int = cl.drop_litter(t3 + Vector2(45, 150))
+	p.teleport_to(t3 + Vector2(45, 190)) # trash 40px, product 60px: stock still wins
 	await wait(0.3)
-	p.teleport_to(hub + Vector2(45, 190)) # trash 40px, product 60px: stock still wins
-	await wait(0.3)
+	# The product goes down last, just before E (PHASE 5B PART 2B: this spot
+	# is on the shoppers' way in from Plan B's door, and a passing cart
+	# shoved it out of reach in the 0.6 s the old order left it there).
+	move_body(prod, t3 + Vector2(0, 150))
+	await physics_frame
+	await physics_frame
 	await tap("host_interact")
 	await wait(0.3)
-	check(prod.get_node("Carryable").carrier_id == 1 and cl.litter.size() == 1, "T3: loose stock and trash both in reach -> E picks up the stock (product %.0fpx, trash %.0fpx, carrier %d, litter %d)" % [p.global_position.distance_to(prod.global_position), p.global_position.distance_to(hub + Vector2(45, 150)), prod.get_node("Carryable").carrier_id, cl.litter.size()])
+	check(prod.get_node("Carryable").carrier_id == 1 and cl.litter.size() == 1, "T3: loose stock and trash both in reach -> E picks up the stock (product %.0fpx, trash %.0fpx, carrier %d, litter %d)" % [p.global_position.distance_to(prod.global_position), p.global_position.distance_to(t3 + Vector2(45, 150)), prod.get_node("Carryable").carrier_id, cl.litter.size()])
 	await tap("host_interact")
 	await wait(0.3)
 	move_body(prod, out_of_the_way())
 	await wait(0.2)
-	p.teleport_to(hub + Vector2(45, 190))
+	p.teleport_to(t3 + Vector2(45, 190))
 	await wait(0.3)
 	await tap("host_interact")
 	await wait(0.3)
