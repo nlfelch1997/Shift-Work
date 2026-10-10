@@ -100,7 +100,8 @@ exact shapes, and why:
 | 6 | Dry Goods pad between the gondolas (1200, 1060) | **(1200, 1100), at the gondolas' south ends** | Between them, its spill ring (80–150 px) landed on the gondolas' slot rows. First built further south at (1200, 1230); the income harness showed shelving walks 21 % longer than main's, so it moved up to the aisle mouths (section 5). |
 | 7 | Gondola centre y 900 | **y 950** | Leaves a 90 px cross-aisle under the back-wall shelves' standing spots (the model's was ~50 px). |
 | 8 | Gondola end caps | **Not built** | The proposal flagged their mouths as stuck-point risks; nothing in the game needs them. Listed for the art pass (B16). |
-| 9 | Produce: 2 shelves on its west row at y 760 / 1000; pad at (2160, 1420) | **West row at y 880 / 1060 (level with the east row's), pad at (1790, 700) by the back door** | The forklift's lap visits "stations" along its lane; aligned rows give it the old pattern (stations with a shelf on each side). The pad by the back door makes the crew's carry from Storage short (that's the plan's carry win). |
+| 9 | Produce: 2 shelves on its west row at y 760 / 1000; pad at (2160, 1420) | **West row at y 880 / 1060 (level with the east row's); pad at (1950, 670), the dead-end north end of the strip both rows face** | The forklift's lap visits "stations" along its lane; aligned rows give it the old pattern (stations with a shelf on each side). The pad: first built by the back door (1790, 700) for a short carry from Storage, but the progression sim showed the Produce helper walking round its west row for most units and the wing running a third emptier than the old room (section 5). At (1950, 670) every slot faces it and its spill ring stays off the forklift lane. |
+| 9b | Dairy/Frozen pad (not placed in the proposal) | **(330, 1210), at the head of the aisle between the wall run and the island** | First built east of the island (620, 1190); same finding and fix as Produce's. |
 | 10 | Staff door 1000–1120, "widen to 200 in Part 2" | **200 px (1000–1200)** | As the proposal asked. Break room ↔ hall and hall ↔ Storage doorways are 230 px. |
 | 11 | The shop's tool rack (not placed in the proposal) | **Free-standing on the shop's west side, south of the aisles (850, 1300)** | First placed by the staff door; the upkeep tests showed fetching the broom then lost to sweeping by hand (the rack was ~990 px from the checkout's mess, vs ~540 in the old hub). Moved back to ~540. |
 | 12 | Manager "lookouts per wing" | **Every room's waypoint and lookouts are in the table**, his checkout stop (and start) inside the door | He walks straight lines with no collision; the old centre-to-centre legs would cross Plan B's shelves. `growth_test` ray-checks every leg. |
@@ -196,11 +197,11 @@ the HUD on, at every growth stage):
 - **A sound for the knock-out.** No new audio this phase; it plays the
   existing "store open" sting.
 - **Gondola end caps** (proposal: optional; B16).
-- **Produce's walk.** Its unit trip (Storage → pad → shelves) is longer
-  than the old Produce room's (route-len, section 5). The pad by the back
-  door was the best of the spots tried, and the income and progression
-  numbers stayed in range, so nothing else moved. If playtests say Produce
-  feels like a hike, the next lever is its west row's position (data only).
+- **Produce's carry from Storage.** With its pad moved into the wing (section
+  5), the crew's box carry from Storage to Produce is ~440 px, up from ~410
+  by the back door (still a third of the old ~1,350). If playtests say
+  Produce's back door feels pointless, a second, crew-side drop spot by the
+  door would be new gameplay, so it isn't here.
 - **`tools/overview_shot.gd`'s scaling bug** (2A's report) is still not
   fixed; `layout_proof.gd` and `planb_shots.gd` take the whole-store shots.
 
@@ -210,10 +211,24 @@ the HUD on, at every growth stage):
   Moving it onto a real nav grid changed main's own numbers a little, so
   every branch figure here is compared with main walked by the same bot,
   and with the Phase 5 baseline only as a sanity check.
-- **The first pad placement cost ~12 % income without any test failing.**
-  Only the income harness showed it (the shelving walk from the old pad
-  spot was +21 % on main's). Layout changes need the income harness, not
-  just the functional suite.
+- **Pad placement is the layout's biggest balance lever, and no functional
+  test sees it.** Three pads were first placed where they looked sensible
+  (a short carry from Storage, clear of the aisles). The income harness
+  showed Dry Goods' costing ~12 % of day-1 pay, and the progression sim
+  showed Produce's and Dairy's helpers walking ~50 % more than the old
+  rooms', with those wings a third emptier and the game three shifts slower.
+  Every test passed throughout. The fix each time was moving the pad into
+  the floor its slots face. Layout changes need the income harness **and**
+  the progression sim, not just the suite.
+- **A pad's spill ring must stay off a forklift lane.** The first in-wing
+  Produce pad (1990, 670) spilled units onto the lane, and the forklift
+  plowed them across the wing (found by `hz-delivery` D5). Moved 40 px
+  west; worth a guard test if pads move again.
+- **The test bot's pad approach assumed the old rooms.**
+  `carry_box_to_pad()` always lined up 140 px south of a pad, which in
+  Plan B's Produce wing is inside a shelf, and timed out for 40 s per box.
+  It now lines up only where that's open floor. The income/progression
+  brain uses its own drop stand and wasn't affected.
 - **`pkill -f` in test scripts can match the runner's own shell.** It
   happened here several times with long command lines. The regression
   runner doesn't do this; ad-hoc scripts should kill by PID.
