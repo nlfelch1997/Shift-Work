@@ -325,7 +325,28 @@ purchase, knock-out, cap and end screen.
 
 ## 6. Soak and performance
 
-(pending)
+`staff_test.gd --test=soak`: 8 top-tier shifts (day 7, all four sections),
+every helper and the janitor hired, events on, real time. Clean main and
+this branch ran side by side on the same machine, with nothing else running.
+
+| | Clean main | Plan B |
+|---|---|---|
+| Result | OK (0 failures) | OK (0 failures) |
+| Frame time avg, per shift | 10.9, 10.7, 16.0, 12.1, 15.5, 19.4, 14.2, 18.4 ms (mean 14.6) | 10.8, 12.1, 14.6, 11.4, 12.7, 12.9, 14.7, 15.8 ms (mean 13.1) |
+| Frame time p95, per shift | 20–48 ms | 23–38 ms |
+| Nodes at each report | 2754, 3010, 3143, 2935, 3110, 3119, 3034, 3239 | 2925, 2933, 3127, 3089, 3103, 3120, 3065, 3223 |
+| Orphan nodes | 0 every shift | 0 every shift |
+| Static memory | 112.8 → 119.7 MB | 114.1 → 118.5 MB |
+| Peak customers | 17–20 | 18–21 |
+| Helpers inside the forklift / out of their wing / stuck | 0 / 0 / 0 | 0 / 0 / 0 |
+
+**No performance cost.** The brief's reference was ~12.3 ms in the
+top-tier soak. Both sides came out around 13–15 ms this time, the
+machine's own variance. Plan B's mean is 1.5 ms *lower* than main's. Its
+extra ~170 nodes at the first report are the growth layer (lots, fences,
+boards, banners, wall chunks: `StoreGrowth.gd`, first built as ~980 nodes
+and redrawn as one draw node per lot's marks) and the table-built walls and
+barriers. Memory is +1.3 MB at the start and level by the end.
 
 ## 7. Regression
 
