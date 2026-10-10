@@ -281,7 +281,7 @@ horizontal_alignment = 1
 text = "CHECKOUT"
 
 [node name="DryGoods" type="Node2D" parent="SectionLabels"]
-position = Vector2(1200, 790)
+position = Vector2(1290, 790)
 
 [node name="Label" type="Label" parent="SectionLabels/DryGoods"]
 offset_left = -150.0
