@@ -251,6 +251,26 @@ The day-7 harness opens at the prep ceiling (96 s of selling), where that
 walk costs most. Moving Produce's shelf block 300 px south saved only 3 %
 and wasn't done.
 
+### 5.3 Progression sim (`--test=progress`, typical crew, events on, event-aware bot)
+
+"At shift N" = true at the start of that shift's prep (after its purchases).
+
+**Solo.**
+
+| Milestone | Target | Main, Phase 5's bot | Main, same bot as Plan B | **Plan B** | Plan B, first pads |
+|---|---|---|---|---|---|
+| Produce (the demo's first growth) | by 4 | 3 | 3 | **3** | 3 |
+| First helper | by 4 | 4 | 3 | **3** | 4 |
+| First random event | by 4 | 3 | 3 | **3** | 3 |
+| Rating moved ±0.5★ | by 4 | 4 | 4 | **4** | 2 |
+| Dairy/Frozen | — | 7 | 6 | **7** | 7 |
+| All three sections | ~10 | 11 | 10 | **12** | 13 |
+| Every helper's training | — | 14 | 13 | **15** | 16 |
+| Top tier, helpers hired | ~16 | 16 | 16 | **17** | 19 |
+| Everything (janitor, training, whole gear shop) | ~24 | 24 | 25 | **26** | — |
+
+(MULTIPLAYER_TABLES)
+
 ## 6. Soak and performance
 
 (pending)
