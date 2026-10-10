@@ -363,7 +363,7 @@ func _run_shelf() -> void:
 	await wait(0.3)
 	for o in get_nodes_in_group("carryable"):
 		if o != pick and not o.get_node("Carryable").shelved and o.global_position.distance_to(p.global_position) < 90.0:
-			move_body(o, o.global_position + Vector2(0, 200)) # nothing loose nearer
+			move_body(o, o.global_position + aisle * 200.0) # nothing loose nearer
 	await wait(0.2)
 	await tap("host_interact")
 	await wait(0.3)
@@ -393,17 +393,31 @@ func _run_shelf() -> void:
 			red = c
 	check(red != null and red.collision_mask & 4 != 0, "S6: a disruptive customer's mask includes the shelf-stock layer")
 	var knocked_by_red := 0
-	for k in 3:
-		var tgt: Vector2 = shelf.slots[k % shelf.slots.size()].global_position
-		red.position = tgt + Vector2(0, 70)
+	# PHASE 5B PART 2B: it walks ALONG the stocked row, through the slots —
+	# the way a troublemaker plows a shelf. (Walking straight at one item
+	# only presses it into the shelf behind it: with Plan B's back-to-back
+	# gondola shelves that never dislodged anything; on the old wall shelves
+	# it happened to, at a glancing angle.)
+	var row: Vector2 = sb.global_transform.x.normalized() # along the row of slots
+	var first: Vector2 = shelf.slots[0].global_position
+	var last: Vector2 = shelf.slots[shelf.slots.size() - 1].global_position
+	if (last - first).dot(row) < 0.0:
+		row = -row
+	for k in 2:
+		red.position = first - row * 70.0
 		red.reset_physics_interpolation()
-		red._retarget_pos = tgt + Vector2(0, -20)
+		red._retarget_pos = last + row * 70.0
 		red._retarget_timer = 5.0
 		red._lifetime = 0.0
-		await wait(1.5)
+		await wait(2.5)
+		if full - _stocked_on(sb).size() > 0:
+			break
 	knocked_by_red = full - _stocked_on(sb).size()
 	check(knocked_by_red > 0, "S6: a disruptive customer walked into the stock and knocked %d item(s) off" % knocked_by_red)
 	red.force_leave()
+	# PHASE 5B PART 2B: let it get clear first — its way out to the door can
+	# run along this very row (Plan B's gondolas), knocking stock S7 counts.
+	await wait_until(func(): return not is_instance_valid(red) or red.global_position.distance_to(sb.global_position) > 400.0, 20.0)
 	await wait(0.3)
 	# 6. A shopper walking through it does not.
 	await _fill_shelf(sb)
@@ -414,10 +428,14 @@ func _run_shelf() -> void:
 	for c in get_nodes_in_group("customer"):
 		if c.role == "shopper":
 			blue = c
-	blue.position = shelf.slots[0].global_position + Vector2(-60, 0)
+	var along: Vector2 = sb.global_transform.x.normalized() # along the row of slots
+	# Nothing on its list from this shelf: the check is about knocking, and a
+	# shopper dragged past items it wants simply takes them.
+	blue.shopping_list = PackedStringArray(["Bakery"])
+	blue.position = shelf.slots[0].global_position - along * 60.0
 	blue.reset_physics_interpolation()
 	var tt := 0.0
-	var goal: Vector2 = shelf.slots[shelf.slots.size() - 1].global_position + Vector2(60, 0)
+	var goal: Vector2 = shelf.slots[shelf.slots.size() - 1].global_position + along * 60.0
 	while tt < 3.0:
 		blue.position = blue.position.move_toward(goal, 200.0 / 60.0)
 		blue.velocity = Vector2.ZERO
@@ -666,22 +684,23 @@ func _run_trash() -> void:
 	var juice: Node = main.juice
 	var pops := []
 	juice.fired.connect(func(kind, pos): if kind == "litter_pay": pops.append(pos))
-	# 1. Mid-shift: 5 pieces, picked up by hand with E.
-	var hub: Vector2 = room_center("hub")
+	# 1. Mid-shift: 5 pieces, picked up by hand with E. (A row east of the
+	# shop's tool rack: E takes a tool before trash.)
+	var hub: Vector2 = area_spot("hub", Vector2(0, -150))
 	var ids := []
 	for i in 5:
-		ids.append(cl.drop_litter(hub + Vector2(i * 120.0 - 240.0, 40.0)))
+		ids.append(cl.drop_litter(hub + Vector2(i * 80.0 - 300.0, 40.0)))
 	await wait(0.3)
 	for o in get_nodes_in_group("carryable"):
 		if o.global_position.distance_to(hub) < 400.0:
-			move_body(o, o.global_position + Vector2(0, 400))
+			move_body(o, out_of_the_way(Vector2(randf_range(-200, 200), randf_range(-40, 40))))
 	# OCT 2026 PHASE 3D: trash goes in your hand (HAND_MAX at a time) and pays
 	# when it goes in a can — so two trips to the hub's can for five pieces.
 	var hinted := 0
 	var can_at: Vector2 = cl.BINS[0]["pos"] + Vector2(0, 30)
 	var binned_trips := 0
 	for i in ids.size():
-		var at: Vector2 = hub + Vector2(i * 120.0 - 240.0, 40.0)
+		var at: Vector2 = hub + Vector2(i * 80.0 - 300.0, 40.0)
 		p.teleport_to(at + Vector2(-35, 30))
 		await wait(0.3)
 		if cl._hint.visible and cl._hint.text.begins_with("E: pick up trash"):
@@ -707,24 +726,32 @@ func _run_trash() -> void:
 	await wait(1.4)
 	check(juice.popups.filter(func(x): return x["text"].begins_with("+$")).is_empty(), "T2: and they've all faded after %.1fs (none left)" % (juice.POPUP_LIFE + 0.3))
 	# 2. E near trash AND near stock: the nearer one wins; shelved stock never.
+	# PHASE 5B PART 2B: at the shop's north end, well away from Plan B's
+	# door (troublemakers arriving there head for the player, and one in
+	# reach takes the E press) and from every knock-out wall (E buys).
+	var t3: Vector2 = area_spot("dry_goods", Vector2(280, -550))
 	var prod: RigidBody2D = null
 	main._spawn_product_for("Dry Goods")
 	await physics_frame
 	await physics_frame
 	prod = loose_products("Dry Goods")[0]
-	move_body(prod, hub + Vector2(0, 150))
-	var lid: int = cl.drop_litter(hub + Vector2(45, 150))
+	var lid: int = cl.drop_litter(t3 + Vector2(45, 150))
+	p.teleport_to(t3 + Vector2(45, 190)) # trash 40px, product 60px: stock still wins
 	await wait(0.3)
-	p.teleport_to(hub + Vector2(45, 190)) # trash 40px, product 60px: stock still wins
-	await wait(0.3)
+	# The product goes down last, just before E (PHASE 5B PART 2B: this spot
+	# is on the shoppers' way in from Plan B's door, and a passing cart
+	# shoved it out of reach in the 0.6 s the old order left it there).
+	move_body(prod, t3 + Vector2(0, 150))
+	await physics_frame
+	await physics_frame
 	await tap("host_interact")
 	await wait(0.3)
-	check(prod.get_node("Carryable").carrier_id == 1 and cl.litter.size() == 1, "T3: loose stock and trash both in reach -> E picks up the stock (product %.0fpx, trash %.0fpx, carrier %d, litter %d)" % [p.global_position.distance_to(prod.global_position), p.global_position.distance_to(hub + Vector2(45, 150)), prod.get_node("Carryable").carrier_id, cl.litter.size()])
+	check(prod.get_node("Carryable").carrier_id == 1 and cl.litter.size() == 1, "T3: loose stock and trash both in reach -> E picks up the stock (product %.0fpx, trash %.0fpx, carrier %d, litter %d)" % [p.global_position.distance_to(prod.global_position), p.global_position.distance_to(t3 + Vector2(45, 150)), prod.get_node("Carryable").carrier_id, cl.litter.size()])
 	await tap("host_interact")
 	await wait(0.3)
-	move_body(prod, hub + Vector2(0, 400))
+	move_body(prod, out_of_the_way())
 	await wait(0.2)
-	p.teleport_to(hub + Vector2(45, 190))
+	p.teleport_to(t3 + Vector2(45, 190))
 	await wait(0.3)
 	await tap("host_interact")
 	await wait(0.3)
@@ -866,7 +893,7 @@ func _run_practice(net := false) -> void:
 	await _shot_tutorial("01_move")
 	var t0 := _wall()
 	# 1. Move.
-	await _walk_to(room_center("dry_goods"), 15.0, 60.0)
+	await _walk_to(area_spot("dry_goods"), 15.0, 60.0)
 	check(await _await_step("move", 5.0), "PR1: walking out of the break room finished 'move'")
 	# 2. Crate.
 	await wait_until(func(): return not get_nodes_in_group("delivery_box").is_empty(), 60.0)
@@ -943,7 +970,7 @@ func _run_practice(net := false) -> void:
 	var watched := false
 	# Off the registers first (standing at one counts as working).
 	# (A fixed open spot in the hub, well clear of the registers.)
-	player().teleport_to(room_center("hub") + Vector2(0, -150))
+	player().teleport_to(area_spot("hub", Vector2(0, -150)))
 	await wait(0.4)
 	var spot: Vector2 = player().global_position
 	pin_manager(spot + Vector2(-150, 0), 0.0) # 150px west of me, looking right at me
@@ -974,12 +1001,12 @@ func _run_practice(net := false) -> void:
 		if o.get_node("Carryable").carrier_id == 1:
 			await tap("host_interact")
 	var tw := 0.0
-	# Hub -> Sidewalk -> Storage (Produce, east of the hub, is locked on Day 1).
-	await _walk_to(room_center("sidewalk"), 20.0, 60.0)
-	await _walk_to(room_center("storage") + Vector2(-200, -100), 20.0, 60.0)
+	# To Storage (PHASE 5B PART 2B: the walk follows the store's real
+	# geometry — through the staff door — so no via-the-sidewalk leg).
+	await _walk_to(area_spot("storage", Vector2(-200, -100)), 20.0, 60.0)
 	# Then stand and watch from Storage's open middle (walking at a point by
 	# the forklift kept routing the bot back out through the hub).
-	var watch: Vector2 = room_center("storage") + Vector2(-200, -100)
+	var watch: Vector2 = area_spot("storage", Vector2(-200, -100))
 	if player().global_position.distance_to(watch) > 80.0:
 		print("PRACTICE  bot at %s, not in Storage — teleporting to the watching spot" % player().global_position.round())
 		player().teleport_to(watch)
@@ -1048,7 +1075,6 @@ func _run_practice(net := false) -> void:
 	await wait(0.3)
 	check(cl.bag_of(1) >= 0 and tut._marker_pos == cl.DUMPSTER_POS, "PR7d: lifted the can's bag out; the marker points at the dumpster")
 	await _shot_tutorial("07d_bag")
-	await _walk_to(room_center("sidewalk"), 20.0, 60.0)
 	await _walk_to(cl.DUMPSTER_POS + Vector2(0, -75), 25.0, 20.0)
 	if not cl.near_dumpster(player().global_position):
 		player().teleport_to(cl.DUMPSTER_POS + Vector2(0, -75))

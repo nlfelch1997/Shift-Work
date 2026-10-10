@@ -44,6 +44,7 @@ const FLOORS := {
 	"EntranceBg": Vector2i(3, 1), # cream tile (the checkout hub)
 	"StorageBg": Vector2i(0, 1), # grey concrete panels
 	"BreakRoomBg": Vector2i(5, 2), # WEEK 23: beige vinyl with grey insets — staff-room floor
+	"StaffHallBg": Vector2i(0, 1), # PHASE 5B PART 2B: the staff hall, the back room's concrete
 }
 ## Which A4 sheet + face block the walls take. PHASE 5B PART 2A: WHICH walls
 ## take which is each room's "wall_art" in the layout table (StoreLayout.gd:
@@ -68,6 +69,11 @@ func _ready() -> void:
 	_dress_registers()
 	_dress_displays()
 	main.products_root.child_entered_tree.connect(_dress_product)
+
+## PHASE 5B PART 2B: the shop's wall face, for StoreGrowth.gd's knock-out
+## walls (the same blue tile as every other sales-floor wall).
+func market_wall_face() -> Texture2D:
+	return _a4_face(MARKET_WALLS_PATH, MARKET_WALL_FACE)
 
 ## Lower 96x96 of an A2 block, as a repeatable texture.
 func _a2_floor(block: Vector2i) -> Texture2D:

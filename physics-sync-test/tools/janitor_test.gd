@@ -327,7 +327,7 @@ func _watch_janitor() -> void:
 		var why := ""
 		if cell == "break_room":
 			why = "in the Break Room"
-		elif cell != "hub" and cell != "storage" and cell != "sidewalk" and not main.is_unlocked_at_pos(p):
+		elif main.areas.role_of(cell) == "section" and not main.is_unlocked_at_pos(p): # (PHASE 5B PART 2B: the staff hall is his way to the dumpster)
 			why = "in a locked section"
 		elif load("res://CustomerNav.gd").JANITOR_KEEP_OUT.has_point(p):
 			why = "on the delivery forklift's floor"
@@ -878,7 +878,7 @@ func _run_jan_events() -> void:
 	# inspector round (off the floor), the bar is tighter, the crew cleans
 	await _until_idle(30.0)
 	for i in 8:
-		cl.drop_litter(Vector2(1150 + i * 60, 900 + (i % 3) * 20))
+		cl.drop_litter(area_spot("hub", Vector2(-290 + i * 60, 90 + (i % 3) * 20)))
 	n0 = ev.log_today.size()
 	ev.force_next("inspection", 0.5)
 	await wait_until(func(): return ev.busy() and ev.key == "inspection", 20.0)

@@ -575,14 +575,19 @@ func _run_fk_escape() -> void:
 	check(h.active, "FE0: the Produce helper is on the floor")
 	player().teleport_to(area_spot("break_room"))
 	fk.set_physics_process(false) # held exactly where it's put
-	var room: Rect2 = h._room
-	var band_top: float = room.position.y + h.band_y.x
-	var band_bot: float = room.position.y + h.band_y.y
+	# PHASE 5B PART 2B: along the forklift's lane at a quarter, half and three
+	# quarters of its length; across it at the helper's band edges and the
+	# lane's middle (the lane runs north-south in Plan B, east-west before).
+	var band: Rect2 = h.band
+	var lane: Rect2 = main.areas.rect_of(main.areas.feature_at(fk.home_position, "forklift_lane"))
+	var along := Vector2.RIGHT if lane.size.x >= lane.size.y else Vector2.DOWN
+	var across := Vector2(along.y, along.x)
 	var poses := []
-	for x in [2150.0, 2400.0, 2650.0]:
-		for y in [band_top + 4.0, room.position.y + 270.0, band_bot - 4.0]:
+	for k in [0.25, 0.5, 0.75]:
+		var a: float = lerpf(lane.position.dot(along), lane.end.dot(along), k)
+		for c in [band.position.dot(across) + 4.0, lane.get_center().dot(across), band.end.dot(across) - 4.0]:
 			for rot in [0.0, PI / 2.0, PI, -PI / 2.0, 0.6]:
-				poses.append([Vector2(x, y), rot])
+				poses.append([along * a + across * c, rot])
 	var worst := 0
 	var stuck := 0
 	var through := 0
@@ -611,7 +616,7 @@ func _run_fk_escape() -> void:
 			if signf(rel_start.y) != 0.0 and signf(rel_end.y) == -signf(rel_start.y) and absf(rel_end.y) > 20.0 and absf(rel_start.y) > 4.0:
 				through += 1
 				if through <= 10:
-					print("INFO  THROUGH forklift %s rot %.2f, helper from %s (local %s, band %.0f-%.0f) to %s (local %s) in %d frames" % [str(pose[0]), pose[1], str(start.round()), str(rel_start.round()), band_top, band_bot, str(h.position.round()), str(rel_end.round()), frames])
+					print("INFO  THROUGH forklift %s rot %.2f, helper from %s (local %s, band %s) to %s (local %s) in %d frames" % [str(pose[0]), pose[1], str(start.round()), str(rel_start.round()), str(band), str(h.position.round()), str(rel_end.round()), frames])
 			if frames > ESCAPE_FRAMES:
 				stuck += 1
 				if stuck <= 8:

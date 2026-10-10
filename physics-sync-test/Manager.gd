@@ -343,7 +343,7 @@ func _turn_toward(angle: float, delta: float) -> void:
 func _plan_visit(main) -> void:
 	var areas: RefCounted = main.areas
 	var hub_id: String = areas.ids_with_role("hub")[0]
-	var hub: Vector2 = areas.center_of(hub_id)
+	var hub: Vector2 = areas.waypoint_of(hub_id)
 	var unlocked: Array = main._unlocked_sections()
 	var choices := unlocked.filter(func(s): return s["name"] != _last_section)
 	if choices.is_empty():
@@ -355,32 +355,43 @@ func _plan_visit(main) -> void:
 	_legs.append({"pos": hub, "pause": HUB_PAUSE})
 	var path := _room_path(main, hub_id, section["area"])
 	for room in path:
-		_legs.append({"pos": areas.center_of(room)})
-	var prev: String = path[-2] if path.size() > 1 else hub_id
-	# Lookouts: the section's center, then deeper along the direction he
-	# walked in from. Every section's center is on its own aisle (see
-	# Main.gd's layout notes), so both points are open floor.
+		_legs.append({"pos": areas.waypoint_of(room)})
 	var last: String = path[-1]
-	var dir: Vector2 = (areas.center_of(last) - areas.center_of(prev)).sign()
-	var center: Vector2 = areas.center_of(last)
-	var depth := LOOKOUT_DEPTH
-	# WEEK 10: a section with a forklift has its lane down the middle — the
-	# center line these lookouts sit on. Stand beside the lane instead, and
-	# not as deep (the deeper point would otherwise sit right in front of a
-	# shelf the forklift pulls up to).
-	var forklift = _live_forklift()
-	if forklift and areas.area_at(forklift.home_position) == last:
-		center.y = forklift.home_position.y + LANE_OFFSET
-		depth *= 0.5
-		_legs[-1]["pos"] = center
-	var deeper: Vector2 = center + dir * areas.rect_of(last).size * depth
-	_legs[-1]["pause"] = LOOKOUT_PAUSE
-	_legs.append({"pos": deeper, "pause": LOOKOUT_PAUSE})
-	_legs.append({"pos": center})
+	# PHASE 5B PART 2B: a room's lookouts are written down in the layout table
+	# (StoreLayout.gd: open spots chosen clear of shelves and the forklift's
+	# lane), not worked out from the room's centre and the way he walked in
+	# — Plan B's wings aren't one-aisle rooms. The first is where he arrives.
+	var looks: Array = areas.lookouts_of(last)
+	if not looks.is_empty():
+		_legs[-1]["pos"] = looks[0]
+		_legs[-1]["pause"] = LOOKOUT_PAUSE
+		for i in range(1, looks.size()):
+			_legs.append({"pos": looks[i], "pause": LOOKOUT_PAUSE})
+		_legs.append({"pos": looks[0]})
+	else:
+		# (A table without lookouts: the Part 2A rule — the section's
+		# centre, then deeper along the direction he walked in from.)
+		var prev: String = path[-2] if path.size() > 1 else hub_id
+		var dir: Vector2 = (areas.center_of(last) - areas.center_of(prev)).sign()
+		var center: Vector2 = areas.center_of(last)
+		var depth := LOOKOUT_DEPTH
+		# WEEK 10: a section with a forklift has its lane down the middle — the
+		# center line these lookouts sit on. Stand beside the lane instead, and
+		# not as deep (the deeper point would otherwise sit right in front of a
+		# shelf the forklift pulls up to).
+		var forklift = _live_forklift()
+		if forklift and areas.area_at(forklift.home_position) == last:
+			center.y = forklift.home_position.y + LANE_OFFSET
+			depth *= 0.5
+			_legs[-1]["pos"] = center
+		var deeper: Vector2 = center + dir * areas.rect_of(last).size * depth
+		_legs[-1]["pause"] = LOOKOUT_PAUSE
+		_legs.append({"pos": deeper, "pause": LOOKOUT_PAUSE})
+		_legs.append({"pos": center})
 	var back := path.duplicate()
 	back.reverse()
 	for i in range(1, back.size()):
-		_legs.append({"pos": areas.center_of(back[i])})
+		_legs.append({"pos": areas.waypoint_of(back[i])})
 
 ## Rooms to walk through from the hub to a section, hub excluded. Every
 ## section that touches the hub is one hop; Bakery hangs off Dry Goods (see

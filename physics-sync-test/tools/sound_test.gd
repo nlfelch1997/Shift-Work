@@ -23,11 +23,20 @@ extends SceneTree
 
 var main: Node
 
-## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
-## plus an offset — so a test says WHICH room it means instead of repeating
-## raw world coordinates (main.areas; StoreLayout.gd).
+## A spot in a named room of the layout table (tools/spots.gd).
+## PHASE 5B PART 2B: where a throw straight down hits nothing but the shop's
+## front wall: midway between two checkout lanes (Cashier3 and Cashier4),
+## level with their checkout spots (a throw slows fast: it must still be quick at the wall).
+func _wall_shot() -> Vector2:
+	var a: Vector2 = main.get_node("CentralCheckout/Cashier3").global_position
+	var b: Vector2 = main.get_node("CentralCheckout/Cashier4").global_position
+	return Vector2((a.x + b.x) * 0.5, a.y - 60.0)
+
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
-	return main.areas.center_of(id) + offset
+	return preload("res://tools/spots.gd").area_spot(main, id, offset)
+
+func out_of_the_way(offset := Vector2.ZERO) -> Vector2:
+	return preload("res://tools/spots.gd").out_of_the_way(main, offset)
 var sfx: Node
 var fails := 0
 var me := 1
@@ -165,7 +174,7 @@ func pin_manager(pos: Vector2, heading: float) -> void:
 func park_everything() -> void:
 	main.test_hold_customers = true
 	main.forklift._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -261,11 +270,11 @@ func _run_solo() -> void:
 	check(peak_rate(heard, "footstep", 0.25) <= 1, "S2 never two footsteps within 0.25s")
 
 	# S3 pickup / drop / throw, and the throw's impact.
-	# Oct 2026: from the hub's open north-west corner, so the throw goes
-	# straight up into the bare wall. (It was Dry Goods, where the impact came
-	# from the stocked shelf — and stocked items no longer collide with thrown
-	# stock: Carryable.gd's LAYER_SHELF_STOCK.)
-	player().teleport_to(area_spot("hub", Vector2(-380, -150)))
+	# Oct 2026: thrown into a bare wall. (It was Dry Goods, where the impact
+	# came from the stocked shelf — and stocked items no longer collide with
+	# thrown stock: Carryable.gd's LAYER_SHELF_STOCK.) PHASE 5B PART 2B: down
+	# into the shop's front wall, between two checkout lanes (_wall_shot()).
+	player().teleport_to(_wall_shot())
 	await wait(0.3)
 	var obj := free_product()
 	move_body(obj, player().global_position + Vector2(42, 0)) # clear of the player's body, inside PICKUP_RANGE
@@ -282,7 +291,7 @@ func _run_solo() -> void:
 	var t0 := count("throw")
 	var i0: int = main.sound_director.impacts_detected
 	var hits0: int = count("impact_light") + count("impact_heavy")
-	obj.get_node("Carryable").try_throw(1, Vector2.UP)
+	obj.get_node("Carryable").try_throw(1, Vector2.DOWN)
 	check(await heard_after("throw", t0), "S3 whoosh on my own throw")
 	check(await wait_until(func(): return main.sound_director.impacts_detected > i0, 2.0), "S3 host spotted the thrown item hitting the wall")
 	check(count("impact_light") + count("impact_heavy") > hits0, "S3 ...and played an impact")
@@ -359,11 +368,11 @@ func _run_solo() -> void:
 
 	# S10 the manager: whistle as he starts watching me, a tweet at "!", the
 	# trombone at the write-up.
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	var w0 := count("manager_whistle")
 	var tw0 := count("manager_tweet")
 	var wu0 := count("writeup")
-	player().teleport_to(area_spot("reserved", Vector2(160, 0)))
+	player().teleport_to(out_of_the_way(Vector2(160, 0)))
 	check(await heard_after("manager_whistle", w0, 4.0), "S10 whistle as the manager's meter starts on me")
 	check(await heard_after("manager_tweet", tw0, 4.0), "S10 tweet as it goes red")
 	check(await heard_after("writeup", wu0, 5.0), "S10 sad trombone at the write-up")
@@ -480,7 +489,7 @@ func _run_net_host() -> void:
 
 	# Everyone into the hub (one room: every positional sound within earshot).
 	for k in ids.size():
-		main.players[ids[k]].rpc("teleport_to", Vector2(1300 + 70 * k, 760))
+		main.players[ids[k]].rpc("teleport_to", area_spot("hub", Vector2(-140 + 70 * k, -50)))
 	await wait(0.6)
 
 	# `sound` may be "a|b": whichever of them the host plays.
@@ -512,8 +521,8 @@ func _run_net_host() -> void:
 		s.get_node("Shelf").wreck(s.global_position + Vector2(0, 80)))
 	await host_event.call("impact", "impact_heavy|impact_light", func():
 		var o := free_product()
-		move_body(o, area_spot("dry_goods", Vector2(0, -110)))
-		o.linear_velocity = Vector2(0, -620)) # a throw's speed, straight into Dry Goods' back wall
+		move_body(o, _wall_shot())
+		o.linear_velocity = Vector2(0, 620)) # a throw's speed, straight into the front wall
 	var target: int = clients[0]
 	await host_event.call("forklift bump", "forklift_bonk", func(): main.players[target].rpc("forklift_hit", main.players[target].global_position + Vector2(40, 0)))
 
@@ -535,8 +544,8 @@ func _run_net_host() -> void:
 	# The manager stares down one client: that client hears the whistle up
 	# close, everyone else (host too) a distant one; all hear the write-up.
 	var watched: int = clients[-1]
-	pin_manager(area_spot("reserved"), 0.0)
-	main.players[watched].rpc("teleport_to", area_spot("reserved", Vector2(160, 0)))
+	pin_manager(out_of_the_way(), 0.0)
+	main.players[watched].rpc("teleport_to", out_of_the_way(Vector2(160, 0)))
 	var wf0 := count("manager_whistle_far")
 	await wait_until(func(): return count("manager_whistle_far") > wf0, 5.0)
 	var whistle_at := Time.get_unix_time_from_system()

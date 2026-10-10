@@ -1,43 +1,61 @@
-world [P: (0.0, 0.0), S: (2880.0, 1620.0)]
-room break_room role=break_room rect=[P: (0.0, 0.0), S: (960.0, 540.0)] section= shoppers=false janitor=false shop_floor=false bg=BreakRoomBg wall_art=break_room links=["dry_goods"] band= helper=
-room dry_goods role=section rect=[P: (960.0, 0.0), S: (960.0, 540.0)] section=Dry Goods shoppers=true janitor=true shop_floor=true bg=DryGoodsBg wall_art=market links=["hub", "bakery", "break_room"] band=[P: (180.0, 120.0), S: (600.0, 240.0)] helper=
-room bakery role=section rect=[P: (1920.0, 0.0), S: (960.0, 540.0)] section=Bakery shoppers=true janitor=true shop_floor=true bg=BakeryBg wall_art=market links=["dry_goods"] band=[P: (180.0, 120.0), S: (600.0, 240.0)] helper={ "band_y": (150.0, 395.0) }
-room dairy_frozen role=section rect=[P: (0.0, 540.0), S: (960.0, 540.0)] section=Dairy/Frozen shoppers=true janitor=true shop_floor=true bg=DairyFrozenBg wall_art=market links=["hub", "reserved"] band=[P: (180.0, 120.0), S: (600.0, 240.0)] helper={ "band_y": (150.0, 395.0) }
-room hub role=hub rect=[P: (960.0, 540.0), S: (960.0, 540.0)] section= shoppers=true janitor=true shop_floor=true bg=EntranceBg wall_art=market links=["dry_goods", "produce", "dairy_frozen", "sidewalk"] band= helper=
-room produce role=section rect=[P: (1920.0, 540.0), S: (960.0, 540.0)] section=Produce shoppers=true janitor=true shop_floor=true bg=MeatDeliBg wall_art=market links=["hub"] band=[P: (180.0, 120.0), S: (600.0, 240.0)] helper={ "band_y": (150.0, 395.0) }
-room reserved role=empty rect=[P: (0.0, 1080.0), S: (960.0, 540.0)] section= shoppers=true janitor=true shop_floor=false bg=ReservedBg wall_art= links=["dairy_frozen", "sidewalk"] band= helper=
-room sidewalk role=sidewalk rect=[P: (960.0, 1080.0), S: (960.0, 540.0)] section= shoppers=true janitor=true shop_floor=false bg=SidewalkBg wall_art= links=["hub", "reserved", "storage"] band= helper=
-room storage role=storage rect=[P: (1920.0, 1080.0), S: (960.0, 540.0)] section= shoppers=false janitor=true shop_floor=false bg=StorageBg wall_art=warehouse links=["sidewalk"] band= helper=
-feature produce_forklift_lane role=forklift_lane room=produce rect=[P: (1920.0, 788.0), S: (960.0, 44.0)] janitor=true
-feature storage_forklift_floor role=forklift_floor room=storage rect=[P: (2150.0, 1150.0), S: (730.0, 360.0)] janitor=false
-feature front_door_outside role=exit room=sidewalk rect=[P: (960.0, 1104.0), S: (960.0, 516.0)] janitor=true
-feature customer_arrival role=customer_spawn room=sidewalk rect=[P: (1320.0, 1080.0), S: (240.0, 300.0)] janitor=true
-anchor bounce_target (1440.0, 1130.0)
+world [P: (0.0, 0.0), S: (2400.0, 1860.0)]
+room break_room role=break_room rect=[P: (0.0, 0.0), S: (960.0, 540.0)] section= shoppers=false janitor=false shop_floor=false bg=BreakRoomBg wall_art=break_room links=["staff_hall"] band= helper=
+room staff_hall role=corridor rect=[P: (960.0, 0.0), S: (480.0, 540.0)] section= shoppers=false janitor=true shop_floor=false bg=StaffHallBg wall_art=break_room links=["break_room", "storage", "dry_goods"] band= helper=
+room storage role=storage rect=[P: (1440.0, 0.0), S: (960.0, 540.0)] section= shoppers=false janitor=true shop_floor=false bg=StorageBg wall_art=warehouse links=["staff_hall", "produce"] band= helper=
+room bakery role=section rect=[P: (0.0, 540.0), S: (780.0, 540.0)] section=Bakery shoppers=true janitor=true shop_floor=true bg=BakeryBg wall_art=market links=["dry_goods", "dairy_frozen"] band=[P: (230.0, 230.0), S: (530.0, 280.0)] helper={ "band": [P: (60.0, 60.0), S: (660.0, 420.0)] } waypoint=(600.0, 820.0) lookouts=[(600.0, 820.0), (320.0, 1000.0)]
+room dairy_frozen role=section rect=[P: (0.0, 1080.0), S: (780.0, 600.0)] section=Dairy/Frozen shoppers=true janitor=true shop_floor=true bg=DairyFrozenBg wall_art=market links=["bakery", "dry_goods", "hub"] band=[P: (240.0, 460.0), S: (520.0, 110.0)] helper={ "band": [P: (60.0, 60.0), S: (660.0, 480.0)] } waypoint=(690.0, 1250.0) lookouts=[(690.0, 1250.0), (300.0, 1250.0)]
+room dry_goods role=section rect=[P: (780.0, 540.0), S: (840.0, 840.0)] section=Dry Goods shoppers=true janitor=true shop_floor=true bg=DryGoodsBg wall_art=market links=["staff_hall", "hub", "bakery", "dairy_frozen", "produce"] band=[P: (120.0, 520.0), S: (540.0, 240.0)] helper= waypoint=(1200.0, 790.0) lookouts=[(1200.0, 790.0), (1200.0, 1090.0)]
+room hub role=hub rect=[P: (780.0, 1380.0), S: (840.0, 300.0)] section= shoppers=true janitor=true shop_floor=true bg=EntranceBg wall_art=market links=["dry_goods", "dairy_frozen", "produce", "sidewalk"] band= helper= waypoint=(1510.0, 1430.0) lookouts=[]
+room produce role=section rect=[P: (1620.0, 540.0), S: (780.0, 1140.0)] section=Produce shoppers=true janitor=true shop_floor=true bg=MeatDeliBg wall_art=market links=["dry_goods", "hub", "storage"] band=[P: (40.0, 640.0), S: (680.0, 420.0)] helper={ "band": [P: (414.0, 60.0), S: (216.0, 1020.0)] } waypoint=(1780.0, 1080.0) lookouts=[(1780.0, 1080.0), (2050.0, 1450.0)]
+room sidewalk role=sidewalk rect=[P: (0.0, 1680.0), S: (2400.0, 180.0)] section= shoppers=true janitor=true shop_floor=false bg=SidewalkBg wall_art= links=["hub"] band= helper=
+feature produce_forklift_lane role=forklift_lane room=produce rect=[P: (2120.0, 550.0), S: (44.0, 1120.0)] janitor=true
+feature storage_forklift_floor role=forklift_floor room=storage rect=[P: (1670.0, 70.0), S: (730.0, 360.0)] janitor=false
+feature front_door_outside role=exit room=sidewalk rect=[P: (0.0, 1704.0), S: (2400.0, 156.0)] janitor=true
+feature customer_arrival role=customer_spawn room=sidewalk rect=[P: (1390.0, 1700.0), S: (240.0, 140.0)] janitor=true
+wall (0.0, 10.0) -> (2400.0, 10.0)
+wall (10.0, 0.0) -> (10.0, 1860.0)
+wall (2390.0, 0.0) -> (2390.0, 1860.0)
+wall (0.0, 1850.0) -> (2400.0, 1850.0)
+wall (0.0, 540.0) -> (1000.0, 540.0)
+wall (1200.0, 540.0) -> (1640.0, 540.0)
+wall (1840.0, 540.0) -> (2400.0, 540.0)
+wall (960.0, 0.0) -> (960.0, 300.0)
+wall (1440.0, 0.0) -> (1440.0, 300.0)
+wall (0.0, 1080.0) -> (540.0, 1080.0)
+wall (0.0, 1680.0) -> (1410.0, 1680.0)
+wall (1610.0, 1680.0) -> (2400.0, 1680.0)
+barrier Produce (1620.0, 540.0) -> (1620.0, 1680.0)
+barrier Produce (1640.0, 540.0) -> (1840.0, 540.0) back_door
+barrier Dairy/Frozen (780.0, 1080.0) -> (780.0, 1680.0)
+barrier Bakery (780.0, 540.0) -> (780.0, 1080.0)
+barrier Bakery (540.0, 1080.0) -> (780.0, 1080.0)
+anchor bounce_target (1510.0, 1730.0)
 anchor coffee_machine (180.0, 66.0)
-anchor delivery_forklift_home (2270.0, 1250.0)
-anchor dumpster (2030.0, 1530.0)
-anchor front_door (1440.0, 1100.0)
-anchor janitor_home (1760.0, 650.0)
+anchor delivery_forklift_home (1790.0, 170.0)
+anchor dumpster (1550.0, 450.0)
+anchor front_door (1510.0, 1680.0)
+anchor janitor_home (900.0, 1360.0)
 anchor lockers (95.0, 405.0)
+anchor out_of_the_way (300.0, 1770.0)
 anchor player_spawn (480.0, 270.0)
-anchor practice_puddle (1640.0, 660.0)
+anchor practice_puddle (1460.0, 1290.0)
 anchor staff_board (30.0, 235.0)
 anchor staff_board_spot (75.0, 235.0)
-anchor store_sign (1610.0, 1115.0)
+anchor store_sign (1665.0, 1720.0)
 anchor time_clock (880.0, 300.0)
-anchor tool_rack (1822.0, 588.0)
+anchor tool_rack (1040.0, 1300.0)
 anchor tool_station (700.0, 280.0)
 anchor vending_machine (610.0, 70.0)
-pad Dry Goods (1440.0, 300.0)
-pad Produce (2400.0, 665.0)
-pad Dairy/Frozen (480.0, 665.0)
-pad Bakery (2400.0, 125.0)
-can 0 (1110.0, 590.0) 
-can 1 (1300.0, 500.0) Dry Goods
-can 2 (1975.0, 620.0) Produce
-can 3 (905.0, 620.0) Dairy/Frozen
-can 4 (1975.0, 300.0) Bakery
-tools [(660.0, 320.0), (678.0, 320.0), (1800.0, 612.0), (722.0, 320.0), (740.0, 320.0), (1844.0, 612.0)]
-practice_litter [(1180.0, 650.0), (1215.0, 690.0), (1250.0, 640.0), (1160.0, 720.0)]
-dock lane_y=1250.0 dock_x=2740.0 receiving=[(2680.0, 1450.0), (2605.0, 1450.0), (2530.0, 1450.0), (2455.0, 1450.0), (2380.0, 1450.0), (2305.0, 1450.0), (2230.0, 1450.0)]
-checkout { "room": "hub", "queue_dir": (1.0, 0.0), "registers_by_tier": [2, 3, 4, 5] }
+pad Dry Goods (1110.0, 750.0)
+pad Produce (1950.0, 670.0)
+pad Dairy/Frozen (330.0, 1210.0)
+pad Bakery (450.0, 900.0)
+can 0 (1592.0, 1400.0) 
+can 1 (960.0, 580.0) Dry Goods
+can 2 (1660.0, 1150.0) Produce
+can 3 (735.0, 1630.0) Dairy/Frozen
+can 4 (735.0, 1020.0) Bakery
+tools [(660.0, 320.0), (678.0, 320.0), (1018.0, 1324.0), (722.0, 320.0), (740.0, 320.0), (1062.0, 1324.0)]
+practice_litter [(900.0, 1150.0), (935.0, 1190.0), (970.0, 1140.0), (880.0, 1220.0)]
+dock lane_y=170.0 dock_x=2260.0 receiving=[(2200.0, 370.0), (2125.0, 370.0), (2050.0, 370.0), (1975.0, 370.0), (1900.0, 370.0), (1825.0, 370.0), (1750.0, 370.0)]
+checkout { "room": "hub", "queue_dir": (0.0, -1.0), "registers_by_tier": [2, 3, 4, 5] }

@@ -102,6 +102,13 @@ func _ready() -> void:
 	npc.get_node("Head").visible = false
 	var sprite: Sprite2D = CharacterSpriteScript.attach(npc, look_name(), "")
 	sprite.fixed_row = CharacterSpriteScript.ROW_DOWN
+	# PHASE 5B PART 2B: the counters are turned so their queues run north
+	# into the store (StoreLayout.CHECKOUT's queue_dir; the Queue* markers turn
+	# with the body). The cashier stays upright, stands beside the counter on
+	# its turned "back" side, and faces across it, toward the belt.
+	if not is_zero_approx(body.rotation):
+		npc.rotation = -body.rotation
+		sprite.fixed_row = CharacterSpriteScript.row_for_angle(Vector2(0.0, 32.0).rotated(body.rotation).angle())
 	checkout = body.get_node("Checkout")
 	for child in body.get_children():
 		if child is Marker2D and child.name.begins_with("Queue"):

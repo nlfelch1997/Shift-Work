@@ -226,19 +226,23 @@ func _shots() -> void:
 	# window's canvas_items stretch keeps showing a 960x540 world area).
 	var mode := root.content_scale_mode
 	root.content_scale_mode = Window.CONTENT_SCALE_MODE_DISABLED
-	root.size = Vector2i(1440, 810)
-	await _shot(cam, "store", Vector2(1440, 810), 0.5)
+	# PHASE 5B PART 2B: where things are comes from the layout table (both
+	# sides of a Plan B comparison have it since Part 2A), so Storage and the
+	# Break Room are shot centred on themselves wherever they are.
+	var w: Rect2 = main.areas.world_rect()
+	root.size = Vector2i(int(w.size.x * 0.5), int(w.size.y * 0.5))
+	await _shot(cam, "store", w.get_center(), 0.5)
 	root.content_scale_mode = mode
 	root.size = Vector2i(960, 540)
-	await _shot(cam, "storage", Vector2(2400, 1350), 1.0)
-	await _shot(cam, "breakroom", Vector2(480, 270), 1.0)
+	await _shot(cam, "storage", main.areas.center_of("storage"), 1.0)
+	await _shot(cam, "breakroom", main.areas.center_of("break_room"), 1.0)
 	# The HUD as a player sees it: their own camera, status line and banners on.
 	if alerts:
 		alerts.visible = true
 	main.status_hud = true
 	cam.queue_free()
 	_player_cam().make_current()
-	main.players[1].teleport_to(Vector2(1440, 700))
+	main.players[1].teleport_to(main.areas.waypoint_of("hub"))
 	await _shot(null, "hud", Vector2.ZERO, 1.0)
 	main.shift_time_left = 0.01
 	while not main.is_day_report_active():

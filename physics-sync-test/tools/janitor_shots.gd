@@ -8,11 +8,12 @@ extends SceneTree
 
 var main: Node
 
-## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
-## plus an offset — so a test says WHICH room it means instead of repeating
-## raw world coordinates (main.areas; StoreLayout.gd).
+## A spot in a named room of the layout table (tools/spots.gd).
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
-	return main.areas.center_of(id) + offset
+	return preload("res://tools/spots.gd").area_spot(main, id, offset)
+
+func out_of_the_way(offset := Vector2.ZERO) -> Vector2:
+	return preload("res://tools/spots.gd").out_of_the_way(main, offset)
 var n := 0
 
 func _initialize() -> void:
@@ -79,7 +80,7 @@ func _run() -> void:
 	# A puddle and some litter in the hub.
 	main.cleanup.drop_puddle(area_spot("hub", Vector2(60, -10)))
 	for i in 3:
-		main.cleanup.drop_litter(Vector2(1350 + i * 40, 720))
+		main.cleanup.drop_litter(area_spot("hub", Vector2(-90 + i * 40, -90)))
 	main.open_store(1)
 	await until(func(): return jan().work > 0.3, 60.0)
 	me().teleport_to(jan().position + Vector2(-100, 30))

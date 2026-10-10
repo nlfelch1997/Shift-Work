@@ -98,6 +98,42 @@ func rect_of(id: String) -> Rect2:
 func center_of(id: String) -> Vector2:
 	return rect_of(id).get_center()
 
+## The open spot that stands for a room on a walk through it (its "waypoint"
+## in the table, else its centre).
+func waypoint_of(id: String) -> Vector2:
+	return _by_id.get(id, {}).get("waypoint", center_of(id))
+
+## A section room's lookout spots (the manager's stops), [] if none.
+func lookouts_of(id: String) -> Array:
+	return _by_id.get(id, {}).get("lookouts", [])
+
+## The open floor a helper keeps to in its room, as a world Rect2.
+func helper_band_of(id: String) -> Rect2:
+	var r := rect_of(id)
+	var b: Rect2 = _by_id[id]["helper"]["band"]
+	return Rect2(r.position + b.position, b.size)
+
+## --- structure (Main.gd builds the bodies from these) ------------------------
+
+## The permanent walls, each a world Rect2 (WALL_THICKNESS thick).
+func wall_rects() -> Array:
+	return Layout.WALLS.map(func(w): return segment_rect(w[0], w[1]))
+
+## The knock-out barriers: [{section, from, to, rect, ...}] in table order.
+func barriers() -> Array:
+	var out := []
+	for b in Layout.BARRIERS:
+		var d: Dictionary = b.duplicate()
+		d["rect"] = segment_rect(b["from"], b["to"])
+		out.append(d)
+	return out
+
+## A wall or barrier's strip round its centre line.
+static func segment_rect(a: Vector2, b: Vector2) -> Rect2:
+	var t: float = Layout.WALL_THICKNESS
+	var r := Rect2(a, Vector2.ZERO).expand(b)
+	return r.grow_individual(t * 0.5 if r.size.x == 0.0 else 0.0, t * 0.5 if r.size.y == 0.0 else 0.0, t * 0.5 if r.size.x == 0.0 else 0.0, t * 0.5 if r.size.y == 0.0 else 0.0)
+
 func role_of(id: String) -> String:
 	return _by_id.get(id, {}).get("role", "")
 
@@ -242,9 +278,13 @@ func snapshot() -> String:
 		out.append("room %s role=%s rect=%s section=%s shoppers=%s janitor=%s shop_floor=%s bg=%s wall_art=%s links=%s band=%s helper=%s" % [
 			r["id"], r["role"], str(rect_of(r["id"])), r.get("section", ""), str(r.get("shoppers", true)), str(r.get("janitor", true)),
 			str(r.get("shop_floor", false)), r.get("bg", ""), r.get("wall_art", ""), str(r.get("links", [])),
-			str(r.get("spawn_band", "")), str(r.get("helper", ""))])
+			str(r.get("spawn_band", "")), str(r.get("helper", ""))] + (" waypoint=%s lookouts=%s" % [str(r.get("waypoint", "")), str(r.get("lookouts", []))] if r.has("waypoint") or r.has("lookouts") else ""))
 	for f in _features:
 		out.append("feature %s role=%s room=%s rect=%s janitor=%s" % [f["id"], f["role"], f.get("room", ""), str(rect_of(f["id"])), str(f.get("janitor", true))])
+	for w in Layout.WALLS:
+		out.append("wall %s -> %s" % [str(w[0]), str(w[1])])
+	for b in Layout.BARRIERS:
+		out.append("barrier %s %s -> %s%s" % [b["section"], str(b["from"]), str(b["to"]), " back_door" if b.get("back_door", false) else ""])
 	var names := Layout.ANCHORS.keys()
 	names.sort()
 	for n in names:

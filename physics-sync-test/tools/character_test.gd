@@ -34,11 +34,12 @@ const DIR_ROW := {"right": CS.ROW_RIGHT, "left": CS.ROW_LEFT, "up": CS.ROW_UP, "
 
 var main: Node
 
-## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
-## plus an offset — so a test says WHICH room it means instead of repeating
-## raw world coordinates (main.areas; StoreLayout.gd).
+## A spot in a named room of the layout table (tools/spots.gd).
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
-	return main.areas.center_of(id) + offset
+	return preload("res://tools/spots.gd").area_spot(main, id, offset)
+
+func out_of_the_way(offset := Vector2.ZERO) -> Vector2:
+	return preload("res://tools/spots.gd").out_of_the_way(main, offset)
 var fails := 0
 var shots := false
 var me := 1
@@ -434,6 +435,11 @@ func _run_solo() -> void:
 	check(ring_ok, "C4 shopper rings teal, disruptive rings red (role still legible)")
 	# --- C5: customers (and the manager) face the way they move
 	await shot("customers_crowd", main._store_entrance_pos() + Vector2(0, -160), 2.0)
+	# PHASE 5B PART 2B: Plan B's front door is 200 px wide (the old hub was
+	# open to the sidewalk along its whole edge), so the 18-customer burst
+	# packs the doorway for a few seconds first. Sample the walking crowd
+	# once it's through; the row-vs-facing check stays strict throughout.
+	await wait(6.0)
 	var f: Dictionary = await sample_npc_facing(8.0)
 	check(f["samples"] > 500 and f["row_bad"] == 0, "C5 customer row always matches its replicated facing (%d samples, %d off)" % [f["samples"], f["row_bad"]])
 	var mm: float = float(f["motion_match"]) / maxf(1.0, float(f["motion_n"]))
@@ -587,8 +593,11 @@ func _run_net_host() -> void:
 	var ids: Array = main.players.keys()
 	ids.sort()
 	# Spread the players out in open floor so nobody walks into a wall.
+	# PHASE 5B PART 2B: where nothing else moves — two parallel lanes in the
+	# staff hall, two in Storage's empty west strip (on the shop floor, loose
+	# stock and the crowd kept getting in a walker's way).
 	for k in ids.size():
-		var start: Vector2 = {"right": area_spot("hub", Vector2(-390, -210)), "left": area_spot("hub", Vector2(210, -130)), "up": area_spot("sidewalk", Vector2(460, -100)), "down": area_spot("hub", Vector2(-440, -10))}[dir_for(ids, ids[k])]
+		var start: Vector2 = {"right": area_spot("staff_hall", Vector2(-200, -120)), "left": area_spot("staff_hall", Vector2(220, 130)), "up": area_spot("storage", Vector2(-360, 110)), "down": area_spot("storage", Vector2(-300, -230))}[dir_for(ids, ids[k])]
 		main.players[ids[k]].rpc("teleport_to", start)
 	await wait(1.0)
 	_net_write("go.json", {"start_unix": Time.get_unix_time_from_system() + 2.5, "ids": ids})

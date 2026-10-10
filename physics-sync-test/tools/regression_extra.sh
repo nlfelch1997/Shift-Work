@@ -113,3 +113,16 @@ TESTS+=(
 TESTS+=(
 "areas-net|areas|0|2|0|--server --players=3 --no-save --test=net|"
 )
+# PHASE 5B PART 2B (Plan B, the growing store) — tools/growth_test.gd. Real
+# wall-clock time. net-growth: host + 2 clients, the second joining late
+# (after every wing is bought). The save phases run in order, in one lane.
+TESTS+=(
+"growth|growth|0|0|0|--server --no-save --test=growth|"
+"growth-net|growth|0|2|0|--server --players=2 --no-save --test=net-growth|"
+"growth-checkout|growth|0|0|0|--server --no-save --test=checkout|"
+"growth-events|growth|0|0|0|--server --no-save --test=events|"
+"growth-demo|growth|0|0|0|--server --demo --day=4 --no-save --shift-seconds=4 --prep-seconds=20 --cleanup-seconds=0 --test=demo-path|"
+"save-growth-1|growth|0|0|0|--server --save-file=user://growth_test/save.json --test=growth-save --phase=1|"
+"save-growth-2|growth|0|0|0|--server --save-file=user://growth_test/save.json --test=growth-save --phase=2|"
+"save-growth-3|growth|0|0|0|--server --save-file=user://growth_test/save.json --test=growth-save --phase=3|"
+)

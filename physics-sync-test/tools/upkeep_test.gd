@@ -78,7 +78,7 @@ func _initialize() -> void:
 func park_world() -> void:
 	main.test_hold_customers = true
 	main.forklift._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	main._order_timer = 1.0e9
 	main.ambience._spill_timer = 1.0e9
 	main.ambience._lights_timer = 1.0e9
@@ -140,7 +140,11 @@ func _run_customer_ride() -> void:
 	var i := 0
 	for cs in cases:
 		var dir: Vector2 = {"down": Vector2.DOWN, "up": Vector2.UP, "left": Vector2.LEFT, "right": Vector2.RIGHT}[cs[1]]
-		var start := Vector2(1100 + (i % 4) * 160, 560) if cs[1] == "down" else (Vector2(1100 + (i % 4) * 160, 860) if cs[1] == "up" else Vector2(1500 if cs[1] == "left" else 1100, 600 + (i % 4) * 60))
+		var b: Rect2 = main.areas.spawn_band_of("dry_goods") # PHASE 5B PART 2B: the shop's open floor (was raw old-hub coordinates)
+		# (Lanes clear of the Dry Goods pad: a box pushed onto a pad unpacks.)
+		var vx: float = b.position.x + [40.0, 180.0, 400.0, 520.0][i % 4]
+		var hy: float = b.position.y + [20.0, 60.0, 260.0, 300.0][i % 4]
+		var start := Vector2(vx, b.position.y) if cs[1] == "down" else (Vector2(vx, b.position.y + 300) if cs[1] == "up" else Vector2(b.position.x + (560 if cs[1] == "left" else 160), hy))
 		var obj: RigidBody2D = null
 		match cs[0]:
 			"product": obj = _loose_product()
@@ -162,7 +166,7 @@ func _run_customer_ride() -> void:
 		check(r[0] <= speed * CUSTOMER_PEAK_MULT and r[1] <= speed * 1.05, "C%d customer pushing a %s %s: never rides it (peak %.0fpx/s, mean %.0f, walk %.0f; object moved %.0fpx)" % [i, cs[0], cs[1], r[0], r[1], speed, r[2]])
 		c.force_leave()
 		if cs[0] == "product":
-			move_body(obj, Vector2(1400 + i * 30, 1300))
+			move_body(obj, area_spot("sidewalk", Vector2(-40 + i * 30, -50)))
 		elif cs[0] == "box":
 			obj.queue_free()
 		else:
@@ -214,8 +218,8 @@ func press_f(settle := 0.25) -> void:
 ## wants it to be) — host only.
 func clear_hub_stock() -> void:
 	for obj in get_nodes_in_group("carryable"):
-		if main.areas.area_at(obj.global_position) == "hub" and obj.get_node("Carryable").carrier_id == 0:
-			move_body(obj, Vector2(2300 + randf() * 300, 1500))
+		if main.areas.area_at(obj.global_position) in ["hub", "dry_goods"] and obj.get_node("Carryable").carrier_id == 0: # (PHASE 5B PART 2B: the shop floor round the checkout too)
+			move_body(obj, area_spot("storage", Vector2(-100 + randf() * 300, 150)))
 
 func clear_floor() -> void:
 	cl().litter = []
@@ -532,7 +536,7 @@ func _run_rating() -> void:
 	# R0: the rating doesn't move in prep (no customers to judge it).
 	rt().set_rating(4.0)
 	for k in 30:
-		cl().drop_litter(Vector2(1100 + k * 20, 700))
+		cl().drop_litter(area_spot("hub", Vector2(-340 + k * 20, -110)))
 	await wait(2.0)
 	check(is_equal_approx(rt().rating, 4.0), "R0: prep: 30 litter on the floor, the rating holds (%.2f)" % rt().rating)
 	main.open_store(1)
@@ -543,7 +547,7 @@ func _run_rating() -> void:
 	await wait(0.2)
 	check(is_equal_approx(rt().target_for(rt().mess_points()), 5.0), "R1: a clean store targets 5 stars")
 	for k in 12:
-		cl().drop_litter(Vector2(1100 + k * 30, 700))
+		cl().drop_litter(area_spot("hub", Vector2(-340 + k * 30, -110)))
 	cl().drop_puddle(area_spot("hub", Vector2(-140, 10)), 18.0)
 	cl().set_can(0, cl().CAN_CAPACITY)
 	await wait(0.2)
@@ -554,7 +558,7 @@ func _run_rating() -> void:
 	rt().set_rating(5.0)
 	clear_floor()
 	for k in 40:
-		cl().drop_litter(Vector2(1000 + (k % 20) * 40, 640 + (k / 20) * 40))
+		cl().drop_litter(area_spot("hub", Vector2(-440 + (k % 20) * 40, -170 + (k / 20) * 40)))
 	var t0 := Time.get_ticks_msec()
 	await wait(6.0)
 	var secs := (Time.get_ticks_msec() - t0) / 1000.0
@@ -694,7 +698,7 @@ func _run_earnings() -> void:
 	check(main.bounced_today >= 1 and cl().trash_binned_today >= 1 and main._total_sold() - main._sold_at_day_start > 0, "N2: ...with sales (%d), trash binned (%d) and a bounce (%d) in it" % [main._total_sold() - main._sold_at_day_start, cl().trash_binned_today, main.bounced_today])
 	# N3: cleanup: the counter carries the bonus the floor would earn now.
 	for k in 4:
-		cl().drop_litter(Vector2(1300 + k * 30, 760))
+		cl().drop_litter(area_spot("hub", Vector2(-140 + k * 30, -50)))
 	main.shift_time_left = 0.2
 	await wait_until(func(): return main.cleanup_active, 5.0)
 	await wait(0.4)
@@ -940,7 +944,7 @@ func _run_shots() -> void:
 	# 1: two cans — one normal (4/10), one overflowing — and trash in hand.
 	cl().set_cans([cl().CAN_CAPACITY, 4, 0, 4, 0])
 	for k in 5:
-		cl().drop_litter(Vector2(1180 + k * 26, 700 + (k % 2) * 18))
+		cl().drop_litter(area_spot("hub", Vector2(-260 + k * 26, -110 + (k % 2) * 18)))
 	await at(area_spot("hub", Vector2(-260, -110)))
 	await press_e(0.1)
 	await press_e(0.1)
@@ -958,12 +962,12 @@ func _run_shots() -> void:
 	# 3: a puddle being mopped (mid-shift), the rating falling.
 	cl().drop_puddle(area_spot("hub", Vector2(60, -50)), 20.0)
 	for k in 14:
-		cl().drop_litter(Vector2(1300 + (k % 7) * 50, 650 + (k / 7) * 160))
+		cl().drop_litter(area_spot("hub", Vector2(-140 + (k % 7) * 50, -160 + (k / 7) * 160)))
 	rt().set_rating(3.6)
 	cl().tools = cl()._fresh_tools()
 	await at(cl().TOOL_SPOTS[2] + Vector2(0, 26))
 	await press_e(0.2)
-	await at(Vector2(1500 - cl().MOP_HEAD_OFFSET, 760), 0.0)
+	await at(area_spot("hub", Vector2(60, -50)) - Vector2(cl().MOP_HEAD_OFFSET, 0), 0.0)
 	press("host_place")
 	await wait(0.6)
 	await _shot("03_mopping_a_puddle_rating_falling")
@@ -1092,7 +1096,7 @@ func _run_net_host() -> void:
 	# ROUND 6: the rating and the counter — the store gets dirty, every peer
 	# sees the same stars and the same TODAY.
 	for k in 15:
-		cl().drop_litter(Vector2(1000 + k * 40, 700))
+		cl().drop_litter(area_spot("hub", Vector2(-440 + k * 40, -110)))
 	await wait(4.0)
 	await _compare_views("NR6", ids)
 	_net_write("all_done", {"ok": true})

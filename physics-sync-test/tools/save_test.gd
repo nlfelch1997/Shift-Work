@@ -40,11 +40,12 @@ var NET_DIR: String = OS.get_environment("SW_NET_DIR") if OS.get_environment("SW
 
 var main: Node
 
-## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
-## plus an offset — so a test says WHICH room it means instead of repeating
-## raw world coordinates (main.areas; StoreLayout.gd).
+## A spot in a named room of the layout table (tools/spots.gd).
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
-	return main.areas.center_of(id) + offset
+	return preload("res://tools/spots.gd").area_spot(main, id, offset)
+
+func out_of_the_way(offset := Vector2.ZERO) -> Vector2:
+	return preload("res://tools/spots.gd").out_of_the_way(main, offset)
 var fails := 0
 var me := 1
 var act := "host_"

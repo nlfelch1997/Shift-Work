@@ -24,11 +24,12 @@ extends SceneTree
 
 var main: Node
 
-## PHASE 5B PART 2A: a spot in a named room of the layout table — its centre,
-## plus an offset — so a test says WHICH room it means instead of repeating
-## raw world coordinates (main.areas; StoreLayout.gd).
+## A spot in a named room of the layout table (tools/spots.gd).
 func area_spot(id: String, offset := Vector2.ZERO) -> Vector2:
-	return main.areas.center_of(id) + offset
+	return preload("res://tools/spots.gd").area_spot(main, id, offset)
+
+func out_of_the_way(offset := Vector2.ZERO) -> Vector2:
+	return preload("res://tools/spots.gd").out_of_the_way(main, offset)
 var juice: Node
 var fails := 0
 var me := 1
@@ -149,7 +150,7 @@ func pin_manager(pos: Vector2, heading: float) -> void:
 func park_everything() -> void:
 	main.test_hold_customers = true
 	main.forklift._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	main._order_timer = 1.0e9
 	amb()._lights_timer = 1.0e9
 	amb()._spill_timer = 1.0e9
@@ -484,7 +485,7 @@ func _run_events() -> void:
 	main.events.force_next("inspection", 0.1)
 	await wait_until(func(): return main.events.active(), 12.0)
 	for i in 30:
-		main.cleanup.drop_litter(Vector2(1300 + (i % 10) * 30, 330 + (i / 10) * 30))
+		main.cleanup.drop_litter(area_spot("dry_goods", Vector2(-140 + (i % 10) * 30, -70 + (i / 10) * 30)))
 	var om0 := count("order_missed")
 	var bp0: int = juice.ui_popups.filter(func(p): return str(p["text"]).contains("EVENT BONUS")).size()
 	main.events.time_left = 0.05
@@ -627,7 +628,7 @@ func _run_net_host() -> void:
 	ids.sort()
 	var clients: Array = ids.filter(func(id): return id != 1)
 	for k in ids.size():
-		main.players[ids[k]].rpc("teleport_to", Vector2(1300 + 70 * k, 760))
+		main.players[ids[k]].rpc("teleport_to", area_spot("hub", Vector2(-140 + 70 * k, -50)))
 	await wait(0.6)
 	var events := [] # [label, kind, host unix time]
 	var host_event := func(label: String, kind: String, trigger: Callable, timeout := 3.0) -> void:

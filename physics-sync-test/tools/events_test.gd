@@ -79,7 +79,7 @@ func shop() -> Node2D:
 func quiet() -> void:
 	main.test_hold_customers = true
 	fk()._pause_timer = 1.0e9
-	pin_manager(area_spot("reserved"), 0.0)
+	pin_manager(out_of_the_way(), 0.0)
 	main._order_timer = 1.0e9
 	main.ambience._spill_timer = 1.0e9
 	main.ambience._lights_timer = 1.0e9
@@ -455,7 +455,7 @@ func _each_inspection() -> void:
 	check(is_equal_approx(bar, main.store_rating.mess_per_star()), "I1: the bar is one star's worth of mess (%s)" % str(bar))
 	# A failing floor.
 	for i in int(bar) + 4:
-		main.cleanup.drop_litter(Vector2(1300 + (i % 10) * 30, 330 + (i / 10) * 30))
+		main.cleanup.drop_litter(area_spot("dry_goods", Vector2(-140 + (i % 10) * 30, -70 + (i / 10) * 30)))
 	await wait(0.3)
 	check(float(ev().data["mess"]) > bar and main._order_label.text.begins_with("INSPECTOR IN") and main._order_label.text.contains("clean up"), "I1: the live row counts the mess: '%s'" % main._order_label.text)
 	var r0: float = main.store_rating.rating
@@ -904,7 +904,7 @@ func _run_ev_shots() -> void:
 			await wait_until(func(): return main.delivery.truck_away(), 60.0)
 		if k == "inspection":
 			for i in 12:
-				main.cleanup.drop_litter(Vector2(1300 + (i % 6) * 40, 350 + (i / 6) * 40))
+				main.cleanup.drop_litter(area_spot("dry_goods", Vector2(-140 + (i % 6) * 40, -50 + (i / 6) * 40)))
 		ev().force_next(k, 0.1)
 		await wait_until(func(): return ev().warning(), 6.0)
 		await wait(0.3)

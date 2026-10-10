@@ -431,51 +431,60 @@ func _finish_leg() -> void:
 	reversing = false
 	alert = false
 
-## One full lap: from the east end, drive the lane west stopping at each
-## shelf station, pause, then back east doing the same. Every station gets
+## One full lap: from its home end, drive the lane to the far end stopping at
+## each shelf station, pause, then back doing the same. Every station gets
 ## visited once per pass — its shelf on one side of the lane on the way
 ## out, the other side on the way back (which side comes first is random)
 ## — and RAMS_PER_LAP of those visits, chosen at random, are rams instead of
 ## near-misses, so which shelf gets hit is never predictable lap to lap.
+## PHASE 5B PART 2B: along either axis — the lane's long side is its axis
+## (Plan B's Produce lane runs north-south; the old one ran east-west, which
+## this reproduces exactly: "along" = x, "across" = y, home at the east end).
 func _build_lap() -> void:
 	var main = get_tree().current_scene
 	# PHASE 5B PART 2A: the lane is the layout's "forklift_lane" area at its
-	# home (StoreLayout.gd: the length of its room); the stations are the
-	# shelves in that room.
+	# home (StoreLayout.gd); the stations are the shelves in that room.
 	var areas: RefCounted = main.areas
 	var lane: Rect2 = areas.rect_of(areas.feature_at(home_position, "forklift_lane"))
 	var room: String = areas.area_at(home_position)
-	var cell_left: float = lane.position.x
-	var cell_right: float = lane.end.x
-	var lane_y: float = home_position.y
-	# station x -> {"above": shelf_body, "below": shelf_body}
+	var axis := Vector2.RIGHT if lane.size.x >= lane.size.y else Vector2.DOWN
+	var across_axis := Vector2(axis.y, axis.x)
+	var lane_lo: float = lane.position.dot(axis)
+	var lane_hi: float = lane.end.dot(axis)
+	var lane_across: float = home_position.dot(across_axis)
+	var at := func(along: float, across: float) -> Vector2: return axis * along + across_axis * across
 	var stations := {}
 	for shelf_body in get_tree().get_nodes_in_group("shelf"):
 		var p: Vector2 = shelf_body.global_position
 		if areas.area_at(p) != room:
 			continue
-		var key := roundi(p.x)
+		var key := roundi(p.dot(axis))
 		if not stations.has(key):
 			stations[key] = {}
-		stations[key]["above" if p.y < lane_y else "below"] = shelf_body
-	var xs := stations.keys()
-	xs.sort()
-	if xs.is_empty():
+		stations[key]["above" if p.dot(across_axis) < lane_across else "below"] = shelf_body
+	var keys := stations.keys()
+	keys.sort()
+	if keys.is_empty():
 		return
-	var visits := [] # [{x, shelf}] in driving order
+	# Out from home to the far end first, then back.
+	var home_high: bool = home_position.dot(axis) >= (lane_lo + lane_hi) * 0.5
+	var out_pass := keys.duplicate()
+	if home_high:
+		out_pass.reverse()
+	var back_pass := out_pass.duplicate()
+	back_pass.reverse()
+	var visits := [] # [{x, shelf}] in driving order ("x" = along the lane)
 	var first_side := {}
-	var west_pass := xs.duplicate()
-	west_pass.reverse()
-	for x in west_pass:
+	for x in out_pass:
 		var sides: Array = stations[x].keys()
 		first_side[x] = sides[randi() % sides.size()]
 		visits.append({"x": x, "shelf": stations[x][first_side[x]]})
-	visits.append({"end": cell_left + LANE_END_MARGIN})
-	for x in xs:
+	visits.append({"end": (lane_lo + LANE_END_MARGIN) if home_high else (lane_hi - LANE_END_MARGIN)})
+	for x in back_pass:
 		var other_side: String = "below" if first_side[x] == "above" else "above"
 		var shelf_body = stations[x].get(other_side, stations[x][first_side[x]])
 		visits.append({"x": x, "shelf": shelf_body})
-	visits.append({"end": cell_right - LANE_END_MARGIN})
+	visits.append({"end": (lane_hi - LANE_END_MARGIN) if home_high else (lane_lo + LANE_END_MARGIN)})
 	var shelf_visit_indices := []
 	for i in visits.size():
 		if visits[i].has("shelf"):
@@ -485,28 +494,21 @@ func _build_lap() -> void:
 	for i in visits.size():
 		var v: Dictionary = visits[i]
 		if v.has("end"):
-			_legs.append({"pos": Vector2(v["end"], lane_y), "mode": "drive", "pause": FINALE_END_PAUSE if finale else END_PAUSE})
+			_legs.append({"pos": at.call(v["end"], lane_across), "mode": "drive", "pause": FINALE_END_PAUSE if finale else END_PAUSE})
 			continue
-		var station := Vector2(float(v["x"]), lane_y)
+		var station: Vector2 = at.call(float(v["x"]), lane_across)
 		_legs.append({"pos": station, "mode": "drive"})
 		var shelf_body: Node2D = v["shelf"]
 		if i in ram_indices:
-			# Aim at the shelf's own collision box center: always behind the
-			# slot line, so the forks plow through whatever's stocked first
-			# and only then hit the shelf — contact, not arrival, ends it.
 			var aim: Vector2 = shelf_body.get_node("CollisionShape2D").global_position
-			_legs.append({"pos": Vector2(station.x, aim.y), "mode": "ram", "telegraph": true, "shelf": shelf_body})
+			_legs.append({"pos": at.call(float(v["x"]), aim.dot(across_axis)), "mode": "ram", "telegraph": true, "shelf": shelf_body})
 		else:
-			# WEEK 10: the OUTERMOST stocked row (two deep from Day 5).
-			var slot_y: float = shelf_body.to_global(Vector2(0, -shelf_body.get_node("Shelf").outermost_slot_offset())).y
-			var toward_lane := signf(lane_y - slot_y)
-			var stop_y := slot_y + toward_lane * (PRODUCT_HALF_SIZE + NEAR_MISS_CLEARANCE + FRONT_REACH)
-			_legs.append({"pos": Vector2(station.x, stop_y), "mode": "drive", "pause": FINALE_LOAD_PAUSE if finale else LOAD_PAUSE})
+			var slot_across: float = shelf_body.to_global(Vector2(0, -shelf_body.get_node("Shelf").outermost_slot_offset())).dot(across_axis)
+			var toward_lane := signf(lane_across - slot_across)
+			var stop := slot_across + toward_lane * (PRODUCT_HALF_SIZE + NEAR_MISS_CLEARANCE + FRONT_REACH)
+			_legs.append({"pos": at.call(float(v["x"]), stop), "mode": "drive", "pause": FINALE_LOAD_PAUSE if finale else LOAD_PAUSE})
 		_legs.append({"pos": station, "mode": "reverse"})
 
-## Every peer: client-side smoothing (host already sits at the real pose)
-## plus the purely cosmetic beacon/reverse-beeper, driven off the
-## replicated reversing/alert flags.
 func _process(delta: float) -> void:
 	if not Net.is_active() or not active:
 		return
