@@ -269,7 +269,59 @@ and wasn't done.
 | Top tier, helpers hired | ~16 | 16 | 16 | **17** | 19 |
 | Everything (janitor, training, whole gear shop) | ~24 | 24 | 25 | **26** | — |
 
-(MULTIPLAYER_TABLES)
+**Co-op** (host + clients, each its own process; the watchdog in
+`/home/user/runs/autoprog.sh` restarted a run whenever a client dropped,
+so every recorded shift had the whole crew).
+
+| Milestone | Target | Phase 5, 2p | Main, same bot, 2p | **Plan B, 2p** | Phase 5, 3p | Main, same bot, 3p | **Plan B, 3p** |
+|---|---|---|---|---|---|---|---|
+| Produce | by 4 | 2 | 2 | **2** | 2 | 2 | **2** |
+| First helper | by 4 | 3 | 3 | **3** | 3 | 2 | **2** |
+| First random event | by 4 | 2 | 2 | **2** | 2 | 2 | **2** |
+| Rating moved ±0.5★ | by 4 | 1 | 1 | **1** | 1 | 1 | **1** |
+| All three sections | ~10 | 8 | 8 | **10** | 8 | 8 | **10** |
+| Top tier, helpers hired | ~16 | 13 | (not run) | **16** | 14 | (not run) | **15** |
+| Everything | ~24 | 21 | (not run) | **23** | 21 | (not run) | **(not run)** |
+
+The same-bot main co-op runs stopped once they'd passed all three
+sections (CPU budget; their early milestones match Phase 5's exactly). The
+3-player Plan B run stopped after the top tier: the Godot 4.7 worker-thread
+crash (section 7) killed a client about every half hour (8 in ~4.5 h).
+That's the same rate as the main 3-player run alongside it (2 crashes
+each over the same ~110 minutes), so it's not a Plan B regression. Each crash cost a replayed
+shift.
+
+**The demo** (Pacing.gd's 4-shift cap): every demo milestone is still met
+by shift 4 for every crew size (Produce, the demo's growth moment, by 3
+solo / 2 in co-op). `growth_test --test=demo-path` checks the demo's
+purchase, knock-out, cap and end screen.
+
+### 5.4 Reading it
+
+- **One and two sections, and the whole store: even with main.** The
+  income harness at days 1 and 3 is within ±8 %, and solo pay with all
+  four sections bought is the same shift for shift ($3.3–4.6k).
+- **Three sections is where Plan B is slower: −25–30 % per shift** (solo,
+  2p and 3p alike). Dry Goods + Produce + Dairy/Frozen means two wings at
+  opposite ends of the store. A shopper whose list has both crosses the
+  whole sales floor, and the shopper cap fills with long visits. With
+  Bakery bought, lists spread over four sections again and the gap closes.
+- **Net effect: +2 shifts to all sections for every crew size, +1 to the
+  top tier solo and 3p (+3 on Phase 5's 2p, landing on the ~16 target),
+  +2 to everything.** Against the Pacing targets (10 / 16 / 24) co-op is
+  on them and solo runs 1–2 behind. Phase 5 accepted ±1–2 shifts of
+  noise. The 2p top tier is the one figure outside that, by one.
+- **Not done, and why.** The brief allows Pacing.gd constants and walking
+  numbers. Pacing.gd holds only targets and the demo cap. The walking
+  number that matches the cause, `Customer.SPEED` (90), was slowed twice
+  at the developer's request for feel and is shared by disruptive
+  customers, so it isn't mine to change. **Suggested lever (a price,
+  your call):** Bakery $6,000 → about $4,800 shortens the slow
+  three-section stage by roughly a shift (the stage earns ~1,400 a shift
+  in Plan B vs ~2,000 on main). The other options are
+  `CUSTOMER_CAP_BY_TIER[2]` 13 → 15, or a layout change (Dairy/Frozen
+  next to Produce on the east side, which the proposal ruled out for the
+  growth story).
 
 ## 6. Soak and performance
 
