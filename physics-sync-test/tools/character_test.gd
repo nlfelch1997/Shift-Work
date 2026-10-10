@@ -435,6 +435,11 @@ func _run_solo() -> void:
 	check(ring_ok, "C4 shopper rings teal, disruptive rings red (role still legible)")
 	# --- C5: customers (and the manager) face the way they move
 	await shot("customers_crowd", main._store_entrance_pos() + Vector2(0, -160), 2.0)
+	# PHASE 5B PART 2B: Plan B's front door is 200 px wide (the old hub was
+	# open to the sidewalk along its whole edge), so the 18-customer burst
+	# packs the doorway for a few seconds first. Sample the walking crowd
+	# once it's through; the row-vs-facing check stays strict throughout.
+	await wait(6.0)
 	var f: Dictionary = await sample_npc_facing(8.0)
 	check(f["samples"] > 500 and f["row_bad"] == 0, "C5 customer row always matches its replicated facing (%d samples, %d off)" % [f["samples"], f["row_bad"]])
 	var mm: float = float(f["motion_match"]) / maxf(1.0, float(f["motion_n"]))
