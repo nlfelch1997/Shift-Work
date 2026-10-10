@@ -397,6 +397,29 @@ barriers. Memory is +1.3 MB at the start and level by the end.
   Plan B's Produce wing is inside a shelf, and timed out for 40 s per box.
   It now lines up only where that's open floor. The income/progression
   brain uses its own drop stand and wasn't affected.
+- **E takes a tool before it buys a section.** The shop's tool rack first
+  stood beside Dairy/Frozen's knock-out wall, right by its FOR SALE banner,
+  so the natural place to buy the wing handed you a mop. Only
+  `econ-economy` caught it, because its buy spot happened to be there.
+  Fixed by moving the rack; `growth` G-buy4 now guards every rack tool
+  against every knock-out wall's buy reach.
+- **Co-op bot sims on a loaded machine silently become solo sims.** A
+  starved client times out (ENet), and the host carries on with one
+  player. The first 2-player Plan B run did this from shift 2, and its
+  "2-player" numbers matched solo. `runs/autoprog.sh` now restarts a co-op
+  sim the moment its host logs a disconnect, so every recorded shift had
+  the whole crew. Worth adopting for future balance runs (it also resumes
+  after the engine crash). Six Godot processes are about the limit on this
+  4-core machine.
+- **The Godot 4.7 worker-thread crash is frequent in 3-player sims:** a
+  client died about every half hour, on main as often as on Plan B (2 each
+  over the same ~110 minutes side by side). Same backtrace as the known
+  crash.
+- **Two pf-shelf checks were written for wall shelves.** A troublemaker
+  walking straight at one item can't knock it off a back-to-back gondola
+  shelf, and a dragged shopper with Dry Goods on its list took the items.
+  Both checks now test what they mean. Store-wide knockovers per shift in
+  the progression sim are unchanged.
 - **`pkill -f` in test scripts can match the runner's own shell.** It
   happened here several times with long command lines. The regression
   runner doesn't do this; ad-hoc scripts should kill by PID.
