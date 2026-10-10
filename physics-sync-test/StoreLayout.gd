@@ -237,7 +237,12 @@ const ANCHORS := {
 ## Unpack pads, one per section (Delivery.PAD_CENTERS). Each needs ~300 x 300
 ## of open floor round it (its spill ring is 80-150 px out).
 const PADS := {
-	"Dry Goods": Vector2(1200.0, 1100.0), # at the gondolas' south ends: the shortest shelving trips (crew-only: Dry Goods has no helper)
+	# Dry Goods (crew-stocked: no helper): in the shop's north end, inside the
+	# staff door and clear of the gondolas. First at the aisle mouths (1200,
+	# 1100): the checkout's queues run north and a busy lane's line reached
+	# it, so shoppers stood on the pad and its spilled stock (Dry Goods ran
+	# dry while selling at 3+ sections; report section 5).
+	"Dry Goods": Vector2(1110.0, 750.0),
 	# A helper's pad sits in the floor its slots face: Produce's at the dead-end
 	# north end of the strip between its two rows (every slot faces it), far
 	# enough west that its spill ring (<= 150 px) stays off the forklift lane
