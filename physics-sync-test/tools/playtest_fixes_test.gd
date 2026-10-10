@@ -393,17 +393,31 @@ func _run_shelf() -> void:
 			red = c
 	check(red != null and red.collision_mask & 4 != 0, "S6: a disruptive customer's mask includes the shelf-stock layer")
 	var knocked_by_red := 0
-	for k in 3:
-		var tgt: Vector2 = shelf.slots[k % shelf.slots.size()].global_position
-		red.position = tgt + aisle * 70.0 # (PHASE 5B PART 2B: the shelf's own axes — Plan B's gondola shelves face east/west)
+	# PHASE 5B PART 2B: it walks ALONG the stocked row, through the slots —
+	# the way a troublemaker plows a shelf. (Walking straight at one item
+	# only presses it into the shelf behind it: with Plan B's back-to-back
+	# gondola shelves that never dislodged anything; on the old wall shelves
+	# it happened to, at a glancing angle.)
+	var row: Vector2 = sb.global_transform.x.normalized() # along the row of slots
+	var first: Vector2 = shelf.slots[0].global_position
+	var last: Vector2 = shelf.slots[shelf.slots.size() - 1].global_position
+	if (last - first).dot(row) < 0.0:
+		row = -row
+	for k in 2:
+		red.position = first - row * 70.0
 		red.reset_physics_interpolation()
-		red._retarget_pos = tgt - aisle * 20.0
+		red._retarget_pos = last + row * 70.0
 		red._retarget_timer = 5.0
 		red._lifetime = 0.0
-		await wait(1.5)
+		await wait(2.5)
+		if full - _stocked_on(sb).size() > 0:
+			break
 	knocked_by_red = full - _stocked_on(sb).size()
 	check(knocked_by_red > 0, "S6: a disruptive customer walked into the stock and knocked %d item(s) off" % knocked_by_red)
 	red.force_leave()
+	# PHASE 5B PART 2B: let it get clear first — its way out to the door can
+	# run along this very row (Plan B's gondolas), knocking stock S7 counts.
+	await wait_until(func(): return not is_instance_valid(red) or red.global_position.distance_to(sb.global_position) > 400.0, 20.0)
 	await wait(0.3)
 	# 6. A shopper walking through it does not.
 	await _fill_shelf(sb)
@@ -415,6 +429,9 @@ func _run_shelf() -> void:
 		if c.role == "shopper":
 			blue = c
 	var along: Vector2 = sb.global_transform.x.normalized() # along the row of slots
+	# Nothing on its list from this shelf: the check is about knocking, and a
+	# shopper dragged past items it wants simply takes them.
+	blue.shopping_list = PackedStringArray(["Bakery"])
 	blue.position = shelf.slots[0].global_position - along * 60.0
 	blue.reset_physics_interpolation()
 	var tt := 0.0
