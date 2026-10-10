@@ -54,8 +54,9 @@ one balance point.**
   the store**. The **front door** (200 px) is at its front-right corner.
 - **Produce** (wing 2, east, 780 × 1140): a three-shelf run on the outside
   wall, a two-shelf row facing it, the **forklift lane north–south**
-  between them, the sample table on the lane and the sale bin; its pad by
-  its **own back door into Storage** (a roller shutter until bought).
+  between them, the sample table on the lane and the sale bin; its **own
+  back door into Storage** (a roller shutter until bought) and its pad just
+  inside, at the north end of the strip both rows face.
 - **Dairy/Frozen** (wing 3, south-west, 780 × 600): a three-shelf cooler
   run on the outside wall and a two-shelf island.
 - **Bakery** (wing 4, north-west corner, 780 × 540): four shelves on the
