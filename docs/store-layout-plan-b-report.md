@@ -79,7 +79,38 @@ replicated `sections_owned` opens the barriers on every peer
 (`_configure_gates()`), and the knock-out plays only for a purchase the
 host announced. No new network state; **no save change (still v6)**.
 
-(pending: screenshots)
+### 1.1 Screenshots (final code, `docs/store-layout-plan-b/`)
+
+Whole store at each growth stage (stocked, 25 s into selling; zoom 0.5):
+
+| Stage 1: the corner shop | Stage 2: + Produce |
+|---|---|
+| ![](store-layout-plan-b/stage1_store.png) | ![](store-layout-plan-b/stage2_store.png) |
+| **Stage 3: + Dairy/Frozen** | **Stage 4: + Bakery (the whole store)** |
+| ![](store-layout-plan-b/stage3_store.png) | ![](store-layout-plan-b/stage4_store.png) |
+
+A player's view (960 × 540) in each new wing: ![](store-layout-plan-b/stage1_shop.png)
+![](store-layout-plan-b/stage2_produce.png) ![](store-layout-plan-b/stage3_dairy.png)
+![](store-layout-plan-b/stage4_bakery.png)
+
+The knock-out (Produce, 0.05 / 0.3 / 0.7 / 1.1 / 2.4 s after the purchase):
+![](store-layout-plan-b/knock1_buy_0.05.png) ![](store-layout-plan-b/knock1_buy_0.3.png)
+![](store-layout-plan-b/knock1_buy_0.7.png) ![](store-layout-plan-b/knock1_buy_1.1.png)
+![](store-layout-plan-b/knock1_buy_2.4.png). Dairy/Frozen and Bakery mid-knock-out:
+![](store-layout-plan-b/knock2_buy_1.1.png) ![](store-layout-plan-b/knock3_buy_1.1.png)
+
+The clip test (host + 2 clients, every helper hired, a selling crowd, an
+event running, the host's camera with the HUD): `clip_d1_*` (stage 1),
+`clip_d3_*` (stage 2, Lunch Rush), `clip_d5_*` (stage 3, Leaky Roof),
+`clip_d7_*` (stage 4, Surprise Delivery; three views).
+
+Storage and the Break Room, main vs Plan B (`tools/layout_proof.gd`):
+`proof_storage_main.png` / `proof_storage_branch.png`,
+`proof_breakroom_main.png` / `proof_breakroom_branch.png`. The interiors are
+pixel-identical (forklift, dock, receiving row, dumpster, every break-room
+fixture); the only differences are in the walls (the doorways into the
+staff hall, and Produce's roller shutter on Storage's south wall) and the
+STORAGE label, 10 px higher.
 
 ## 2. Deviations from the proposal, and why
 
