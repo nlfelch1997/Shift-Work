@@ -3,7 +3,24 @@
 Branch `claude/phase-5b-2b-plan-b`, off `main` at `95a2fa3` (Part 2A, PR
 #39, confirmed merged with `git log --merges` before starting).
 
-**In one paragraph.** (pending)
+**In one paragraph.** Plan B ("Grows Outward") is built and playable in
+greybox. A corner shop (Dry Goods + the checkout) grows wing by wing:
+Produce to the east, then Dairy/Frozen and Bakery to the west, each behind
+a knock-out wall that comes down with a 1.8 s animation when bought. The
+host decides; the opening replicates to every peer, late joiners and
+reloads (still save v6; old saves keep their sections). Every system works
+in it. The nav grids are rebuilt per stage, and the flagged 2A issues
+(helpers walling off open edges, the east–west forklift and checkout, the
+income bot's hand-written map) are fixed. The full regression is green
+apart from known flakes, the top-tier soak runs no slower than main, and
+Storage and the Break Room are pixel-identical. **Balance:** the store
+earns the same as main at 1, 2 and 4 sections, but the three-section stage
+(the two far wings, Produce and Dairy, bought; Bakery not yet) is 25–30 %
+slower. That puts milestones 1–2 shifts later (2p top tier +3 on Phase 5,
+landing on the ~16 target). I tuned only pad positions and left prices
+alone; section 5.4 has the measured cause and the levers. **The core is
+working and tested; what's left is polish and the developer's call on that
+one balance point.**
 
 ---
 
@@ -137,6 +154,7 @@ exact shapes, and why:
 | 11 | The shop's tool rack (not placed in the proposal) | **Free-standing south of the aisles, between checkout lanes 3 and 4 (1040, 1300)** | First by the staff door: the upkeep tests showed fetching the broom then lost to sweeping by hand (~990 px from the checkout's mess vs ~540 in the old hub). Then on the shop's west side (850, 1300): the full regression showed it beside Dairy/Frozen's FOR SALE banner, where E takes a tool before it buys, so the press at the banner handed you a mop (`econ-economy` E9). Final spot: ~450 px from the mess, tools out of every knock-out wall's buy reach (guarded by `growth` G-buy4). |
 | 12 | Manager "lookouts per wing" | **Every room's waypoint and lookouts are in the table**, his checkout stop (and start) inside the door | He walks straight lines with no collision; the old centre-to-centre legs would cross Plan B's shelves. `growth_test` ray-checks every leg. |
 | 13 | Spill/stock bands "per area" | **Each wing's band is open floor chosen in the table**; Produce's spans the wing's south half across the lane | A first, narrow Produce band put a Leaky Roof's leaks close together and the janitor alone finished it (the event is meant to need the crew). |
+| 13b | (same) | **Dairy/Frozen's band on the wing's south side, below the island** | With its pad moved into the wall aisle (5.1), the 100 px a leak keeps from a pad pushed Dairy's Leaky Roof leak next to Bakery's, and a janitor alone finished a 4-leak roof in 51–55 s of the 55 (`jan-events` E1). |
 
 **Nothing in the plan had to be abandoned.** No stuck-AI problem needed a
 different room shape: every stage's nav grids have every open slot
@@ -225,6 +243,12 @@ economy moved.
 | Produce (helper) | (1790, 700) by the back door | **(1950, 670)**, north end of the strip both rows face | Helper round trip pad→slot→pad 969 px vs main's 635; the wing ran a third emptier at 3 sections. Final 717 px (spill ring kept off the forklift lane). |
 | Dairy/Frozen (helper) | (620, 1190) east of the island | **(330, 1210)**, head of the wall aisle | 892 px vs main's 610; final 556 px. |
 | Bakery (helper) | (450, 900) | unchanged | 587 px (main 610). |
+
+**After the balance runs**, two more data changes came out of the final
+regression: the shop's tool rack moved (deviation 11), and Dairy/Frozen's
+spawn band moved (13b). Neither moves a pad, shelf, register or wall, so
+the stocking and shopping walks measured below are unchanged. Neither was
+re-measured with the harnesses (several hours); see section 9.
 
 ### 5.2 Income harness (`staff_test --test=income`, pay per shift, mean)
 
@@ -362,6 +386,12 @@ barriers. Memory is +1.3 MB at the start and level by the end.
   is a labelled code-drawn placeholder. The checkout counters use the
   side-view lane sprite turned 90°, which reads as a lane but not a good
   one (B7).
+- **Re-running the harnesses after the last two data changes** (the tool
+  rack, Dairy/Frozen's spawn band). Expected effect on pay: none to
+  small. Worth folding into the next balance pass with the Bakery-price
+  decision (5.4).
+- **The 3-player "everything" milestone and same-bot main co-op runs past
+  all-sections**: not run to the end (section 5.3).
 - **A sound for the knock-out.** No new audio this phase; it plays the
   existing "store open" sting.
 - **Gondola end caps** (proposal: optional; B16).
