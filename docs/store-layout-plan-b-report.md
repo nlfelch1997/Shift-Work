@@ -205,7 +205,51 @@ the HUD on, at every growth stage):
 
 ## 5. Balance: before / after
 
-(pending)
+**How it was measured.** Both harnesses were run on this branch and on
+clean main **with the same test bot**. Part 2B moved the bot from a
+hand-written room graph onto a nav grid of the live store (section 3), so
+main was re-measured with that bot too (`sw-main-nb`: clean main + the new
+bot). With the old bot, clean main reproduced Phase 5's solo milestones
+exactly (Produce 3, all sections 11, top tier 16, everything 24), and the
+new bot on main lands within a shift of them, so the bot change itself is
+small.
+
+### 5.1 What was tuned (layout data only; no prices, no Pacing.gd change)
+
+Every change is a pad position in `StoreLayout.PADS`; nothing else in the
+economy moved.
+
+| Pad | First built | Final | Why (measured) |
+|---|---|---|---|
+| Dry Goods (crew-stocked) | (1200, 1230) south of the gondolas | **(1110, 750)**, inside the staff door | (1200, 1230): shelving walks +21 % on main's, day-1 pay −12 %. Then (1200, 1100) at the aisle mouths: the north-running checkout queues reached it at 3+ sections and Dry Goods ran dry while selling. Final: box + 6 units 4,885 px a box (main 4,911). |
+| Produce (helper) | (1790, 700) by the back door | **(1950, 670)**, north end of the strip both rows face | Helper round trip pad→slot→pad 969 px vs main's 635; the wing ran a third emptier at 3 sections. Final 717 px (spill ring kept off the forklift lane). |
+| Dairy/Frozen (helper) | (620, 1190) east of the island | **(330, 1210)**, head of the wall aisle | 892 px vs main's 610; final 556 px. |
+| Bakery (helper) | (450, 900) | unchanged | 587 px (main 610). |
+
+### 5.2 Income harness (`staff_test --test=income`, pay per shift, mean)
+
+| Config | Main (same bot) | Plan B, final | Change |
+|---|---|---|---|
+| Solo, day 1 (Dry Goods only) | $401 (n 12) | $408 (n 12) | +2 % |
+| Solo, day 3 (+ Produce helper) | $911 (n 12) | $916 (n 9) | +1 % |
+| Solo, day 7 (all 4, every helper + janitor) | $728 (n 12) | $622 (n 12) | **−15 %** |
+| 2 players, day 1 | $582 (n 6) | $581 (n 6) | 0 % |
+| 2 players, day 3 | $844 (n 6) | $915 (n 6) | +8 % |
+| 2 players, day 7 | $703 (n 3; one $3,118 shift excluded, the client bot opened at 125 s) | $613 (n 4) | **−13 %** |
+
+With the first pads, solo day 1 was $351 (−12 %, first runs) and solo day 7
+$593 (−19 %, n 3).
+
+**Why the full store earns less.** Helpers now stock as fast as in the old
+rooms (they place the same units per shift and walk within ~25 %). What's
+left is the shoppers. A Plan B shopper's walk (door → shelf → register,
+averaged over every slot) is **11 % longer over the whole store, 13 % at
+three sections**. The checkout is in the corner shop and the wings are off
+to its sides, where the old hub sat in the middle. The worst legs are
+Produce's shelves → the registers (+42 %) and the door → Dairy (+30 %).
+The day-7 harness opens at the prep ceiling (96 s of selling), where that
+walk costs most. Moving Produce's shelf block 300 px south saved only 3 %
+and wasn't done.
 
 ## 6. Soak and performance
 
