@@ -292,6 +292,19 @@ func _run_growth() -> void:
 	check(back.get_node("Gate").back_door and main.for_sale_gate_at(back.global_position + Vector2(0, -40)) == "", "G-buy2: Storage's side of Produce's back door doesn't sell it")
 	var bk: Vector2 = main.gate_of("Bakery").global_position + Vector2(40, 0)
 	check(main.for_sale_gate_at(bk) == "Bakery" and main.purchase_blocker("Bakery") == "buy Produce first", "G-buy3: Bakery's wall says what it is, and that the sections before it come first ('%s')" % main.purchase_blocker("Bakery"))
+	# E takes a tool before it buys (Player._try_interact()): no tool's reach
+	# may overlap a knock-out wall's buy reach, or the press at the FOR SALE
+	# banner hands you a mop (the shop rack first stood by Dairy's wall).
+	var near := []
+	var items := get_nodes_in_group("carryable")
+	var reach: float = items[0].get_node("Carryable").PICKUP_RANGE if not items.is_empty() else 70.0 # Carryable.PICKUP_RANGE
+	for spot in Layout.TOOL_SPOTS:
+		for b in main.areas.barriers():
+			var r: Rect2 = b["rect"]
+			var closest := Vector2(clampf(spot.x, r.position.x, r.end.x), clampf(spot.y, r.position.y, r.end.y))
+			if spot.distance_to(closest) <= main.GATE_BUY_RANGE + reach:
+				near.append("%s by %s" % [str(spot), b["section"]])
+	check(near.is_empty(), "G-buy4: no tool on a rack within reach of a knock-out wall's buy spot %s" % str(near))
 	for stage in range(2, 5):
 		var sec: Dictionary = main.SECTIONS[stage - 1]
 		_opened.clear()

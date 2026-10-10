@@ -212,11 +212,14 @@ const ANCHORS := {
 	"bounce_target": Vector2(1510.0, 1730.0), # the practice shift's "walk them out" marker, just past the door
 	# --- the sales floor ---
 	"store_sign": Vector2(1665.0, 1720.0), # Main.STORE_SIGN_POS: on the pavement, east of the door
-	# Cleanup.RACK_POS: a free-standing rack on the shop's west side, south of
-	# the aisles — ~540 px from the checkout's mess, as the old hub rack was
-	# (by the staff door it was ~990 px away, and fetching the broom lost to
-	# sweeping by hand: tools/upkeep_test.gd B2/B3).
-	"tool_rack": Vector2(850.0, 1300.0),
+	# Cleanup.RACK_POS: a free-standing rack in the shop south of the aisles,
+	# between checkout lanes 3 and 4's queue columns — ~450 px from the
+	# checkout's mess, as the old hub rack was (by the staff door it was
+	# ~990 px away, and fetching the broom lost to sweeping by hand:
+	# tools/upkeep_test.gd B2/B3). Its tools' E reach (70 px) stays clear of
+	# Dairy/Frozen's knock-out wall's buy reach: E takes a tool before it
+	# buys, and the rack first stood beside that wall's FOR SALE banner.
+	"tool_rack": Vector2(1040.0, 1300.0),
 	# --- the break room (unchanged) ---
 	"time_clock": Vector2(880.0, 300.0),
 	"tool_station": Vector2(700.0, 280.0),
@@ -270,7 +273,7 @@ const CANS := [
 
 ## The tools in tool order (mops, then brooms): the break-room station's two of
 ## each, then the shop rack's one of each (Cleanup.TOOL_SPOTS).
-const TOOL_SPOTS := [Vector2(660.0, 320.0), Vector2(678.0, 320.0), Vector2(828.0, 1324.0), Vector2(722.0, 320.0), Vector2(740.0, 320.0), Vector2(872.0, 1324.0)]
+const TOOL_SPOTS := [Vector2(660.0, 320.0), Vector2(678.0, 320.0), Vector2(1018.0, 1324.0), Vector2(722.0, 320.0), Vector2(740.0, 320.0), Vector2(1062.0, 1324.0)]
 
 ## The practice shift's litter props (the shop floor, south-west).
 const PRACTICE_LITTER := [Vector2(900.0, 1150.0), Vector2(935.0, 1190.0), Vector2(970.0, 1140.0), Vector2(880.0, 1220.0)]

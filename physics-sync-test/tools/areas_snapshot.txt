@@ -43,7 +43,7 @@ anchor staff_board (30.0, 235.0)
 anchor staff_board_spot (75.0, 235.0)
 anchor store_sign (1665.0, 1720.0)
 anchor time_clock (880.0, 300.0)
-anchor tool_rack (850.0, 1300.0)
+anchor tool_rack (1040.0, 1300.0)
 anchor tool_station (700.0, 280.0)
 anchor vending_machine (610.0, 70.0)
 pad Dry Goods (1110.0, 750.0)
@@ -55,7 +55,7 @@ can 1 (960.0, 580.0) Dry Goods
 can 2 (1660.0, 1150.0) Produce
 can 3 (735.0, 1630.0) Dairy/Frozen
 can 4 (735.0, 1020.0) Bakery
-tools [(660.0, 320.0), (678.0, 320.0), (828.0, 1324.0), (722.0, 320.0), (740.0, 320.0), (872.0, 1324.0)]
+tools [(660.0, 320.0), (678.0, 320.0), (1018.0, 1324.0), (722.0, 320.0), (740.0, 320.0), (1062.0, 1324.0)]
 practice_litter [(900.0, 1150.0), (935.0, 1190.0), (970.0, 1140.0), (880.0, 1220.0)]
 dock lane_y=170.0 dock_x=2260.0 receiving=[(2200.0, 370.0), (2125.0, 370.0), (2050.0, 370.0), (1975.0, 370.0), (1900.0, 370.0), (1825.0, 370.0), (1750.0, 370.0)]
 checkout { "room": "hub", "queue_dir": (0.0, -1.0), "registers_by_tier": [2, 3, 4, 5] }
