@@ -130,7 +130,12 @@ const ROOMS := [
 		"links": ["bakery", "dry_goods", "hub"],
 		"waypoint": Vector2(690.0, 1250.0),
 		"lookouts": [Vector2(690.0, 1250.0), Vector2(300.0, 1250.0)],
-		"spawn_band": Rect2(240.0, 20.0, 520.0, 210.0),
+		# The wing's open south side, below the island (clear of its pad's
+		# 100 px and both shelf runs' slots): a Leaky Roof's Dairy/Frozen leak
+		# lands here, far from Bakery's — at the wings' shared corner the
+		# janitor alone mopped a 4-leak roof in time (janitor_test E1: it
+		# must take the crew's mop too).
+		"spawn_band": Rect2(240.0, 460.0, 520.0, 110.0),
 		"helper": {"band": Rect2(60.0, 60.0, 660.0, 480.0)}},
 	{"id": "dry_goods", "role": "section", "section": "Dry Goods", "rect": Rect2(780.0, 540.0, 840.0, 840.0),
 		"shop_floor": true, "bg": "DryGoodsBg", "wall_art": "market",

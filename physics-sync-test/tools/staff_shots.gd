@@ -78,7 +78,7 @@ func _run() -> void:
 	main.open_store(1)
 	await wait(25.0)
 	await shot("produce_open_store")
-	me().teleport_to(area_spot("dairy_frozen", Vector2(0, 130)))
+	me().teleport_to(area_spot("dairy_frozen", Vector2(0, -270)))
 	await wait(1.0)
 	await shot("dairy_open_store")
 	me().teleport_to(area_spot("bakery", Vector2(-400, 130)))

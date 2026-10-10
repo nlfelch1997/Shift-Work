@@ -787,7 +787,7 @@ func _run_shots() -> void:
 	player().teleport_to(area_spot("sidewalk", Vector2(0, -150)))
 	await wait(1.0)
 	await shot("crowd_checkout")
-	player().teleport_to(area_spot("dairy_frozen", Vector2(0, 130)))
+	player().teleport_to(area_spot("dairy_frozen", Vector2(0, -270)))
 	await wait(1.0)
 	await shot("crowd_dairy")
 	finish()
